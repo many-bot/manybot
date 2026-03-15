@@ -51,7 +51,7 @@ async function convertVideoToGif(inputPath, outputPath, fps = 12) {
 
   await execFileAsync(FFMPEG, [
     "-i", inputPath,
-    "-filter_complex", filter,  // <-- era -vf, tem que ser -filter_complex pro split funcionar
+    "-filter_complex", filter,
     "-loop", "0",
     "-y",
     outputPath
@@ -63,7 +63,7 @@ async function resizeToSticker(inputPath, outputPath) {
 
   await execFileAsync(FFMPEG, [
     "-i", inputPath,
-    "-vf", "scale=512:512:flags=lanczos",  // lanczos = melhor qualidade no resize
+    "-vf", "scale=512:512:flags=lanczos",
     "-y",
     outputPath
   ]);
@@ -98,33 +98,40 @@ async function createStickerWithFallback(stickerInputPath, isAnimated) {
 
 // ───────────────── Sessão ─────────────────
 
-export function iniciarSessao(chatId, author) {
+export const help =
+  "📌 *Como criar figurinhas:*\n\n" +
+  "1️⃣ Digite `!figurinha` para iniciar\n" +
+  "2️⃣ Envie as imagens, GIFs ou vídeos que quer transformar\n" +
+  "3️⃣ Digite `!figurinha criar` para gerar as figurinhas\n\n" +
+  "⏳ A sessão expira em 2 minutos se nenhuma mídia for enviada.";
 
+export function iniciarSessao(chatId, author, msg) {
   if (stickerSessions.has(chatId)) return false;
 
-  const timeout = setTimeout(() => {
-
+  const timeout = setTimeout(async () => {
     stickerSessions.delete(chatId);
-    client.sendMessage(chatId, botMsg("Sessão de figurinha expirou."));
-
+    try {
+      await msg.reply(botMsg(
+        "⏰ *Sessão expirada!*\n\n" +
+        "Você demorou mais de 2 minutos para enviar as mídias.\n" +
+        "Digite `!figurinha` para começar de novo."
+      ));
+    } catch (err) {
+      console.error("Erro ao notificar expiração:", err.message);
+    }
   }, SESSION_TIMEOUT);
 
-  stickerSessions.set(chatId, {
-    author,
-    medias: [],
-    timeout
-  });
-
+  stickerSessions.set(chatId, { author, medias: [], timeout });
   return true;
-
 }
 
 // ───────────────── Coleta de mídia ─────────────────
 
 export async function coletarMidia(msg) {
-
+;
+  // figurinha.js — coletarMidia
   const chat = await msg.getChat();
-  const chatId = chat.id._serialized;
+  const chatId = chat.id._serialized; // ← volta pra isso
 
   const session = stickerSessions.get(chatId);
   if (!session) return;
@@ -158,33 +165,40 @@ export async function coletarMidia(msg) {
 // ───────────────── Criar stickers ─────────────────
 
 export async function gerarSticker(msg, chatId) {
+  console.log("[gerarSticker] chatId:", chatId);
 
   const sender = msg.author || msg.from;
   const session = stickerSessions.get(chatId);
 
   if (!session) {
-    return msg.reply(botMsg("Nenhuma sessão de figurinha ativa."));
+    return msg.reply(botMsg(
+      "❌ *Nenhuma sessão ativa.*\n\n" + help
+    ));
   }
 
   if (session.author !== sender) {
-    return msg.reply(botMsg("Apenas quem iniciou a sessão pode criar as figurinhas."));
+    return msg.reply(botMsg(
+      "🚫 Só quem digitou `!figurinha` pode usar `!figurinha criar`."
+    ));
   }
 
   const medias = session.medias;
 
   if (!medias.length) {
-    return msg.reply(botMsg("Nenhuma imagem recebida."));
+    return msg.reply(botMsg(
+      "📭 *Você ainda não enviou nenhuma mídia!*\n\n" + help
+    ));
   }
 
   clearTimeout(session.timeout);
 
   console.log("midias:", medias.length);
 
-  await msg.reply(botMsg("Aguarde! Estou criando as suas figurinhas..."));
+  await msg.reply(botMsg("⏳ Gerando suas figurinhas, aguarde um momento..."));
 
   ensureDownloadsDir();
 
-    for (const media of medias) {
+  for (const media of medias) {
     try {
       const ext = media.mimetype.split("/")[1];
       const isVideo = media.mimetype.startsWith("video/");
@@ -198,7 +212,6 @@ export async function gerarSticker(msg, chatId) {
 
       fs.writeFileSync(inputPath, Buffer.from(media.data, "base64"));
 
-      // LOG 1 — arquivo de entrada
       const inputSize = fs.statSync(inputPath).size;
       console.log(`[1] mimetype: ${media.mimetype} | isAnimated: ${isAnimated} | inputPath: ${inputPath} | size: ${inputSize} bytes`);
 
@@ -208,7 +221,6 @@ export async function gerarSticker(msg, chatId) {
         console.log("[2] Convertendo para GIF...");
         await convertVideoToGif(inputPath, gifPath, isVideo ? 12 : 24);
 
-        // LOG 2 — gif gerado
         if (fs.existsSync(gifPath)) {
           console.log(`[2] GIF gerado: ${fs.statSync(gifPath).size} bytes`);
         } else {
@@ -229,12 +241,10 @@ export async function gerarSticker(msg, chatId) {
         stickerInputPath = resizedPath;
       }
 
-      // LOG 3 — antes de criar o sticker
       console.log(`[3] stickerInputPath: ${stickerInputPath} | exists: ${fs.existsSync(stickerInputPath)} | size: ${fs.existsSync(stickerInputPath) ? fs.statSync(stickerInputPath).size : "N/A"} bytes`);
 
       const stickerBuffer = await createStickerWithFallback(stickerInputPath, isAnimated);
 
-      // LOG 4 — sticker gerado
       console.log(`[4] Sticker buffer: ${stickerBuffer.length} bytes`);
 
       const stickerMedia = new MessageMedia("image/webp", stickerBuffer.toString("base64"));
@@ -244,11 +254,17 @@ export async function gerarSticker(msg, chatId) {
 
     } catch (err) {
       console.error("Erro ao gerar sticker:", err);
-      await msg.reply(botMsg("Erro ao gerar uma das figurinhas."));
+      await msg.reply(botMsg(
+        "⚠️ Não consegui criar uma das figurinhas.\n" +
+        "Tente reenviar essa mídia ou use outro formato (JPG, PNG, GIF, MP4)."
+      ));
     }
   }
 
-  await msg.reply(botMsg("Figurinhas geradas com sucesso!"));
+  await msg.reply(botMsg(
+    "✅ *Figurinhas criadas com sucesso!*\n" +
+    "Salve as que quiser no seu WhatsApp. 😄"
+  ));
 
   stickerSessions.delete(chatId);
   emptyFolder("downloads");

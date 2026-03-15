@@ -1,4 +1,6 @@
 // get_id.js
+import { CLIENT_ID } from "../config.js";
+
 
 const arg = process.argv[2]; // argumento passado no node
 if (!arg) {
@@ -12,8 +14,6 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 
-const CLIENT_ID = "bot_permanente"; // sempre o mesmo
-
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
     puppeteer: { headless: true }
@@ -24,10 +24,10 @@ client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
 });
 
-client.on('ready', async () => {
+client.on('change_state', async state => {
     console.log("[WPP] Conectado");
 
-    const chats = await client.getChats(); // <- precisa do await
+    const chats = await client.getChats();
 
     let filtered = [];
 
@@ -40,18 +40,14 @@ client.on('ready', async () => {
         filtered = chats.filter(c => (c.name || c.id.user).toLowerCase().includes(search));
     }
 
-    if (filtered.length === 0) {
-        console.log("Nenhum chat encontrado com esse filtro.");
-    } else {
-        console.log(`Encontrados ${filtered.length} chats:`);
-        filtered.forEach(c => {
-            console.log("================================");
-            console.log("NAME:", c.name || c.id.user);
-            console.log("ID:", c.id._serialized);
-            console.log("GROUP:", c.isGroup);
-        });
-    }
+    filtered.forEach(c => {
+        console.log("================================");
+        console.log("NAME:", c.name || c.id.user);
+        console.log("ID:", c.id._serialized);
+        console.log("GROUP:", c.isGroup);
+    });
 
+    await client.destroy();
     process.exit(0);
 });
 

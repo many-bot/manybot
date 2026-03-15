@@ -55,7 +55,7 @@ const logger = {
       : `${c.bold}${chatName}${c.reset} ${c.dim}(privado)${c.reset}`;
 
     const bodyPreview = body?.trim()
-      ? `${isCommand ? c.yellow : c.green}"${body.length > 80 ? body.slice(0, 80) + "…" : body}"${c.reset}`
+      ? `${isCommand ? c.yellow : c.green}"${body.length > 200 ? body.slice(0, 200) + "..." : body}"${c.reset}`
       : `${c.dim}<${typeLabel}>${c.reset}`;
 
     // Resolve reply
@@ -70,7 +70,7 @@ const logger = {
           quotedName = quotedContact?.pushname || quotedContact?.formattedName || quotedNumber;
         } catch {}
         const quotedPreview = quoted.body?.trim()
-          ? `"${quoted.body.length > 60 ? quoted.body.slice(0, 60) + "…" : quoted.body}"`
+          ? `"${quoted.body.length > 80 ? quoted.body.slice(0, 80) + "…" : quoted.body}"`
           : `<${quoted.type}>`;
         replyLine =
           `\n${c.gray}            ↩ Para: ${c.reset}${c.white}${quotedName}${c.reset} ${c.dim}+${quotedNumber}${c.reset}` +
