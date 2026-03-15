@@ -70,16 +70,16 @@ export async function processarComando(msg, chat, chatId) {
           await gerarSticker(msg, chatId);
         } else {
           if (stickerSessions.has(chatId)) {
-             return msg.reply("Já existe uma sessão ativa.");
+             return msg.reply(botMsg("Já existe uma sessão ativa."));
           }
 
           iniciarSessao(chatId, author);
           
-          await msg.reply(
+          await msg.reply(botMsg(
             `Sessão de figurinha iniciada por @${author.split("@")[0]}. Envie no máximo 10 imagens, quando estiver pronto mande \`!figurinha criar\``,
             null,
             { mentions: [author] }
-          );
+          ));
         }
       
         break;
