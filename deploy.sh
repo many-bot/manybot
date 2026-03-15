@@ -24,13 +24,6 @@ EOF
 # mudar para a branch
 git checkout $BRANCH || { echo "Error ao change to $BRANCH"; exit 1; }
 
-# adicionar alterações e commit
-git add .
-git commit -m "$COMMIT_MSG"
-
-# push
-git push origin $BRANCH
-
 # se for master, atualizar versão
 if [ "$BRANCH" == "master" ] && [ -n "$VERSION" ]; then
     echo "Updating version to $VERSION"
@@ -40,5 +33,12 @@ if [ "$BRANCH" == "master" ] && [ -n "$VERSION" ]; then
     git commit -m "Bump version to $VERSION"
     git push origin $VERSION
 fi
+
+# adicionar alterações e commit
+git add .
+git commit -m "$COMMIT_MSG"
+
+# push
+git push origin $BRANCH
 
 echo "Deploy completed."
