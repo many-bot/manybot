@@ -1,9 +1,3 @@
-Deixar o log mais claro, permanecendo limpo e simples
-
 Possibilidade de tirar fundo de figurinhas
 
 Salvar mensagens num banco de dados
-
-Mudar a licença para GPLv3
-
-Possibilidade de baixar playlists do youtube

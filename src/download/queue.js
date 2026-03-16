@@ -1,53 +1,74 @@
-import { get_video } from "./video.js";
-import { get_audio } from "./audio.js";
-import pkg from "whatsapp-web.js";
-import fs from "fs";
-import { botMsg } from "../utils/botMsg.js";
-import { emptyFolder } from "../utils/file.js";
-import client from "../client/whatsappClient.js";
+import fs                   from "fs";
+import path                 from "path";
+import pkg                  from "whatsapp-web.js";
+import { download }          from "./downloader.js";
+import { resolveMediaType }  from "./mediaType.js";
+import { botMsg }           from "../utils/botMsg.js";
+import { emptyFolder }      from "../utils/file.js";
+import { logger }           from "../logger/logger.js";
+import client               from "../client/whatsappClient.js";
 
 const { MessageMedia } = pkg;
 
-let downloadQueue = [];
-let processingQueue = false;
+/**
+ * @typedef {{ type: "video"|"audio", url: string, msg: object, chatId: string }} DownloadJob
+ */
 
+/** @type {DownloadJob[]} */
+let queue = [];
+let processing = false;
+
+/**
+ * Adiciona um job à fila e inicia o processamento se estiver idle.
+ * @param {"video"|"audio"} type
+ * @param {string} url
+ * @param {object} msg
+ * @param {string} chatId
+ */
 export function enqueueDownload(type, url, msg, chatId) {
-  downloadQueue.push({ type, url, msg, chatId });
-  if (!processingQueue) processQueue();
+  queue.push({ type, url, msg, chatId });
+  if (!processing) processQueue();
 }
 
 async function processQueue() {
-  processingQueue = true;
+  processing = true;
 
-  while (downloadQueue.length) {
-    const job = downloadQueue.shift();
-    const label = job.type === "video" ? "vídeo" : "áudio";
-
-    try {
-      const filePath = job.type === "video"
-        ? await get_video(job.url, job.msg.id._serialized)
-        : await get_audio(job.url, job.msg.id._serialized);
-
-      const file = fs.readFileSync(filePath);
-      const media = new MessageMedia(
-        job.type === "video" ? "video/mp4" : "audio/mpeg",
-        file.toString("base64"),
-        filePath.split("/").pop()
-      );
-
-      await client.sendMessage(job.chatId, media);
-      fs.unlinkSync(filePath);
-      emptyFolder("downloads");
-
-    } catch (err) {
-      console.error(`[queue] Erro ao baixar ${label}:`, err.message);
-      await job.msg.reply(botMsg(
-        `❌ Não consegui baixar o ${label}.\n\n` +
-        "Verifique se o link é válido e tente novamente.\n" +
-        "Se o problema persistir, o conteúdo pode estar indisponível ou protegido."
-      ));
-    }
+  while (queue.length) {
+    const job = queue.shift();
+    await processJob(job);
   }
 
-  processingQueue = false;
+  processing = false;
+}
+
+/**
+ * Executa um único job: baixa, envia e limpa.
+ * @param {DownloadJob} job
+ */
+async function processJob(job) {
+  const { mime, label } = resolveMediaType(job.type);
+
+  try {
+    const filePath = await download(job.type, job.url, job.msg.id._serialized);
+
+    const media = new MessageMedia(
+      mime,
+      fs.readFileSync(filePath).toString("base64"),
+      path.basename(filePath)
+    );
+
+    await client.sendMessage(job.chatId, media);
+
+    fs.unlinkSync(filePath);
+    emptyFolder("downloads");
+
+    logger.done(`download:${job.type}`, job.url);
+  } catch (err) {
+    logger.error(`Falha ao baixar ${label} — ${err.message}`);
+    await job.msg.reply(botMsg(
+      `❌ Não consegui baixar o ${label}.\n\n` +
+      "Verifique se o link é válido e tente novamente.\n" +
+      "Se o problema persistir, o conteúdo pode estar indisponível ou protegido."
+    ));
+  }
 }

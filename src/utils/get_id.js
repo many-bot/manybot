@@ -1,54 +1,54 @@
-// get_id.js
+/**
+ * Utilitário CLI para descobrir IDs de chats/grupos.
+ * Uso: node src/utils/get_id.js grupos|contatos|<nome>
+ */
+import pkg      from "whatsapp-web.js";
+import qrcode   from "qrcode-terminal";
 import { CLIENT_ID } from "../config.js";
 
+const { Client, LocalAuth } = pkg;
 
-const arg = process.argv[2]; // argumento passado no node
+const arg = process.argv[2];
+
 if (!arg) {
-    console.log("Use: node get_id.js grupos|contatos|<nome>");
-    process.exit(0);
+  console.log("Uso: node get_id.js grupos|contatos|<nome>");
+  process.exit(0);
 }
 
-console.log("[PESQUISANDO] Aguarde...");
-
-import pkg from 'whatsapp-web.js';
-const { Client, LocalAuth } = pkg;
-import qrcode from 'qrcode-terminal';
-
 const client = new Client({
-    authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
-    puppeteer: { headless: true }
+  authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
+  puppeteer: { headless: true },
 });
 
-client.on('qr', qr => {
-    console.log("[WPP] QR Code gerado. Escaneie apenas uma vez:");
-    qrcode.generate(qr, { small: true });
+client.on("qr", (qr) => {
+  console.log("[QR] Escaneie para autenticar:");
+  qrcode.generate(qr, { small: true });
 });
 
-client.on('change_state', async state => {
-    console.log("[WPP] Conectado");
+client.on("ready", async () => {
+  console.log("[OK] Conectado. Buscando chats...\n");
 
-    const chats = await client.getChats();
+  const chats = await client.getChats();
+  const search = arg.toLowerCase();
 
-    let filtered = [];
+  const filtered =
+    search === "grupos"   ? chats.filter(c => c.isGroup) :
+    search === "contatos" ? chats.filter(c => !c.isGroup) :
+    chats.filter(c => (c.name || c.id.user).toLowerCase().includes(search));
 
-    if (arg.toLowerCase() === "grupos") {
-        filtered = chats.filter(c => c.isGroup);
-    } else if (arg.toLowerCase() === "contatos") {
-        filtered = chats.filter(c => !c.isGroup);
-    } else {
-        const search = arg.toLowerCase();
-        filtered = chats.filter(c => (c.name || c.id.user).toLowerCase().includes(search));
-    }
-
+  if (!filtered.length) {
+    console.log("Nenhum resultado encontrado.");
+  } else {
     filtered.forEach(c => {
-        console.log("================================");
-        console.log("NAME:", c.name || c.id.user);
-        console.log("ID:", c.id._serialized);
-        console.log("GROUP:", c.isGroup);
+      console.log("─".repeat(40));
+      console.log("Nome:  ", c.name || c.id.user);
+      console.log("ID:    ", c.id._serialized);
+      console.log("Grupo: ", c.isGroup);
     });
+  }
 
-    await client.destroy();
-    process.exit(0);
+  await client.destroy();
+  process.exit(0);
 });
 
 client.initialize();
