@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Salvando diretório para evitar problemas
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ------------------------
 # Cores
 # ------------------------
@@ -47,8 +50,6 @@ cat << "EOF"
 
 website: www.mlplovers.com.br/manybot
 repo: github.com/synt-xerror/manybot
-
-A Amizade é Mágica!
 
 EOF
 echo -e "${RESET}"
@@ -191,6 +192,27 @@ fi
 log_debug "Total de arquivos para baixar: ${#files[@]}"
 
 # ------------------------
+# Config
+# ------------------------
+log_info "Criando arquivo de configuração"
+
+cat > "src/config.js" << 'EOF'
+export const CLIENT_ID = "bot_permanente";
+export const BOT_PREFIX = "🤖 *ManyBot:* ";
+export const CMD_PREFIX = "!";
+export const CHATS = [
+    // coloque os chats que quer aqui
+];
+
+EOF
+
+if [[ -f src/config.js ]]; then
+    log_ok "Arquivo de configuração criado"
+else
+    log_error "Erro durante criação do arquivo de configuração"
+fi
+
+# ------------------------
 # Download
 # ------------------------
 for file in "${files[@]}"; do
@@ -201,4 +223,4 @@ for file in "${files[@]}"; do
     download_file "$url" "$dest"
 done
 
-log_ok "Setup concluído com sucesso"
+log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' (ou equivalente) para rodar o bot."

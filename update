@@ -1,0 +1,141 @@
+#!/bin/bash
+# ==============================================================================
+# update.sh — Script de atualização segura do ManyBot
+# ==============================================================================
+
+set -euo pipefail
+
+# ------------------------------------------------------------------------------
+# Configuração
+# ------------------------------------------------------------------------------
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+tmp_dir="$dir/tmp"
+log_file="$dir/update.log"
+config_items=(".wwebjs_auth" ".wwebjs_cache" "node_modules")
+
+# ------------------------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------------------------
+log() {
+  local level="$1"; shift
+  local msg="$*"
+  local timestamp
+  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$timestamp] [$level] $msg" | tee -a "$log_file"
+}
+
+# ------------------------------------------------------------------------------
+# Trap: executa em caso de qualquer erro
+# ------------------------------------------------------------------------------
+cleanup_on_error() {
+  local exit_code=$?
+  log "ERROR" "Falha durante a atualização (código: $exit_code)."
+  if [ -d "$tmp_dir" ] && [ "$(ls -A "$tmp_dir" 2>/dev/null)" ]; then
+    log "WARN"  "Arquivos de configuração preservados em: $tmp_dir"
+    log "WARN"  "Restaure manualmente com: mv $tmp_dir/* $dir/"
+  fi
+  exit $exit_code
+}
+trap cleanup_on_error ERR
+
+# ------------------------------------------------------------------------------
+# Validações iniciais
+# ------------------------------------------------------------------------------
+log "INFO" "Iniciando atualização do ManyBot..."
+
+# Verifica dependências obrigatórias
+for cmd in git npm; do
+  if ! command -v "$cmd" &>/dev/null; then
+    log "ERROR" "Dependência ausente: '$cmd' não encontrado no PATH."
+    exit 1
+  fi
+done
+
+# Verifica se está em um repositório git
+if ! git -C "$dir" rev-parse --is-inside-work-tree &>/dev/null; then
+  log "ERROR" "'$dir' não é um repositório git."
+  exit 1
+fi
+
+# Exibe o remote para transparência
+remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "(não definido)")
+log "INFO" "Remote: $remote_url"
+
+# Verifica se há alterações locais não commitadas
+if ! git -C "$dir" diff --quiet || ! git -C "$dir" diff --cached --quiet; then
+  log "WARN" "Existem alterações locais não commitadas. Elas serão descartadas pelo reset."
+  read -r -p "Deseja continuar mesmo assim? [s/N] " confirm
+  confirm="${confirm:-N}"
+  if [[ ! "$confirm" =~ ^[sS]$ ]]; then
+    log "INFO" "Atualização cancelada pelo usuário."
+    exit 0
+  fi
+fi
+
+# ------------------------------------------------------------------------------
+# Backup dos arquivos de configuração
+# ------------------------------------------------------------------------------
+rm -rf "$tmp_dir"
+mkdir -p "$tmp_dir"
+
+backed_up=()
+for item in "${config_items[@]}"; do
+  src="$dir/$item"
+  if [ -e "$src" ]; then
+    mv "$src" "$tmp_dir/"
+    backed_up+=("$item")
+    log "INFO" "Backup: $item → tmp/"
+  fi
+done
+
+# ------------------------------------------------------------------------------
+# Atualização do repositório
+# ------------------------------------------------------------------------------
+log "INFO" "Buscando atualizações..."
+git -C "$dir" fetch origin
+
+branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+log "INFO" "Branch atual: $branch"
+
+# Registra o hash antes e depois para auditoria
+hash_before=$(git -C "$dir" rev-parse HEAD)
+git -C "$dir" reset --hard "origin/$branch"
+hash_after=$(git -C "$dir" rev-parse HEAD)
+
+if [ "$hash_before" = "$hash_after" ]; then
+  log "INFO" "Repositório já estava atualizado (sem mudanças)."
+else
+  log "INFO" "Atualizado: $hash_before → $hash_after"
+fi
+
+# ------------------------------------------------------------------------------
+# Instalação de dependências
+# ------------------------------------------------------------------------------
+log "INFO" "Instalando dependências..."
+npm ci --omit=dev 2>&1 | tee -a "$log_file"
+
+# ------------------------------------------------------------------------------
+# Restauração dos arquivos de configuração
+# ------------------------------------------------------------------------------
+if [ ${#backed_up[@]} -gt 0 ]; then
+  for item in "${backed_up[@]}"; do
+    src="$tmp_dir/$item"
+    dst="$dir/$item"
+    if [ -e "$src" ]; then
+      # Remove o que npm possa ter criado (ex: node_modules)
+      rm -rf "$dst"
+      mv "$src" "$dst"
+      log "INFO" "Restaurado: $item"
+    else
+      log "WARN" "Item esperado no backup não encontrado: $item"
+    fi
+  done
+fi
+
+# Limpa tmp apenas após restauração bem-sucedida
+rm -rf "$tmp_dir"
+
+# ------------------------------------------------------------------------------
+# Concluído
+# ------------------------------------------------------------------------------
+log "INFO" "ManyBot atualizado com sucesso."

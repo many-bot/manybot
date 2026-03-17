@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# development tool
+# ferramenta de desenvolvimento apenas, pode apagar se quiser
 # ./deploy <commit> <branch> <version (if branch=master)>
 
 COMMIT_MSG="$1"
@@ -11,15 +11,6 @@ if [ -z "$COMMIT_MSG" ] || [ -z "$BRANCH" ]; then
     echo "Uso: ./deploy <commit> <branch> [version if branch=master]"
     exit 1
 fi
-
-echo "Rewriting config.js"
-cat > "src/config.js" << 'EOF'
-export const CLIENT_ID = "bot_permanente";
-export const BOT_PREFIX = "🤖 *ManyBot:* ";
-export const CHATS = [
-    // coloque os chats que quer aqui
-];
-EOF
 
 # mudar para a branch
 git checkout $BRANCH || { echo "Error ao change to $BRANCH"; exit 1; }
