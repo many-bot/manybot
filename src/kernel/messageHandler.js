@@ -13,7 +13,7 @@
  * Cada plugin decide por conta própria se age ou ignora.
  */
 
-import { CHATS, BOT_PREFIX }  from "../config.js";
+import { CHATS }  from "../config.js";
 import { getChatId }           from "../utils/getChatId.js";
 import { buildApi }            from "./pluginApi.js";
 import { pluginRegistry }      from "./pluginLoader.js";
@@ -29,7 +29,7 @@ export async function handleMessage(msg) {
   // CHATS vazio = aceita todos os chats
   if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
 
-  const ctx = await buildMessageContext(msg, chat, BOT_PREFIX);
+  const ctx = await buildMessageContext(msg, chat);
   logger.msg(ctx);
 
   const api     = buildApi({ msg, chat, client, pluginRegistry });
