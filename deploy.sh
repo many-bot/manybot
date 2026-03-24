@@ -96,123 +96,138 @@ success "Branch: ${BOLD}$BRANCH${RESET}"
 # ──────────────────────────────────────────
 # GATE 2 — Working tree limpa
 # ──────────────────────────────────────────
+function worktree() {
+    # Em modo release, working tree tem de estar absolutamente limpa
+    if [[ -n "$RELEASE_TYPE" ]]; then
+      warn "Arquivos não commitados:"
+      [[ -n "$STAGED"    ]] && echo -e "  ${GREEN}Staged:${RESET}\n$(echo "$STAGED"    | sed 's/^/    /')"
+      [[ -n "$MODIFIED"  ]] && echo -e "  ${YELLOW}Modificados:${RESET}\n$(echo "$MODIFIED"  | sed 's/^/    /')"
+      [[ -n "$UNTRACKED" ]] && echo -e "  ${RED}Não rastreados:${RESET}\n$(echo "$UNTRACKED" | sed 's/^/    /')"
+      die "Working tree suja. Faça commit ou stash antes de um release."
+    fi
+
+    # ── Seletor interativo de arquivos ──────────────────────────────────────
+    # Monta lista indexada: staged (S), modificados (M), não rastreados (?)
+    declare -a ALL_FILES
+    declare -a ALL_LABELS
+    while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${GREEN}staged${RESET}");    done <<< "$STAGED"
+    while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${YELLOW}modificado${RESET}"); done <<< "$MODIFIED"
+    while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${RED}novo${RESET}");        done <<< "$UNTRACKED"
+
+    echo ""
+    echo -e "${BOLD}Mudanças detectadas:${RESET}"
+    for i in "${!ALL_FILES[@]}"; do
+      printf "  %2d) %b  %s\n" "$((i+1))" "${ALL_LABELS[$i]}" "${ALL_FILES[$i]}"
+    done
+    echo ""
+
+    declare -a SELECTED_FILES
+
+    echo -e "Digite os números para adicionar ao commit, ${BOLD}all${RESET} para todos, ou ${BOLD}done${RESET} para encerrar:"
+    while true; do
+      echo -ne "${BLUE}▸${RESET} "
+      read -r INPUT
+
+      case "$INPUT" in
+        done|"")
+          [[ ${#SELECTED_FILES[@]} -eq 0 ]] && die "Nenhum arquivo selecionado. Operação cancelada."
+          break
+          ;;
+        all)
+          SELECTED_FILES=("${ALL_FILES[@]}")
+          echo -e "  ${GREEN}✔${RESET} Todos os arquivos adicionados."
+          break
+          ;;
+        *)
+          # Aceita múltiplos números na mesma linha (ex: "1 3 5")
+          for TOKEN in $INPUT; do
+            if [[ "$TOKEN" =~ ^[0-9]+$ ]] && (( TOKEN >= 1 && TOKEN <= ${#ALL_FILES[@]} )); then
+              FILE="${ALL_FILES[$((TOKEN-1))]}"
+              # Evita duplicatas
+              if printf '%s\n' "${SELECTED_FILES[@]+"${SELECTED_FILES[@]}"}" | grep -qxF "$FILE"; then
+                warn "$FILE já está na lista."
+              else
+                SELECTED_FILES+=("$FILE")
+                echo -e "  ${GREEN}✔${RESET} adicionado: ${BOLD}$FILE${RESET}"
+              fi
+            else
+              warn "Entrada inválida: '$TOKEN' — use um número entre 1 e ${#ALL_FILES[@]}, 'all' ou 'done'."
+            fi
+          done
+          ;;
+      esac
+    done
+
+    echo ""
+    info "Arquivos no commit:"
+    for f in "${SELECTED_FILES[@]}"; do echo "    $f"; done
+    echo ""
+
+    # ── Mensagem de commit ──────────────────────────────────────────────────
+    echo "Tipos de commit (Conventional Commits):"
+    echo "  feat     → nova funcionalidade"
+    echo "  fix      → correção de bug"
+    echo "  docs     → só documentação"
+    echo "  refactor → refatoração sem mudança de comportamento"
+    echo "  test     → adição/correção de testes"
+    echo "  chore    → manutenção, dependências, CI"
+    echo "  style    → formatação, whitespace"
+    echo ""
+    echo -n "Tipo: "
+    read -r COMMIT_TYPE
+    [[ "$COMMIT_TYPE" =~ ^(feat|fix|docs|refactor|test|chore|style)$ ]] \
+      || die "Tipo inválido. Use um dos listados acima."
+
+    echo -n "Escopo (opcional, ex: auth, api, ui — Enter para pular): "
+    read -r COMMIT_SCOPE
+
+    echo -n "Descrição curta: "
+    read -r COMMIT_DESC
+    [[ -z "$COMMIT_DESC" ]] && die "Descrição não pode ser vazia."
+
+    echo -n "Há breaking changes? [s/N]: "
+    read -r BREAKING
+    BREAKING_FOOTER=""
+    if [[ "$BREAKING" =~ ^[sS]$ ]]; then
+      echo -n "Descreva o breaking change: "
+      read -r BREAKING_MSG
+      BREAKING_FOOTER=$'\n\nBREAKING CHANGE: '"$BREAKING_MSG"
+    fi
+
+    if [[ -n "$COMMIT_SCOPE" ]]; then
+      COMMIT_MSG="${COMMIT_TYPE}(${COMMIT_SCOPE}): ${COMMIT_DESC}${BREAKING_FOOTER}"
+    else
+      COMMIT_MSG="${COMMIT_TYPE}: ${COMMIT_DESC}${BREAKING_FOOTER}"
+    fi
+
+    echo ""
+    info "Mensagem: ${BOLD}${COMMIT_MSG}${RESET}"
+
+    for f in "${SELECTED_FILES[@]}"; do run git add -- "$f"; done
+    run git commit -m "$COMMIT_MSG"
+    success "Commit criado."
+}
+
 step "[ 2/6 ] Verificando working tree..."
 
-UNTRACKED=$(git ls-files --others --exclude-standard)
-MODIFIED=$(git diff --name-only)
-STAGED=$(git diff --cached --name-only)
-
-if [[ -n "$UNTRACKED" || -n "$MODIFIED" || -n "$STAGED" ]]; then
-
-  # Em modo release, working tree tem de estar absolutamente limpa
-  if [[ -n "$RELEASE_TYPE" ]]; then
-    warn "Arquivos não commitados:"
-    [[ -n "$STAGED"    ]] && echo -e "  ${GREEN}Staged:${RESET}\n$(echo "$STAGED"    | sed 's/^/    /')"
-    [[ -n "$MODIFIED"  ]] && echo -e "  ${YELLOW}Modificados:${RESET}\n$(echo "$MODIFIED"  | sed 's/^/    /')"
-    [[ -n "$UNTRACKED" ]] && echo -e "  ${RED}Não rastreados:${RESET}\n$(echo "$UNTRACKED" | sed 's/^/    /')"
-    die "Working tree suja. Faça commit ou stash antes de um release."
-  fi
-
-  # ── Seletor interativo de arquivos ──────────────────────────────────────
-  # Monta lista indexada: staged (S), modificados (M), não rastreados (?)
-  declare -a ALL_FILES
-  declare -a ALL_LABELS
-  while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${GREEN}staged${RESET}");    done <<< "$STAGED"
-  while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${YELLOW}modificado${RESET}"); done <<< "$MODIFIED"
-  while IFS= read -r f; do [[ -n "$f" ]] && ALL_FILES+=("$f") && ALL_LABELS+=("${RED}novo${RESET}");        done <<< "$UNTRACKED"
-
-  echo ""
-  echo -e "${BOLD}Mudanças detectadas:${RESET}"
-  for i in "${!ALL_FILES[@]}"; do
-    printf "  %2d) %b  %s\n" "$((i+1))" "${ALL_LABELS[$i]}" "${ALL_FILES[$i]}"
-  done
-  echo ""
-
-  declare -a SELECTED_FILES
-
-  echo -e "Digite os números para adicionar ao commit, ${BOLD}all${RESET} para todos, ou ${BOLD}done${RESET} para encerrar:"
-  while true; do
-    echo -ne "${BLUE}▸${RESET} "
-    read -r INPUT
-
-    case "$INPUT" in
-      done|"")
-        [[ ${#SELECTED_FILES[@]} -eq 0 ]] && die "Nenhum arquivo selecionado. Operação cancelada."
-        break
-        ;;
-      all)
-        SELECTED_FILES=("${ALL_FILES[@]}")
-        echo -e "  ${GREEN}✔${RESET} Todos os arquivos adicionados."
-        break
-        ;;
-      *)
-        # Aceita múltiplos números na mesma linha (ex: "1 3 5")
-        for TOKEN in $INPUT; do
-          if [[ "$TOKEN" =~ ^[0-9]+$ ]] && (( TOKEN >= 1 && TOKEN <= ${#ALL_FILES[@]} )); then
-            FILE="${ALL_FILES[$((TOKEN-1))]}"
-            # Evita duplicatas
-            if printf '%s\n' "${SELECTED_FILES[@]+"${SELECTED_FILES[@]}"}" | grep -qxF "$FILE"; then
-              warn "$FILE já está na lista."
-            else
-              SELECTED_FILES+=("$FILE")
-              echo -e "  ${GREEN}✔${RESET} adicionado: ${BOLD}$FILE${RESET}"
-            fi
-          else
-            warn "Entrada inválida: '$TOKEN' — use um número entre 1 e ${#ALL_FILES[@]}, 'all' ou 'done'."
-          fi
-        done
-        ;;
-    esac
-  done
-
-  echo ""
-  info "Arquivos no commit:"
-  for f in "${SELECTED_FILES[@]}"; do echo "    $f"; done
-  echo ""
-
-  # ── Mensagem de commit ──────────────────────────────────────────────────
-  echo "Tipos de commit (Conventional Commits):"
-  echo "  feat     → nova funcionalidade"
-  echo "  fix      → correção de bug"
-  echo "  docs     → só documentação"
-  echo "  refactor → refatoração sem mudança de comportamento"
-  echo "  test     → adição/correção de testes"
-  echo "  chore    → manutenção, dependências, CI"
-  echo "  style    → formatação, whitespace"
-  echo ""
-  echo -n "Tipo: "
-  read -r COMMIT_TYPE
-  [[ "$COMMIT_TYPE" =~ ^(feat|fix|docs|refactor|test|chore|style)$ ]] \
-    || die "Tipo inválido. Use um dos listados acima."
-
-  echo -n "Escopo (opcional, ex: auth, api, ui — Enter para pular): "
-  read -r COMMIT_SCOPE
-
-  echo -n "Descrição curta: "
-  read -r COMMIT_DESC
-  [[ -z "$COMMIT_DESC" ]] && die "Descrição não pode ser vazia."
-
-  echo -n "Há breaking changes? [s/N]: "
-  read -r BREAKING
-  BREAKING_FOOTER=""
-  if [[ "$BREAKING" =~ ^[sS]$ ]]; then
-    echo -n "Descreva o breaking change: "
-    read -r BREAKING_MSG
-    BREAKING_FOOTER=$'\n\nBREAKING CHANGE: '"$BREAKING_MSG"
-  fi
-
-  if [[ -n "$COMMIT_SCOPE" ]]; then
-    COMMIT_MSG="${COMMIT_TYPE}(${COMMIT_SCOPE}): ${COMMIT_DESC}${BREAKING_FOOTER}"
+function thereschanges(){
+  UNTRACKED=$(git ls-files --others --exclude-standard)
+  MODIFIED=$(git diff --name-only)
+  STAGED=$(git diff --cached --name-only)
+  if [[ -n "$UNTRACKED" || -n "$MODIFIED" || -n "$STAGED" ]]; then
+    return 0
   else
-    COMMIT_MSG="${COMMIT_TYPE}: ${COMMIT_DESC}${BREAKING_FOOTER}"
+    return 1
   fi
+}
 
-  echo ""
-  info "Mensagem: ${BOLD}${COMMIT_MSG}${RESET}"
-
-  for f in "${SELECTED_FILES[@]}"; do run git add -- "$f"; done
-  run git commit -m "$COMMIT_MSG"
-  success "Commit criado."
+if thereschanges; then
+  worktree
+  if thereschanges; then
+    echo -n "Deseja criar outro commit? [s/N]: "
+    read -r OTHERCOMMIT
+    [[ "$OTHERCOMMIT" =~ ^[sS]$ ]] && worktree
+  fi
 else
   success "Working tree limpa."
 fi
