@@ -20,6 +20,43 @@ const { MessageMedia } = pkg;
  * @param {Map<string, any>}                  params.pluginRegistry
  * @returns {object} api
  */
+/**
+ * API de setup — sem contexto de mensagem.
+ * Passada para plugin.setup(api) na inicialização.
+ * Só tem sendTo e variantes, log e schedule.
+ */
+export function buildSetupApi(client) {
+  return {
+    async sendTo(chatId, text) {
+      return client.sendMessage(chatId, text);
+    },
+    async sendVideoTo(chatId, filePath, caption = "") {
+      const media = MessageMedia.fromFilePath(filePath);
+      return client.sendMessage(chatId, media, { caption });
+    },
+    async sendAudioTo(chatId, filePath) {
+      const media = MessageMedia.fromFilePath(filePath);
+      return client.sendMessage(chatId, media, { sendAudioAsVoice: true });
+    },
+    async sendImageTo(chatId, filePath, caption = "") {
+      const media = MessageMedia.fromFilePath(filePath);
+      return client.sendMessage(chatId, media, { caption });
+    },
+    async sendStickerTo(chatId, source) {
+      const media = typeof source === "string"
+        ? MessageMedia.fromFilePath(source)
+        : new MessageMedia("image/webp", source.toString("base64"));
+      return client.sendMessage(chatId, media, { sendMediaAsSticker: true });
+    },
+    log: {
+      info:    (...a) => logger.info(...a),
+      warn:    (...a) => logger.warn(...a),
+      error:   (...a) => logger.error(...a),
+      success: (...a) => logger.success(...a),
+    },
+  };
+}
+
 export function buildApi({ msg, chat, client, pluginRegistry }) {
 
   const currentChat = chat;

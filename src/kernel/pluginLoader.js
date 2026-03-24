@@ -12,7 +12,7 @@ import fs   from "fs";
 import path from "path";
 import { logger } from "../logger/logger.js";
 
-const PLUGINS_DIR = path.resolve("src/plugins");
+const PLUGINS_DIR = path.resolve("plugins");
 
 /**
  * Cada entrada no registry:
@@ -52,6 +52,23 @@ export async function loadPlugins(activePlugins) {
 }
 
 /**
+ * Chama setup(api) em todos os plugins que o exportarem.
+ * Executado uma vez após o bot conectar ao WhatsApp.
+ *
+ * @param {object} api — api sem contexto de mensagem (só sendTo, log, schedule...)
+ */
+export async function setupPlugins(api) {
+  for (const plugin of pluginRegistry.values()) {
+    if (plugin.status !== "active" || !plugin.setup) continue;
+    try {
+      await plugin.setup(api);
+    } catch (err) {
+      logger.error(`Falha no setup do plugin "${plugin.name}": ${err.message}`);
+    }
+  }
+}
+
+/**
  * Carrega um único plugin pelo nome.
  * @param {string} name
  */
@@ -76,7 +93,8 @@ async function loadPlugin(name) {
       name,
       status:  "active",
       run:     mod.default,
-      exports: mod.api ?? null,   // exports públicos opcionais (api de outros plugins)
+      setup:   mod.setup ?? null,     // opcional — chamado uma vez na inicialização
+      exports: mod.api ?? null,
       error:   null,
     });
 

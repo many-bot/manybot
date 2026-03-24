@@ -7,11 +7,12 @@
 
 import client               from "./client/whatsappClient.js";
 import { handleMessage }    from "./kernel/messageHandler.js";
-import { loadPlugins }      from "./kernel/pluginLoader.js";
+import { loadPlugins, setupPlugins } from "./kernel/pluginLoader.js";
+import { buildSetupApi }    from "./kernel/pluginApi.js";
 import { logger }           from "./logger/logger.js";
 import { PLUGINS }          from "./config.js";
 
-logger.info("Iniciando ManyBot...\n");
+logger.info("Iniciando ManyBot...");
 
 // Rede de segurança global — nenhum erro deve derrubar o bot
 process.on("uncaughtException", (err) => {
@@ -37,6 +38,7 @@ client.on("message_create", async (msg) => {
   }
 });
 
-client.initialize();
-console.log("\n");
+client.on("ready", async () => {
+  await setupPlugins(buildSetupApi(client));
+});
 logger.info("Cliente inicializado. Aguardando conexão com WhatsApp...");
