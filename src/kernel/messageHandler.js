@@ -26,23 +26,19 @@ import { logger }               from "../logger/logger.js";
 export async function handleMessage(msg) {
   const chat   = await msg.getChat();
   const chatId = getChatId(chat);
-
-  // Filtra chats não autorizados
-  if (!CHATS.includes(chatId)) return;
-
-  // Loga a mensagem recebida
+ 
+  // CHATS vazio = aceita todos os chats
+  if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
+ 
   const ctx = await buildMessageContext(msg, chat);
   logger.msg(ctx);
-
-  // Monta a api que será passada para os plugins
-  const api = buildApi({ msg, chat, pluginRegistry });
-
-  // Distribui para todos os plugins ativos
+ 
+  const api     = buildApi({ msg, chat, pluginRegistry });
   const context = { msg: api.msg, chat: api.chat, api };
-
+ 
   for (const plugin of pluginRegistry.values()) {
     await runPlugin(plugin, context);
   }
-
+ 
   logger.done("message_create", `de +${ctx.senderNumber}`);
 }
