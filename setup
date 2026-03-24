@@ -185,18 +185,17 @@ files=()
 if [[ "$PLATFORM" == "win" ]]; then
     log_debug "Usando binários Windows"
     files=(
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp.exe bin/yt-dlp.exe"
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg.exe bin/ffmpeg.exe"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp.exe $SCRIPT_DIR/bin/yt-dlp.exe"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg.exe $SCRIPT_DIR/bin/ffmpeg.exe"
     )
 else
     log_debug "Usando binários Unix"
     files=(
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp bin/yt-dlp"
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg bin/ffmpeg"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp $SCRIPT_DIR/bin/yt-dlp"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg $SCRIPT_DIR/bin/ffmpeg"
     )
 fi
 
-chmod +x bin/*
 log_debug "Total de arquivos para baixar: ${#files[@]}"
 
 # ------------------------
@@ -209,5 +208,9 @@ for file in "${files[@]}"; do
     log_info "Processando dependência"
     download_file "$url" "$dest"
 done
+
+# permissões
+log_info "Aplicando permissões de execução"
+chmod -R +x $SCRIPT_DIR/bin/
 
 log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' (ou equivalente) para rodar o bot."
