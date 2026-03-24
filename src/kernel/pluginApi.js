@@ -155,6 +155,61 @@ export function buildApi({ msg, chat, pluginRegistry }) {
       return currentChat.sendMessage(media, { sendMediaAsSticker: true });
     },
 
+    // ── Envio para chat específico ───────────────────────────
+
+    /**
+     * Envia texto para um chat específico por ID.
+     * @param {string} chatId
+     * @param {string} text
+     */
+    async sendTo(chatId, text) {
+      return currentChat._client.sendMessage(chatId, text);
+    },
+
+    /**
+     * Envia vídeo para um chat específico por ID.
+     * @param {string} chatId
+     * @param {string} filePath
+     * @param {string} [caption]
+     */
+    async sendVideoTo(chatId, filePath, caption = "") {
+      const media = MessageMedia.fromFilePath(filePath);
+      return currentChat._client.sendMessage(chatId, media, { caption });
+    },
+
+    /**
+     * Envia áudio para um chat específico por ID.
+     * @param {string} chatId
+     * @param {string} filePath
+     */
+    async sendAudioTo(chatId, filePath) {
+      const media = MessageMedia.fromFilePath(filePath);
+      return currentChat._client.sendMessage(chatId, media, { sendAudioAsVoice: true });
+    },
+
+    /**
+     * Envia imagem para um chat específico por ID.
+     * @param {string} chatId
+     * @param {string} filePath
+     * @param {string} [caption]
+     */
+    async sendImageTo(chatId, filePath, caption = "") {
+      const media = MessageMedia.fromFilePath(filePath);
+      return currentChat._client.sendMessage(chatId, media, { caption });
+    },
+
+    /**
+     * Envia figurinha para um chat específico por ID.
+     * @param {string} chatId
+     * @param {string | Buffer} source
+     */
+    async sendStickerTo(chatId, source) {
+      const media = typeof source === "string"
+        ? MessageMedia.fromFilePath(source)
+        : new MessageMedia("image/webp", source.toString("base64"));
+      return currentChat._client.sendMessage(chatId, media, { sendMediaAsSticker: true });
+    },
+
     // ── Acesso a outros plugins ──────────────────────────────
 
     /**
