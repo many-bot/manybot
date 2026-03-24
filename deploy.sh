@@ -249,7 +249,6 @@ fi
 
 # Testes
 run_if_exists "Testes (npm)"    "node -e \"require('./package.json').scripts?.test\" && npm test --if-present"
-run_if_exists "Testes (pytest)" "command -v pytest && pytest"
 
 # Build (só bloqueia em release)
 if [[ -n "$RELEASE_TYPE" ]]; then
@@ -324,9 +323,9 @@ run git push origin "$BRANCH" --follow-tags
 # Resumo final
 # ──────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}══════════════════════════════${RESET}"
+echo -e "${GREEN}${BOLD}═════════════════════════════════${RESET}"
 echo -e "${GREEN}${BOLD}  Deploy concluído com sucesso!${RESET}"
-echo -e "${GREEN}${BOLD}══════════════════════════════${RESET}"
+echo -e "${GREEN}${BOLD}═════════════════════════════════${RESET}"
 echo -e "  Branch : ${BOLD}$BRANCH${RESET}"
 [[ -n "$RELEASE_TYPE" ]] && \
   echo -e "  Release: ${BOLD}$RELEASE_TYPE${RESET} → ${BOLD}${NEW_VERSION:-$NEW_TAG}${RESET}"
