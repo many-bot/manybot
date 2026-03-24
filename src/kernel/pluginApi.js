@@ -20,9 +20,8 @@ const { MessageMedia } = pkg;
  * @param {Map<string, any>}                  params.pluginRegistry
  * @returns {object} api
  */
-export function buildApi({ msg, chat, pluginRegistry }) {
+export function buildApi({ msg, chat, client, pluginRegistry }) {
 
-  // ── Helpers internos ──────────────────────────────────────
   const currentChat = chat;
 
   return {
@@ -163,7 +162,7 @@ export function buildApi({ msg, chat, pluginRegistry }) {
      * @param {string} text
      */
     async sendTo(chatId, text) {
-      return currentChat._client.sendMessage(chatId, text);
+      return client.sendMessage(chatId, text);
     },
 
     /**
@@ -174,7 +173,7 @@ export function buildApi({ msg, chat, pluginRegistry }) {
      */
     async sendVideoTo(chatId, filePath, caption = "") {
       const media = MessageMedia.fromFilePath(filePath);
-      return currentChat._client.sendMessage(chatId, media, { caption });
+      return client.sendMessage(chatId, media, { caption });
     },
 
     /**
@@ -184,7 +183,7 @@ export function buildApi({ msg, chat, pluginRegistry }) {
      */
     async sendAudioTo(chatId, filePath) {
       const media = MessageMedia.fromFilePath(filePath);
-      return currentChat._client.sendMessage(chatId, media, { sendAudioAsVoice: true });
+      return client.sendMessage(chatId, media, { sendAudioAsVoice: true });
     },
 
     /**
@@ -195,7 +194,7 @@ export function buildApi({ msg, chat, pluginRegistry }) {
      */
     async sendImageTo(chatId, filePath, caption = "") {
       const media = MessageMedia.fromFilePath(filePath);
-      return currentChat._client.sendMessage(chatId, media, { caption });
+      return client.sendMessage(chatId, media, { caption });
     },
 
     /**
@@ -207,7 +206,7 @@ export function buildApi({ msg, chat, pluginRegistry }) {
       const media = typeof source === "string"
         ? MessageMedia.fromFilePath(source)
         : new MessageMedia("image/webp", source.toString("base64"));
-      return currentChat._client.sendMessage(chatId, media, { sendMediaAsSticker: true });
+      return client.sendMessage(chatId, media, { sendMediaAsSticker: true });
     },
 
     // ── Acesso a outros plugins ──────────────────────────────
