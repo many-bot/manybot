@@ -28,7 +28,6 @@ export async function getNumber(msg) {
  * @property {string} senderNumber
  * @property {string} type
  * @property {string} body
- * @property {boolean} isCommand
  * @property {{ name: string, number: string, preview: string } | null} quoted
  */
 export async function buildMessageContext(msg, chat, botPrefix) {
@@ -47,7 +46,6 @@ export async function buildMessageContext(msg, chat, botPrefix) {
     senderNumber: number,
     type:         msg?.type || "text",
     body:         msg.body,
-    isCommand:    !!msg.body?.trimStart().startsWith(botPrefix),
     quoted,
   };
 }

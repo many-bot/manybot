@@ -1,3 +1,0 @@
-Possibilidade de tirar fundo de figurinhas
-
-Salvar mensagens num banco de dados

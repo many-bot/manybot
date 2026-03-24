@@ -114,6 +114,64 @@ fi
 log "INFO" "Instalando dependências..."
 npm ci --omit=dev 2>&1 | tee -a "$log_file"
 
+# ------------------------
+# Download
+# ------------------------
+download_file() {
+    local url="$1"
+    local dest="$2"
+
+    log "download_file(url=$url, dest=$dest)"
+
+    log "Baixando $url"
+    log "Destino: $dest"
+
+    if command -v curl >/dev/null 2>&1; then
+        log "Downloader: curl"
+        curl -L "$url" -o "$dest"
+    elif command -v wget >/dev/null 2>&1; then
+        log "Downloader: wget"
+        wget "$url" -O "$dest"
+    else
+        log "curl ou wget não encontrados"
+        exit 1
+    fi
+
+    chmod +x "$dest" 2>/dev/null || true
+    log "Arquivo pronto: $dest"
+}
+
+# ------------------------
+# Arquivos por plataforma
+# ------------------------
+log "Selecionando dependências binárias"
+
+files=()
+if [[ "$PLATFORM" == "win" ]]; then
+    log "Usando binários Windows"
+    files=(
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp.exe bin/yt-dlp.exe"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg.exe bin/ffmpeg.exe"
+    )
+else
+    log "Usando binários Unix"
+    files=(
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp bin/yt-dlp"
+        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg bin/ffmpeg"
+    )
+log "Total de arquivos para baixar: ${#files[@]}"
+
+# ------------------------
+# Download
+# ------------------------
+for file in "${files[@]}"; do
+    url="${file%% *}"
+    dest="${file##* }"
+
+    log "Processando dependência"
+    download_file "$url" "$dest"
+done
+
 # ------------------------------------------------------------------------------
 # Restauração dos arquivos de configuração
 # ------------------------------------------------------------------------------
@@ -125,7 +183,7 @@ if [ ${#backed_up[@]} -gt 0 ]; then
       # Remove o que npm possa ter criado (ex: node_modules)
       rm -rf "$dst"
       mv "$src" "$dst"
-      log "INFO" "Restaurado: $item"
+      l"INFO" "Restaurado: $item"
     else
       log "WARN" "Item esperado no backup não encontrado: $item"
     fi

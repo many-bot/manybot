@@ -6,8 +6,6 @@ export const c = {
   blue: "\x1b[34m", magenta: "\x1b[35m",
 };
 
-export const SEP = `${c.gray}${"─".repeat(52)}${c.reset}`;
-
 export const now = () =>
   new Date().toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "medium" });
 
@@ -26,9 +24,9 @@ export const formatContext = (chatName, isGroup) =>
     ? `${c.bold}${chatName}${c.reset} ${c.dim}(grupo)${c.reset}`
     : `${c.bold}${chatName}${c.reset} ${c.dim}(privado)${c.reset}`;
 
-export const formatBody = (body, isCommand) =>
+export const formatBody = (body) =>
   body?.trim()
-    ? `${isCommand ? c.yellow : c.green}"${body.length > 200 ? body.slice(0, 200) + "..." : body}"${c.reset}`
+    ? `${c.green}"${body.length > 200 ? body.slice(0, 200) + "..." : body}"${c.reset}`
     : `${c.dim}<mídia>${c.reset}`;
 
 export const formatReply = (quotedName, quotedNumber, quotedPreview) =>

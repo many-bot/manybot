@@ -16,14 +16,21 @@ logger.info(isTermux
 // ── Instância ─────────────────────────────────────────────────
 export const client = new Client({
   authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
-  puppeteer: { headless: true, ...resolvePuppeteerConfig() },
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      ...(resolvePuppeteerConfig().args || [])
+    ],
+    ...resolvePuppeteerConfig()
+  },
 });
 
 // ── Eventos ───────────────────────────────────────────────────
 client.on("qr", handleQR);
 
 client.on("ready", () => {
-  console.log("READY DISPAROU");  // temporário
   printBanner();
   logger.success("WhatsApp conectado e pronto!");
   logger.info(`Client ID: ${CLIENT_ID}`);

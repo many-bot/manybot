@@ -163,6 +163,13 @@ export PUPPETEER_SKIP_DOWNLOAD=1
 run_cmd npm install
 
 # ------------------------
+# Chrome Puppeeter
+# ------------------------
+log_info "Instalando Chrome"
+
+npx puppeteer browsers install chrome
+
+# ------------------------
 # Diretórios
 # ------------------------
 log_info "Preparando diretórios"
@@ -189,28 +196,8 @@ else
     )
 fi
 
+chmod +x bin/*
 log_debug "Total de arquivos para baixar: ${#files[@]}"
-
-# ------------------------
-# Config
-# ------------------------
-log_info "Criando arquivo de configuração"
-
-cat > "src/config.js" << 'EOF'
-export const CLIENT_ID = "bot_permanente";
-export const BOT_PREFIX = "🤖 *ManyBot:* ";
-export const CMD_PREFIX = "!";
-export const CHATS = [
-    // coloque os chats que quer aqui
-];
-
-EOF
-
-if [[ -f src/config.js ]]; then
-    log_ok "Arquivo de configuração criado"
-else
-    log_error "Erro durante criação do arquivo de configuração"
-fi
 
 # ------------------------
 # Download

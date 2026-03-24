@@ -1,7 +1,13 @@
+/**
+ * config.js
+ *
+ * Lê e parseia o manybot.conf.
+ * Suporta listas multilinhas e comentários inline.
+ */
+
 import fs from "fs";
 
 function parseConf(raw) {
-  // Remove comentários inline e de linha inteira, preservando estrutura
   const lines = raw.split("\n");
 
   const cleaned = [];
@@ -9,13 +15,11 @@ function parseConf(raw) {
   let buffer = "";
 
   for (let line of lines) {
-    // Remove comentário inline (# ...) — mas só fora de strings
     line = line.replace(/#.*$/, "").trim();
     if (!line) continue;
 
     if (!insideList) {
       if (line.includes("=[") && !line.includes("]")) {
-        // Início de lista multilinha
         insideList = true;
         buffer = line;
       } else {
@@ -24,7 +28,6 @@ function parseConf(raw) {
     } else {
       buffer += line;
       if (line.includes("]")) {
-        // Fim da lista
         insideList = false;
         cleaned.push(buffer);
         buffer = "";
@@ -32,7 +35,6 @@ function parseConf(raw) {
     }
   }
 
-  // Parseia cada linha chave=valor
   const result = {};
   for (const line of cleaned) {
     const eqIdx = line.indexOf("=");
@@ -55,10 +57,15 @@ function parseConf(raw) {
   return result;
 }
 
-const raw = fs.readFileSync("manybot.conf", "utf8");
+const raw    = fs.readFileSync("manybot.conf", "utf8");
 const config = parseConf(raw);
 
-export const CLIENT_ID  = config.CLIENT_ID  ?? "bot_permanente";
-export const BOT_PREFIX = config.BOT_PREFIX ?? "🤖 *ManyBot:* ";
-export const CMD_PREFIX = config.CMD_PREFIX ?? "!";
-export const CHATS      = config.CHATS      ?? [];
+export const CLIENT_ID     = config.CLIENT_ID  ?? "bot_permanente";
+export const CMD_PREFIX    = config.CMD_PREFIX ?? "!";
+export const CHATS         = config.CHATS      ?? [];
+
+/** Lista de plugins ativos — ex: PLUGINS=[video, audio, hello] */
+export const PLUGINS       = config.PLUGINS    ?? [];
+
+/** Exporta o config completo para plugins que precisam de valores customizados */
+export const CONFIG        = config;

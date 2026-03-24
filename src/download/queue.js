@@ -1,74 +1,54 @@
-import fs                   from "fs";
-import path                 from "path";
-import pkg                  from "whatsapp-web.js";
-import { download }          from "./downloader.js";
-import { resolveMediaType }  from "./mediaType.js";
-import { botMsg }           from "../utils/botMsg.js";
-import { emptyFolder }      from "../utils/file.js";
-import { logger }           from "../logger/logger.js";
-import client               from "../client/whatsappClient.js";
-
-const { MessageMedia } = pkg;
-
 /**
- * @typedef {{ type: "video"|"audio", url: string, msg: object, chatId: string }} DownloadJob
+ * src/download/queue.js
+ *
+ * Fila de execução sequencial para jobs pesados (downloads, conversões).
+ * Garante que apenas um job roda por vez — sem sobrecarregar yt-dlp ou ffmpeg.
+ *
+ * O plugin passa uma `workFn` que faz tudo: baixar, converter, enviar.
+ * A fila só garante a sequência e trata erros.
+ *
+ * Uso:
+ *   import { enqueue } from "../../src/download/queue.js";
+ *   enqueue(async () => { ... toda a lógica do plugin ... }, onError);
  */
 
-/** @type {DownloadJob[]} */
+import { logger } from "../logger/logger.js";
+
+/**
+ * @typedef {{
+ *   workFn:   () => Promise<void>,
+ *   errorFn:  (err: Error) => Promise<void>,
+ * }} Job
+ */
+
+/** @type {Job[]} */
 let queue = [];
 let processing = false;
 
 /**
  * Adiciona um job à fila e inicia o processamento se estiver idle.
- * @param {"video"|"audio"} type
- * @param {string} url
- * @param {object} msg
- * @param {string} chatId
+ *
+ * @param {Function} workFn   — async () => void  — toda a lógica do plugin
+ * @param {Function} errorFn  — async (err) => void  — chamado se workFn lançar
  */
-export function enqueueDownload(type, url, msg, chatId) {
-  queue.push({ type, url, msg, chatId });
+export function enqueue(workFn, errorFn) {
+  queue.push({ workFn, errorFn });
   if (!processing) processQueue();
 }
 
 async function processQueue() {
   processing = true;
-
   while (queue.length) {
-    const job = queue.shift();
-    await processJob(job);
+    await processJob(queue.shift());
   }
-
   processing = false;
 }
 
-/**
- * Executa um único job: baixa, envia e limpa.
- * @param {DownloadJob} job
- */
-async function processJob(job) {
-  const { mime, label } = resolveMediaType(job.type);
-
+async function processJob({ workFn, errorFn }) {
   try {
-    const filePath = await download(job.type, job.url, job.msg.id._serialized);
-
-    const media = new MessageMedia(
-      mime,
-      fs.readFileSync(filePath).toString("base64"),
-      path.basename(filePath)
-    );
-
-    await client.sendMessage(job.chatId, media);
-
-    fs.unlinkSync(filePath);
-    emptyFolder("downloads");
-
-    logger.done(`download:${job.type}`, job.url);
+    await workFn();
   } catch (err) {
-    logger.error(`Falha ao baixar ${label} — ${err.message}`);
-    await job.msg.reply(botMsg(
-      `❌ Não consegui baixar o ${label}.\n\n` +
-      "Verifique se o link é válido e tente novamente.\n" +
-      "Se o problema persistir, o conteúdo pode estar indisponível ou protegido."
-    ));
+    logger.error(`Falha no job — ${err.message}`);
+    try { await errorFn(err); } catch { }
   }
 }

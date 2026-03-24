@@ -4,8 +4,9 @@
  */
 import pkg      from "whatsapp-web.js";
 import qrcode   from "qrcode-terminal";
-import { CLIENT_ID } from "../config.js";
+import { resolvePuppeteerConfig } from "../client/environment.js";
 
+const CLIENT_ID="getId"
 const { Client, LocalAuth } = pkg;
 
 const arg = process.argv[2];
@@ -17,7 +18,15 @@ if (!arg) {
 
 const client = new Client({
   authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
-  puppeteer: { headless: true },
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      ...(resolvePuppeteerConfig().args || [])
+    ],
+    ...resolvePuppeteerConfig()
+  },
 });
 
 client.on("qr", (qr) => {
