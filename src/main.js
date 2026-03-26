@@ -41,4 +41,6 @@ client.on("message_create", async (msg) => {
 client.on("ready", async () => {
   await setupPlugins(buildSetupApi(client));
 });
+client.initialize();
+console.log("\n");
 logger.info("Cliente inicializado. Aguardando conexão com WhatsApp...");
