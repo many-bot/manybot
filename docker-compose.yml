@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  manybot:
+    build: .
+    container_name: manybot
+    volumes:
+      - ./session:/app/session
+      - ./manybot.conf:/app/manybot.conf:ro
+      - ./src/plugins:/app/src/plugins
+    environment:
+      - NODE_ENV=production
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

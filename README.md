@@ -73,7 +73,7 @@ Adicione o número **+55 (16) 99459-1903** aos seus contatos e envie `!many` par
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/synt-xerror/manybot
+git clone https://git.maneos.net/synt-xerror/manybot
 cd manybot
 
 # 2. Crie o arquivo de configuração
