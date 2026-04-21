@@ -73,7 +73,7 @@ Add the number **+55 (16) 99459-1903** to your contacts and send `!many` to see 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/synt-xerror/manybot
+git clone https://git.maneos.net/synt-xerror/manybot
 cd manybot
 
 # 2. Create the config file
