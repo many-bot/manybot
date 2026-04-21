@@ -42,14 +42,15 @@ log_debug() { log "[DBG]"   "$GRAY" "$@"; }
 print_banner() {
 echo -e "${MAGENTA}${BOLD}"
 cat << "EOF"
- _____             _____     _   
-|     |___ ___ _ _| __  |___| |_ 
+ _____             _____     _
+|     |___ ___ _ _| __  |___| |_
 | | | | .'|   | | | __ -| . |  _|
-|_|_|_|__,|_|_|_  |_____|___|_|  
-              |___|              
+|_|_|_|__,|_|_|_  |_____|___|_|
+              |___|
 
 website: www.mlplovers.com.br/manybot
-repo: github.com/synt-xerror/manybot
+repos: git.maneos.net/synt-xerror/manybot
+       codeberg.org/synt-xerror/manybot
 
 EOF
 echo -e "${RESET}"
@@ -170,47 +171,20 @@ log_info "Instalando Chrome"
 npx puppeteer browsers install chrome
 
 # ------------------------
-# Diretórios
+# Configuração de exemplo
 # ------------------------
-log_info "Preparando diretórios"
-mkdir -p bin
-log_debug "Diretório bin garantido"
+log_info "Verificando configuração"
 
-# ------------------------
-# Arquivos por plataforma
-# ------------------------
-log_info "Selecionando dependências binárias"
-
-files=()
-if [[ "$PLATFORM" == "win" ]]; then
-    log_debug "Usando binários Windows"
-    files=(
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp.exe $SCRIPT_DIR/bin/yt-dlp.exe"
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg.exe $SCRIPT_DIR/bin/ffmpeg.exe"
-    )
+if [[ ! -f "$SCRIPT_DIR/manybot.conf" ]]; then
+    if [[ -f "$SCRIPT_DIR/manybot.conf.example" ]]; then
+        cp "$SCRIPT_DIR/manybot.conf.example" "$SCRIPT_DIR/manybot.conf"
+        log_ok "Arquivo manybot.conf criado a partir do exemplo"
+        log_warn "Edite o manybot.conf para configurar seu bot antes de executar"
+    else
+        log_warn "Arquivo manybot.conf.example não encontrado"
+    fi
 else
-    log_debug "Usando binários Unix"
-    files=(
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp $SCRIPT_DIR/bin/yt-dlp"
-        "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg $SCRIPT_DIR/bin/ffmpeg"
-    )
+    log_ok "manybot.conf já existe"
 fi
 
-log_debug "Total de arquivos para baixar: ${#files[@]}"
-
-# ------------------------
-# Download
-# ------------------------
-for file in "${files[@]}"; do
-    url="${file%% *}"
-    dest="${file##* }"
-
-    log_info "Processando dependência"
-    download_file "$url" "$dest"
-done
-
-# permissões
-log_info "Aplicando permissões de execução"
-chmod -R +x $SCRIPT_DIR/bin/
-
-log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' (ou equivalente) para rodar o bot."
+log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' para rodar o bot."

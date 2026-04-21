@@ -11,17 +11,7 @@ set -euo pipefail
 dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 tmp_dir="$dir/tmp"
 log_file="$dir/update.log"
-bin_dir="$dir/bin"
-config_items=(".wwebjs_auth" ".wwebjs_cache" "node_modules")
-
-# Detecta plataforma automaticamente se PLATFORM não estiver definido
-: "${PLATFORM:=}"
-if [[ -z "$PLATFORM" ]]; then
-  case "$(uname -s)" in
-    MINGW*|CYGWIN*|MSYS*) PLATFORM="win" ;;
-    *)                     PLATFORM="unix" ;;
-  esac
-fi
+config_items=(".wwebjs_auth" ".wwebjs_cache")
 
 # ------------------------------------------------------------------------------
 # Logging
@@ -52,7 +42,6 @@ trap cleanup_on_error ERR
 # Validações iniciais
 # ------------------------------------------------------------------------------
 log "INFO" "Iniciando atualização do ManyBot..."
-log "INFO" "Plataforma detectada: $PLATFORM"
 
 # Verifica dependências obrigatórias
 for cmd in git npm; do
@@ -124,59 +113,6 @@ fi
 # ------------------------------------------------------------------------------
 log "INFO" "Instalando dependências Node..."
 npm ci --omit=dev 2>&1 | tee -a "$log_file"
-
-# ------------------------------------------------------------------------------
-# Download de binários por plataforma
-# ------------------------------------------------------------------------------
-
-# Cria o diretório de binários se não existir
-mkdir -p "$bin_dir"
-
-# Função de download com fallback curl → wget
-download_file() {
-  local url="$1"
-  local dest="$2"
-
-  log "INFO" "Baixando: $url → $dest"
-
-  if command -v curl &>/dev/null; then
-    log "INFO" "Downloader: curl"
-    curl -fsSL "$url" -o "$dest"
-  elif command -v wget &>/dev/null; then
-    log "INFO" "Downloader: wget"
-    wget -q "$url" -O "$dest"
-  else
-    log "ERROR" "Nenhum downloader encontrado (curl ou wget são necessários)."
-    exit 1
-  fi
-
-  chmod +x "$dest" 2>/dev/null || true
-  log "INFO" "Arquivo pronto: $dest"
-}
-
-log "INFO" "Selecionando binários para plataforma: $PLATFORM"
-
-if [[ "$PLATFORM" == "win" ]]; then
-  log "INFO" "Usando binários Windows"
-  files=(
-    "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp.exe $bin_dir/yt-dlp.exe"
-    "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg.exe $bin_dir/ffmpeg.exe"
-  )
-else
-  log "INFO" "Usando binários Unix"
-  files=(
-    "https://github.com/synt-xerror/manybot/releases/download/dependencies/yt-dlp $bin_dir/yt-dlp"
-    "https://github.com/synt-xerror/manybot/releases/download/dependencies/ffmpeg $bin_dir/ffmpeg"
-  )
-fi  # <-- fi que estava faltando no original
-
-log "INFO" "Total de arquivos para baixar: ${#files[@]}"
-
-for file in "${files[@]}"; do
-  url="${file%% *}"
-  dest="${file##* }"
-  download_file "$url" "$dest"
-done
 
 # ------------------------------------------------------------------------------
 # Restauração dos arquivos de configuração
