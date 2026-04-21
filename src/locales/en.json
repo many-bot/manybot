@@ -1,0 +1,56 @@
+{
+  "bot": {
+    "starting": "Starting ManyBot...",
+    "initialized": "Client initialized. Waiting for WhatsApp connection...",
+    "ready": "Bot is ready!",
+    "error": {
+      "uncaught": "Uncaught exception",
+      "unhandled": "Unhandled rejection"
+    }
+  },
+  "log": {
+    "info": "INFO",
+    "success": "OK",
+    "warn": "WARN",
+    "error": "ERROR",
+    "msg": "MSG",
+    "cmd": "CMD",
+    "done": "DONE",
+    "context": {
+      "group": "group",
+      "from": "From",
+      "type": "Type",
+      "replyTo": "replies to"
+    }
+  },
+  "system": {
+    "environment": "Environment: {{platform}} — using {{puppeteer}}",
+    "environmentTermux": "Environment: Termux — using system Chromium",
+    "connected": "WhatsApp connected and ready!",
+    "disconnected": "Disconnected — reason: {{reason}}",
+    "reconnecting": "Reconnecting in {{seconds}}s...",
+    "reinitializing": "Reinitializing client...",
+    "qrSaved": "QR Code saved to: {{path}}",
+    "qrOpen": "Open with: termux-open qr.png",
+    "qrSaveFailed": "Failed to save QR Code:",
+    "qrScan": "Scan the QR Code below:",
+    "clientId": "Client ID: {{id}}",
+    "pluginsFolderNotFound": "Plugins folder not found. No plugins loaded.",
+    "pluginsLoaded": "Plugins loaded: {{count}} active{{errors}}",
+    "pluginsLoadedWithErrors": ", {{count}} with error",
+    "pluginSetupFailed": "Plugin \"{{name}}\" setup failed: {{message}}",
+    "pluginNotFound": "Plugin \"{{name}}\" not found at {{path}}",
+    "pluginLoaded": "Plugin loaded: {{name}}",
+    "pluginLoadFailed": "Failed to load plugin \"{{name}}\": {{message}}",
+    "pluginDisabledAfterError": "Plugin \"{{name}}\" disabled after error: {{message}}",
+    "schedulerInvalidCron": "Plugin \"{{name}}\" registered invalid cron expression: \"{{expression}}\"",
+    "schedulerError": "Plugin \"{{name}}\" scheduling error: {{message}}",
+    "schedulerRegistered": "Schedule registered — plugin \"{{name}}\" → \"{{expression}}\"",
+    "downloadJobFailed": "Download job failed — {{message}}"
+  },
+  "errors": {
+    "pluginLoad": "Failed to load plugin",
+    "messageProcess": "Failed to process message",
+    "stack": "Stack"
+  }
+}

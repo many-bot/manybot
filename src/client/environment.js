@@ -1,14 +1,14 @@
 import os from "os";
 
 /**
- * Detecta se o processo está rodando dentro do Termux.
+ * Detect if running inside Termux.
  */
 export const isTermux =
   (os.platform() === "linux" || os.platform() === "android") &&
   process.env.PREFIX?.startsWith("/data/data/com.termux");
 
 /**
- * Retorna a config de Puppeteer adequada ao ambiente.
+ * Return Puppeteer config suitable for the environment.
  * @returns {import("puppeteer").LaunchOptions}
  */
 export function resolvePuppeteerConfig() {

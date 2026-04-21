@@ -1,16 +1,16 @@
 /**
  * messageHandler.js
  *
- * Pipeline central de uma mensagem recebida.
+ * Central pipeline for received messages.
  *
- * Ordem:
- *   1. Filtra chats não permitidos (CHATS do .conf)
- *      — se CHATS estiver vazio, aceita todos os chats
- *   2. Loga a mensagem
- *   3. Passa o contexto para todos os plugins ativos
+ * Order:
+ *   1. Filter allowed chats (CHATS from .conf)
+ *      — if CHATS is empty, accepts all chats
+ *   2. Log the message
+ *   3. Pass context to all active plugins
  *
- * O kernel não conhece nenhum comando — só distribui.
- * Cada plugin decide por conta própria se age ou ignora.
+ * Kernel knows no commands — only distributes.
+ * Each plugin decides on its own whether to act or ignore.
  */
 
 import { CHATS }  from "../config.js";
@@ -26,7 +26,7 @@ export async function handleMessage(msg) {
   const chat   = await msg.getChat();
   const chatId = getChatId(chat);
 
-  // CHATS vazio = aceita todos os chats
+  // CHATS empty = accepts all chats
   if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
 
   const ctx = await buildMessageContext(msg, chat);

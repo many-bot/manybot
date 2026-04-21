@@ -1,18 +1,19 @@
 /**
  * src/download/queue.js
  *
- * Fila de execução sequencial para jobs pesados (downloads, conversões).
- * Garante que apenas um job roda por vez — sem sobrecarregar yt-dlp ou ffmpeg.
+ * Sequential execution queue for heavy jobs (downloads, conversions).
+ * Ensures only one job runs at a time — without overloading yt-dlp or ffmpeg.
  *
- * O plugin passa uma `workFn` que faz tudo: baixar, converter, enviar.
- * A fila só garante a sequência e trata erros.
+ * Plugin passes a `workFn` that does everything: download, convert, send.
+ * Queue only handles sequence and error handling.
  *
- * Uso:
+ * Usage:
  *   import { enqueue } from "../../src/download/queue.js";
- *   enqueue(async () => { ... toda a lógica do plugin ... }, onError);
+ *   enqueue(async () => { ... all plugin logic ... }, onError);
  */
 
 import { logger } from "../logger/logger.js";
+import { t }      from "../i18n/index.js";
 
 /**
  * @typedef {{
@@ -26,10 +27,10 @@ let queue = [];
 let processing = false;
 
 /**
- * Adiciona um job à fila e inicia o processamento se estiver idle.
+ * Add job to queue and start processing if idle.
  *
- * @param {Function} workFn   — async () => void  — toda a lógica do plugin
- * @param {Function} errorFn  — async (err) => void  — chamado se workFn lançar
+ * @param {Function} workFn   — async () => void  — all plugin logic
+ * @param {Function} errorFn  — async (err) => void  — called if workFn throws
  */
 export function enqueue(workFn, errorFn) {
   queue.push({ workFn, errorFn });
@@ -48,7 +49,7 @@ async function processJob({ workFn, errorFn }) {
   try {
     await workFn();
   } catch (err) {
-    logger.error(`Falha no job — ${err.message}`);
+    logger.error(t("system.downloadJobFailed", { message: err.message }));
     try { await errorFn(err); } catch { }
   }
 }

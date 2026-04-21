@@ -1,19 +1,20 @@
 import pkg                    from "whatsapp-web.js";
 import { CLIENT_ID }          from "../config.js";
 import { logger }             from "../logger/logger.js";
+import { t }                  from "../i18n/index.js";
 import { isTermux, resolvePuppeteerConfig } from "./environment.js";
 import { handleQR }           from "./qrHandler.js";
 import { printBanner }        from "./banner.js";
 
 export const { Client, LocalAuth, MessageMedia } = pkg;
 
-// ── Ambiente ─────────────────────────────────────────────────
+// ── Environment ───────────────────────────────────────────────
 logger.info(isTermux
-  ? "Ambiente: Termux — usando Chromium do sistema"
-  : `Ambiente: ${process.platform} — usando Puppeteer padrão`
+  ? t("system.environmentTermux")
+  : t("system.environment", { platform: process.platform, puppeteer: "system Puppeteer" })
 );
 
-// ── Instância ─────────────────────────────────────────────────
+// ── Instance ──────────────────────────────────────────────────
 export const client = new Client({
   authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
   puppeteer: {
@@ -27,20 +28,20 @@ export const client = new Client({
   },
 });
 
-// ── Eventos ───────────────────────────────────────────────────
+// ── Events ────────────────────────────────────────────────────
 client.on("qr", handleQR);
 
 client.on("ready", () => {
   printBanner();
-  logger.success("WhatsApp conectado e pronto!");
-  logger.info(`Client ID: ${CLIENT_ID}`);
+  logger.success(t("system.connected"));
+  logger.info(t("system.clientId", { id: CLIENT_ID }));
 });
 
 client.on("disconnected", (reason) => {
-  logger.warn(`Desconectado — motivo: ${reason}`);
-  logger.info("Reconectando em 5s...");
+  logger.warn(t("system.disconnected", { reason }));
+  logger.info(t("system.reconnecting", { seconds: 5 }));
   setTimeout(() => {
-    logger.info("Reinicializando cliente...");
+    logger.info(t("system.reinitializing"));
     client.initialize();
   }, 5000);
 });

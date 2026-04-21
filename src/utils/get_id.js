@@ -1,6 +1,6 @@
 /**
- * Utilitário CLI para descobrir IDs de chats/grupos.
- * Uso: node src/utils/get_id.js grupos|contatos|<nome>
+ * CLI utility to discover chat/group IDs.
+ * Usage: node src/utils/get_id.js groups|contacts|<name>
  */
 import pkg      from "whatsapp-web.js";
 import qrcode   from "qrcode-terminal";
@@ -12,7 +12,7 @@ const { Client, LocalAuth } = pkg;
 const arg = process.argv[2];
 
 if (!arg) {
-  console.log("Uso: node get_id.js grupos|contatos|<nome>");
+  console.log("Usage: node get_id.js groups|contacts|<name>");
   process.exit(0);
 }
 
@@ -30,29 +30,29 @@ const client = new Client({
 });
 
 client.on("qr", (qr) => {
-  console.log("[QR] Escaneie para autenticar:");
+  console.log("[QR] Scan to authenticate:");
   qrcode.generate(qr, { small: true });
 });
 
 client.on("ready", async () => {
-  console.log("[OK] Conectado. Buscando chats...\n");
+  console.log("[OK] Connected. Searching chats...\n");
 
   const chats = await client.getChats();
   const search = arg.toLowerCase();
 
   const filtered =
-    search === "grupos"   ? chats.filter(c => c.isGroup) :
-    search === "contatos" ? chats.filter(c => !c.isGroup) :
+    search === "groups"   ? chats.filter(c => c.isGroup) :
+    search === "contacts" ? chats.filter(c => !c.isGroup) :
     chats.filter(c => (c.name || c.id.user).toLowerCase().includes(search));
 
   if (!filtered.length) {
-    console.log("Nenhum resultado encontrado.");
+    console.log("No results found.");
   } else {
     filtered.forEach(c => {
       console.log("─".repeat(40));
-      console.log("Nome:  ", c.name || c.id.user);
+      console.log("Name:  ", c.name || c.id.user);
       console.log("ID:    ", c.id._serialized);
-      console.log("Grupo: ", c.isGroup);
+      console.log("Group: ", c.isGroup);
     });
   }
 
