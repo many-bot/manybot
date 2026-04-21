@@ -6,9 +6,55 @@ Guia completo de instalação do ManyBot em diferentes plataformas.
 
 ## 📑 Índice
 
+- [Docker](#docker) (Recomendado)
 - [Linux](#linux)
 - [Windows](#windows)
 - [Termux (Android)](#termux-android)
+
+---
+
+## Docker
+
+A maneira mais fácil e recomendada de rodar o ManyBot.
+
+### Pré-requisitos
+
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+
+### Instalação
+
+```bash
+# 1. Clone o repositório
+git clone https://git.maneos.net/synt-xerror/manybot
+cd manybot
+
+# 2. Crie o arquivo de configuração
+cp manybot.conf.example manybot.conf
+nano manybot.conf
+
+# 3. Inicie com Docker
+docker-compose up -d
+
+# 4. Veja os logs para escanear o QR Code
+docker-compose logs -f
+```
+
+**Escaneie o QR Code** que aparecerá nos logs.
+
+### Comandos úteis
+
+```bash
+# Ver logs
+docker-compose logs -f
+
+# Parar o bot
+docker-compose down
+
+# Atualizar
+git pull
+docker-compose up --build -d
+```
 
 ---
 
@@ -17,7 +63,7 @@ Guia completo de instalação do ManyBot em diferentes plataformas.
 ### 1. Clone o repositório
 
 ```bash
-git clone https://github.com/synt-xerror/manybot
+git clone https://git.maneos.net/synt-xerror/manybot
 cd manybot
 ```
 
@@ -105,7 +151,7 @@ pkg update && pkg upgrade
 pkg install nodejs git
 
 # Clone e instale
-git clone https://github.com/synt-xerror/manybot
+git clone https://git.maneos.net/synt-xerror/manybot
 cd manybot
 ```
 
