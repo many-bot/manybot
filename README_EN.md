@@ -114,17 +114,24 @@ node src/utils/get_id.js
 
 ManyBot is built around a plugin system. The kernel only connects to WhatsApp and distributes messages — plugins decide what to do.
 
-### Included Plugins
+### Managing Plugins with ManyPlug
 
-| Plugin | Command | Description |
-|--------|---------|-------------|
-| **sticker** | `!sticker` | Converts images, GIFs, and videos into stickers |
-| **video** | `!video <link>` | Downloads videos from the internet |
-| **audio** | `!audio <link>` | Downloads audio from videos as voice messages |
-| **guess** | `!guess start` | Guessing game (1-100) |
-| **hangman** | `!hangman start` | Classic hangman game |
-| **many** | `!many` | Lists all available commands |
-| **thanks** | `!thanks` | Responds to thanks |
+Install and manage plugins using the **ManyPlug CLI**:
+
+```bash
+# Install the plugin manager
+npm install -g @freakk.dev/manyplug
+
+# Create a new plugin
+cd src/plugins
+manyplug init my-plugin --category utility
+
+# Install from another directory
+manyplug install --local ../another-plugin
+
+# List installed plugins
+manyplug list
+```
 
 ### Create a Plugin
 
@@ -147,7 +154,6 @@ See more in the [plugin documentation](docs/PLUGINS_EN.md).
 - [📥 Full Installation](docs/INSTALLATION.md) — Linux, Windows, Termux
 - [⚙️ Configuration](docs/CONFIGURATION.md) — All `manybot.conf` options
 - [🔌 Creating Plugins](docs/PLUGINS.md) — Complete development guide
-- [🖥️ Systemd Service](docs/SYSTEMD.md) — Run as a Linux service
 - [🛠️ Plugin API](docs/API.md) — Reference for `msg` and `api` objects
 
 ## 🌍 Internationalization

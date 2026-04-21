@@ -4,8 +4,51 @@ Guia completo para criar plugins no ManyBot.
 
 ---
 
+## ManyPlug CLI
+
+**ManyPlug** é a ferramenta oficial para gerenciar plugins do ManyBot. Com ela você pode criar, instalar e validar plugins facilmente.
+
+### Instalação
+
+```bash
+npm install -g @freakk.dev/manyplug
+```
+
+Ou para desenvolvimento:
+```bash
+git clone https://git.maneos.net/synt-xerror/manyplug
+cd manyplug
+npm link
+```
+
+### Comandos
+
+| Comando | Descrição |
+|---------|-----------|
+| `manyplug init <nome>` | Cria estrutura de um novo plugin |
+| `manyplug install [nome]` | Instala do registro ou `--local <caminho>` |
+| `manyplug list` | Lista plugins instalados |
+| `manyplug validate [caminho]` | Valida o manyplug.json |
+
+### Exemplos
+
+```bash
+# Criar novo plugin
+cd src/plugins
+manyplug init meu-plugin --category utility
+
+# Instalar de outro diretório
+manyplug install --local ../outro-plugin
+
+# Validar manifesto
+manyplug validate ./meu-plugin
+```
+
+---
+
 ## 📑 Índice
 
+- [ManyPlug CLI](#manyplug-cli)
 - [Estrutura Básica](#estrutura-básica)
 - [Manifesto do Plugin](#manifesto-do-plugin-manyplugjson)
 - [Criando Seu Primeiro Plugin](#criando-seu-primeiro-plugin)
