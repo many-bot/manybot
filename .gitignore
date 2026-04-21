@@ -1,6 +1,8 @@
 env
+src/plugins/
 .wwebjs_auth
 .wwebjs_cache
+.claude
 downloads
 src/node_modules/
 node_modules/
@@ -9,3 +11,7 @@ bin/
 mychats.txt
 manybot.conf
 update.log
+logs/audio-error.log
+logs/video-error.log
+registry.json
+

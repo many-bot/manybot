@@ -2,10 +2,11 @@ import {
   c, now,
   formatType, formatContext, formatBody, formatReply,
 } from "./formatter.js";
+import { t } from "../i18n/index.js";
 
 /**
- * Logger central do ManyBot.
- * Cada método lida apenas com saída — sem lógica de negócio ou I/O externo.
+ * ManyBot central logger.
+ * Each method only handles output — no business logic or external I/O.
  */
 export const logger = {
   info:    (...a) => console.log(`${c.gray}${now()}${c.reset}${c.cyan}INFO   ${c.reset}`, ...a),
@@ -14,14 +15,14 @@ export const logger = {
   error:   (...a) => console.log(`${c.gray}${now()}${c.reset}${c.red}ERROR  ${c.reset}`, ...a),
 
   /**
-   * Loga uma mensagem recebida a partir de um contexto já resolvido.
+   * Log a received message from a resolved context.
    * @param {import("./messageContext.js").MessageContext} ctx
    */
   msg(ctx) {
     const { chatName, isGroup, senderName, senderNumber, type, body, quoted } = ctx;
-    const context = isGroup ? `${chatName} (grupo)` : chatName;
-    const reply = quoted ? ` → Responde ${quoted.name} +${quoted.number}: "${quoted.preview}"` : "";
-    console.log(`\n${c.gray}${now()}${c.reset}${c.cyan}MSG${c.reset}     ${context} ${c.gray}— De:${c.reset} ${c.white}${senderName}${c.reset} ${c.dim}+${senderNumber}${c.reset} ${c.gray}— Tipo:${c.reset} ${type} — ${c.green}"${body}"${c.reset}${c.gray}${reply}${c.reset}`);
+    const context = isGroup ? `${chatName} (${t("log.context.group")})` : chatName;
+    const reply = quoted ? ` → ${t("log.context.replyTo")} ${quoted.name} +${quoted.number}: "${quoted.preview}"` : "";
+    console.log(`\n${c.gray}${now()}${c.reset}${c.cyan}MSG${c.reset}     ${context} ${c.gray}— ${t("log.context.from")}:${c.reset} ${c.white}${senderName}${c.reset} ${c.dim}+${senderNumber}${c.reset} ${c.gray}— ${t("log.context.type")}:${c.reset} ${type} — ${c.green}"${body}"${c.reset}${c.gray}${reply}${c.reset}`);
   },
 
   cmd: (cmd, extra = "") =>

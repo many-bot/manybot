@@ -1,25 +1,26 @@
 import qrcode   from "qrcode-terminal";
 import path     from "path";
 import { logger } from "../logger/logger.js";
+import { t }      from "../i18n/index.js";
 import { isTermux } from "./environment.js";
 
 const QR_PATH = path.resolve("qr.png");
 
 /**
- * Exibe ou salva o QR Code conforme o ambiente.
- * @param {string} qr  — string bruta do evento "qr"
+ * Display or save QR Code based on environment.
+ * @param {string} qr  — raw string from "qr" event
  */
 export async function handleQR(qr) {
   if (isTermux) {
     try {
       await QRCode.toFile(QR_PATH, qr, { width: 400 });
-      logger.info(`QR Code salvo em: ${QR_PATH}`);
-      logger.info(`Abra com: termux-open qr.png`);
+      logger.info(t("system.qrSaved", { path: QR_PATH }));
+      logger.info(t("system.qrOpen"));
     } catch (err) {
-      logger.error("Falha ao salvar QR Code:", err.message);
+      logger.error(t("system.qrSaveFailed"), err.message);
     }
   } else {
-    logger.info("Escaneie o QR Code abaixo:");
+    logger.info(t("system.qrScan"));
     qrcode.generate(qr, { small: true });
   }
 }

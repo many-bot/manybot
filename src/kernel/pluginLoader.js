@@ -1,26 +1,28 @@
 /**
  * pluginLoader.js
  *
- * Responsável por:
- *   1. Ler quais plugins estão ativos no manybot.conf (PLUGINS=[...])
- *   2. Carregar cada plugin da pasta /plugins
- *   3. Registrar no pluginRegistry com status e exports públicos
- *   4. Expor o pluginRegistry para o kernel e para a pluginApi
+ * Responsible for:
+ *   1. Reading active plugins from manybot.conf (PLUGINS=[...])
+ *   2. Loading each plugin from /plugins folder
+ *   3. Registering in pluginRegistry with status and public exports
+ *   4. Exposing pluginRegistry to kernel and pluginApi
+ *
  */
 
 import fs   from "fs";
 import path from "path";
 import { logger } from "../logger/logger.js";
+import { t }      from "../i18n/index.js";
 
-const PLUGINS_DIR = path.resolve("plugins");
+const PLUGINS_DIR = path.resolve("src/plugins");
 
 /**
- * Cada entrada no registry:
+ * Each entry in registry:
  * {
  *   name:    string,
  *   status:  "active" | "disabled" | "error",
- *   run:     async function({ msg, chat, api }) — a função default do plugin
- *   exports: any — o que o plugin expôs via `export const api = { ... }`
+ *   run:     async function({ msg, chat, api }) — plugin default function
+ *   exports: any — what plugin exposed via `export const api = { ... }`
  *   error:   Error | null
  * }
  *
@@ -29,14 +31,14 @@ const PLUGINS_DIR = path.resolve("plugins");
 export const pluginRegistry = new Map();
 
 /**
- * Carrega todos os plugins ativos listados em `activePlugins`.
- * Chamado uma vez na inicialização do bot.
+ * Load all active plugins listed in `activePlugins`.
+ * Called once during bot initialization.
  *
- * @param {string[]} activePlugins — nomes dos plugins ativos (do .conf)
+ * @param {string[]} activePlugins — active plugin names (from .conf)
  */
 export async function loadPlugins(activePlugins) {
   if (!fs.existsSync(PLUGINS_DIR)) {
-    logger.warn("Pasta /plugins não encontrada. Nenhum plugin carregado.");
+    logger.warn(t("system.pluginsFolderNotFound"));
     return;
   }
 
@@ -48,14 +50,17 @@ export async function loadPlugins(activePlugins) {
   const ativos  = [...pluginRegistry.values()].filter(p => p.status === "active").length;
   const erros   = total - ativos;
 
-  logger.success(`Plugins carregados: ${ativos} ativos${erros ? `, ${erros} com erro` : ""}`);
+  logger.success(t("system.pluginsLoaded", {
+    count: ativos,
+    errors: erros ? t("system.pluginsLoadedWithErrors", { count: erros }) : ""
+  }));
 }
 
 /**
- * Chama setup(api) em todos os plugins que o exportarem.
- * Executado uma vez após o bot conectar ao WhatsApp.
+ * Call setup(api) on all plugins that export it.
+ * Executed once after bot connects to WhatsApp.
  *
- * @param {object} api — api sem contexto de mensagem (só sendTo, log, schedule...)
+ * @param {object} api — api without message context (only sendTo, log, schedule...)
  */
 export async function setupPlugins(api) {
   for (const plugin of pluginRegistry.values()) {
@@ -63,7 +68,7 @@ export async function setupPlugins(api) {
     try {
       await plugin.setup(api);
     } catch (err) {
-      logger.error(`Falha no setup do plugin "${plugin.name}": ${err.message}`);
+      logger.error(t("system.pluginSetupFailed", { name: plugin.name, message: err.message }));
     }
   }
 }
@@ -76,7 +81,7 @@ async function loadPlugin(name) {
   const pluginPath = path.join(PLUGINS_DIR, name, "index.js");
 
   if (!fs.existsSync(pluginPath)) {
-    logger.warn(`Plugin "${name}" não encontrado em ${pluginPath}`);
+    logger.warn(t("system.pluginNotFound", { name, path: pluginPath }));
     pluginRegistry.set(name, { name, status: "disabled", run: null, exports: null, error: null });
     return;
   }
@@ -84,9 +89,9 @@ async function loadPlugin(name) {
   try {
     const mod = await import(pluginPath);
 
-    // O plugin deve exportar uma função default — essa é a função chamada a cada mensagem
+    // Plugin must export a default function — this is called on every message
     if (typeof mod.default !== "function") {
-      throw new Error(`Plugin "${name}" não exporta uma função default`);
+      throw new Error(`Plugin "${name}" does not export a default function`);
     }
 
     pluginRegistry.set(name, {
@@ -98,9 +103,9 @@ async function loadPlugin(name) {
       error:   null,
     });
 
-    logger.info(`Plugin carregado: ${name}`);
+    logger.info(t("system.pluginLoaded", { name }));
   } catch (err) {
-    logger.error(`Falha ao carregar plugin "${name}": ${err.message}`);
+    logger.error(t("system.pluginLoadFailed", { name, message: err.message }));
     pluginRegistry.set(name, { name, status: "error", run: null, exports: null, error: err });
   }
 }

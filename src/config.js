@@ -1,11 +1,13 @@
 /**
  * config.js
  *
- * Lê e parseia o manybot.conf.
- * Suporta listas multilinhas e comentários inline.
+ * Reads and parses manybot.conf.
+ * Supports multiline lists and inline comments.
  */
 
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 function parseConf(raw) {
   const lines = raw.split("\n");
@@ -57,15 +59,23 @@ function parseConf(raw) {
   return result;
 }
 
-const raw    = fs.readFileSync("manybot.conf", "utf8");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+
+const filePath = path.join(__dirname, "../manybot.conf");
+
+const raw = fs.readFileSync(filePath, "utf8");
 const config = parseConf(raw);
 
 export const CLIENT_ID     = config.CLIENT_ID  ?? "bot_permanente";
 export const CMD_PREFIX    = config.CMD_PREFIX ?? "!";
 export const CHATS         = config.CHATS      ?? [];
 
-/** Lista de plugins ativos — ex: PLUGINS=[video, audio, hello] */
+/** Active plugin list — e.g., PLUGINS=[video, audio, hello] */
 export const PLUGINS       = config.PLUGINS    ?? [];
 
-/** Exporta o config completo para plugins que precisam de valores customizados */
+/** Bot language — e.g., LANGUAGE=en (fallback: en) */
+export const LANGUAGE      = config.LANGUAGE   ?? "en";
+
+/** Export full config for plugins that need custom values */
 export const CONFIG        = config;

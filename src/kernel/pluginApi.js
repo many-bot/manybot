@@ -1,11 +1,11 @@
 /**
  * pluginApi.js
  *
- * Monta o objeto `api` que cada plugin recebe.
- * Plugins só podem fazer o que está aqui — nunca tocam no client diretamente.
+ * Builds the `api` object each plugin receives.
+ * Plugins can only do what's here — never touch client directly.
  *
- * O `chat` já vem filtrado pelo kernel (só chats permitidos no .conf),
- * então plugins não precisam e não podem escolher destino.
+ * `chat` is already filtered by kernel (only allowed chats from .conf),
+ * so plugins don't need and can't choose destination.
  */
 
 import { logger }      from "../logger/logger.js";
@@ -21,9 +21,9 @@ const { MessageMedia } = pkg;
  * @returns {object} api
  */
 /**
- * API de setup — sem contexto de mensagem.
- * Passada para plugin.setup(api) na inicialização.
- * Só tem sendTo e variantes, log e schedule.
+ * Setup API — without message context.
+ * Passed to plugin.setup(api) during initialization.
+ * Only has sendTo variants, log and schedule.
  */
 export function buildSetupApi(client) {
   return {
@@ -63,44 +63,44 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
 
   return {
 
-    // ── Leitura de mensagem ──────────────────────────────────
+    // ── Message reading ─────────────────────────────────────
 
     msg: {
-      /** Corpo da mensagem */
+      /** Message body */
       body:   msg.body ?? "",
 
-      /** Tipo: "chat", "image", "video", "audio", "ptt", "sticker", "document" */
+      /** Type: "chat", "image", "video", "audio", "ptt", "sticker", "document" */
       type:   msg.type,
 
-      /** true se a mensagem veio do próprio bot */
+      /** true if message came from bot itself */
       fromMe: msg.fromMe,
 
-      /** ID de quem enviou (ex: "5511999999999@c.us") */
+      /** Sender ID (ex: "5511999999999@c.us") */
       sender: msg.author || msg.from,
 
-      /** Nome de exibição de quem enviou */
+      /** Display name of sender */
       senderName: msg._data?.notifyName || String(msg.from).replace(/(:\d+)?@.*$/, ""),
 
       /** Tokens: ["!video", "https://..."] */
       args:   msg.body?.trim().split(/\s+/) ?? [],
 
       /**
-       * Verifica se a mensagem é um comando específico.
+       * Check if message is a specific command.
        * @param {string} cmd — ex: "!hello"
        */
       is(cmd) {
         return msg.body?.trim().toLowerCase().startsWith(cmd.toLowerCase());
       },
 
-      /** true se a mensagem tem mídia anexada */
+      /** true if message has attached media */
       hasMedia: msg.hasMedia,
 
-      /** true se a mídia é um GIF (vídeo curto em loop) */
+      /** true if media is a GIF (short looping video) */
       isGif: msg._data?.isGif ?? false,
 
       /**
-       * Baixa a mídia da mensagem.
-       * Retorna um objeto neutro { mimetype, data } — sem expor MessageMedia.
+       * Download message media.
+       * Returns neutral object { mimetype, data } — without exposing MessageMedia.
        * @returns {Promise<{ mimetype: string, data: string } | null>}
        */
       async downloadMedia() {
@@ -109,11 +109,11 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
         return { mimetype: media.mimetype, data: media.data };
       },
 
-      /** true se a mensagem é uma resposta a outra */
+      /** true if message is a reply to another */
       hasReply: msg.hasQuotedMsg,
 
       /**
-       * Retorna a mensagem citada, se existir.
+       * Returns quoted message if exists.
        * @returns {Promise<import("whatsapp-web.js").Message|null>}
        */
       async getReply() {
@@ -122,7 +122,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       },
 
       /**
-       * Responde diretamente à mensagem (com quote).
+       * Reply directly to message (with quote).
        * @param {string} text
        */
       async reply(text) {
@@ -130,10 +130,10 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       },
     },
 
-    // ── Envio para o chat atual ──────────────────────────────
+    // ── Send to current chat ─────────────────────────────────
 
     /**
-     * Envia texto simples.
+     * Send plain text.
      * @param {string} text
      */
     async send(text) {
@@ -141,7 +141,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia uma mídia (imagem, vídeo, áudio, documento).
+     * Send media (image, video, audio, document).
      * @param {import("whatsapp-web.js").MessageMedia} media
      * @param {string} [caption]
      */
@@ -150,7 +150,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia um arquivo de vídeo a partir de um caminho local.
+     * Send video file from local path.
      * @param {string} filePath
      * @param {string} [caption]
      */
@@ -160,7 +160,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia um arquivo de áudio a partir de um caminho local.
+     * Send audio file from local path.
      * @param {string} filePath
      */
     async sendAudio(filePath) {
@@ -169,7 +169,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia uma imagem a partir de um caminho local.
+     * Send image from local path.
      * @param {string} filePath
      * @param {string} [caption]
      */
@@ -179,9 +179,9 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia uma figurinha (sticker).
-     * Aceita filePath (string) ou buffer (Buffer) — o plugin nunca precisa
-     * saber que MessageMedia existe.
+     * Send a sticker.
+     * Accepts filePath (string) or buffer (Buffer) — plugin never needs
+     * to know MessageMedia exists.
      * @param {string | Buffer} source
      */
     async sendSticker(source) {
@@ -191,10 +191,10 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       return currentChat.sendMessage(media, { sendMediaAsSticker: true });
     },
 
-    // ── Envio para chat específico ───────────────────────────
+    // ── Send to specific chat ───────────────────────────────
 
     /**
-     * Envia texto para um chat específico por ID.
+     * Send text to specific chat by ID.
      * @param {string} chatId
      * @param {string} text
      */
@@ -203,7 +203,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia vídeo para um chat específico por ID.
+     * Send video to specific chat by ID.
      * @param {string} chatId
      * @param {string} filePath
      * @param {string} [caption]
@@ -214,7 +214,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia áudio para um chat específico por ID.
+     * Send audio to specific chat by ID.
      * @param {string} chatId
      * @param {string} filePath
      */
@@ -224,7 +224,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia imagem para um chat específico por ID.
+     * Send image to specific chat by ID.
      * @param {string} chatId
      * @param {string} filePath
      * @param {string} [caption]
@@ -235,7 +235,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     },
 
     /**
-     * Envia figurinha para um chat específico por ID.
+     * Send sticker to specific chat by ID.
      * @param {string} chatId
      * @param {string | Buffer} source
      */
@@ -246,12 +246,12 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       return client.sendMessage(chatId, media, { sendMediaAsSticker: true });
     },
 
-    // ── Acesso a outros plugins ──────────────────────────────
+    // ── Access other plugins ─────────────────────────────────
 
     /**
-     * Retorna a API pública de outro plugin (o que ele exportou em `exports`).
-     * Retorna null se o plugin não existir ou estiver desativado.
-     * @param {string} name — nome do plugin (pasta em /plugins)
+     * Return public API of another plugin (what it exported in `exports`).
+     * Returns null if plugin doesn't exist or is disabled.
+     * @param {string} name — plugin name (folder in /plugins)
      * @returns {any|null}
      */
     getPlugin(name) {
@@ -267,7 +267,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       success: (...a) => logger.success(...a),
     },
 
-    // ── Info do chat atual ───────────────────────────────────
+    // ── Current chat info ────────────────────────────────────
 
     chat: {
       id:      currentChat.id._serialized,

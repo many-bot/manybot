@@ -1,7 +1,7 @@
 import client from "../client/whatsappClient.js";
 
 /**
- * Extrai o número limpo de uma mensagem.
+ * Extract clean number from message.
  * @param {import("whatsapp-web.js").Message} msg
  * @returns {Promise<string>}
  */
@@ -12,8 +12,8 @@ export async function getNumber(msg) {
 }
 
 /**
- * Monta o contexto completo de uma mensagem para logging.
- * Resolve contato, quoted message e metadados do chat.
+ * Build full message context for logging.
+ * Resolves contact, quoted message and chat metadata.
  *
  * @param {import("whatsapp-web.js").Message} msg
  * @param {import("whatsapp-web.js").Chat} chat
@@ -51,8 +51,8 @@ export async function buildMessageContext(msg, chat, botPrefix) {
 }
 
 /**
- * Resolve os dados da mensagem citada, se existir.
- * Retorna null em caso de erro ou ausência.
+ * Resolve quoted message data if exists.
+ * Returns null on error or if not present.
  *
  * @param {import("whatsapp-web.js").Message} msg
  * @returns {Promise<{ name: string, number: string, preview: string } | null>}
@@ -68,7 +68,7 @@ async function resolveQuotedMessage(msg) {
     try {
       const contact = await client.getContactById(quoted.from);
       quotedName    = contact?.pushname || contact?.formattedName || quotedNumber;
-    } catch { /* contato não encontrado — usa o número */ }
+    } catch { /* contact not found — use number */ }
 
     const quotedPreview = quoted.body?.trim()
       ? `"${quoted.body.length > 80 ? quoted.body.slice(0, 80) + "…" : quoted.body}"`

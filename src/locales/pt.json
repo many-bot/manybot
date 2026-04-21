@@ -1,0 +1,56 @@
+{
+  "bot": {
+    "starting": "Iniciando ManyBot...",
+    "initialized": "Cliente inicializado. Aguardando conexão com WhatsApp...",
+    "ready": "Bot está pronto!",
+    "error": {
+      "uncaught": "Exceção não capturada",
+      "unhandled": "Rejeição não tratada"
+    }
+  },
+  "log": {
+    "info": "INFO",
+    "success": "OK",
+    "warn": "WARN",
+    "error": "ERRO",
+    "msg": "MSG",
+    "cmd": "CMD",
+    "done": "DONE",
+    "context": {
+      "group": "grupo",
+      "from": "De",
+      "type": "Tipo",
+      "replyTo": "Responde"
+    }
+  },
+  "system": {
+    "environment": "Ambiente: {{platform}} — usando {{puppeteer}}",
+    "environmentTermux": "Ambiente: Termux — usando Chromium do sistema",
+    "connected": "WhatsApp conectado e pronto!",
+    "disconnected": "Desconectado — motivo: {{reason}}",
+    "reconnecting": "Reconectando em {{seconds}}s...",
+    "reinitializing": "Reinicializando cliente...",
+    "qrSaved": "QR Code salvo em: {{path}}",
+    "qrOpen": "Abra com: termux-open qr.png",
+    "qrSaveFailed": "Falha ao salvar QR Code:",
+    "qrScan": "Escaneie o QR Code abaixo:",
+    "clientId": "Client ID: {{id}}",
+    "pluginsFolderNotFound": "Pasta de plugins não encontrada. Nenhum plugin carregado.",
+    "pluginsLoaded": "Plugins carregados: {{count}} ativos{{errors}}",
+    "pluginsLoadedWithErrors": ", {{count}} com erro",
+    "pluginSetupFailed": "Falha na configuração do plugin \"{{name}}\": {{message}}",
+    "pluginNotFound": "Plugin \"{{name}}\" não encontrado em {{path}}",
+    "pluginLoaded": "Plugin carregado: {{name}}",
+    "pluginLoadFailed": "Falha ao carregar plugin \"{{name}}\": {{message}}",
+    "pluginDisabledAfterError": "Plugin \"{{name}}\" desativado após erro: {{message}}",
+    "schedulerInvalidCron": "Plugin \"{{name}}\" registrou expressão cron inválida: \"{{expression}}\"",
+    "schedulerError": "Erro no agendamento do plugin \"{{name}}\": {{message}}",
+    "schedulerRegistered": "Agendamento registrado — plugin \"{{name}}\" → \"{{expression}}\"",
+    "downloadJobFailed": "Falha no job de download — {{message}}"
+  },
+  "errors": {
+    "pluginLoad": "Falha ao carregar plugin",
+    "messageProcess": "Falha ao processar mensagem",
+    "stack": "Stack"
+  }
+}
