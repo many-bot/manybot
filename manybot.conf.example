@@ -1,0 +1,30 @@
+# ManyBot Configuration File
+# Copy this file to manybot.conf and customize as needed
+
+# Bot identification
+CLIENT_ID=meu_bot
+
+# Command prefix (default: !)
+CMD_PREFIX=!
+
+# Language setting (en, pt, es)
+# Default: en (English)
+LANGUAGE=en
+
+# Allowed chats (leave empty for all chats)
+# Format: chatId1@g.us, chatId2@g.us for groups
+# Format: number@c.us for private chats
+CHATS=[
+]
+
+# Active plugins
+PLUGINS=[
+many,
+figurinha,
+audio,
+video,
+adivinhação,
+forca,
+obrigado,
+a
+]

@@ -1,6 +1,6 @@
 ## Terms of Use
 
-. This is file may be deleted in the future as the official webpage is launched.
+> This is file may be moved in the future as the official webpage is launched.
 
 ### 1. Nature of the Software
 

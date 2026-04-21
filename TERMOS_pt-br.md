@@ -1,6 +1,6 @@
 ## Termos de Uso
 
-> Este arquivo poderá ser excluído no futuro, assim que o site oficial for lançado.
+> Este arquivo poderá ser movido no futuro, assim que o site oficial for lançado.
 
 ### 1. Natureza do Software
 

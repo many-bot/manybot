@@ -1,0 +1,171 @@
+.TH MANYBOT 1 "April 2026" "ManyBot 2.4.3" "User Commands"
+.SH NAME
+manybot \- local WhatsApp bot with plugin system
+.SH SYNOPSIS
+.B node
+.I ./src/main.js
+.br
+.B node
+.I src/utils/get_id.js
+.br
+.B bash
+.I ./setup
+.br
+.B bash
+.I ./update
+.SH DESCRIPTION
+ManyBot is a 100%% local WhatsApp bot that operates without relying on the
+official WhatsApp API. It uses whatsapp-web.js to connect as a regular
+WhatsApp client and provides a modular plugin system for extending functionality.
+.PP
+The bot supports multiple chats in a single session, runs headless (without
+a GUI), and can be configured through a simple configuration file.
+.SH COMMANDS
+.TP
+.B !many
+List all available commands from loaded plugins.
+.TP
+.B !figurinha
+Convert images, GIFs, and videos to stickers.
+.TP
+.B !video \fIURL\fR
+Download videos from supported platforms.
+.TP
+.B !audio \fIURL\fR
+Download audio from videos and send as voice message.
+.TP
+.B !adivinhacao comecar
+Start a guessing game (1-100).
+.TP
+.B !forca comecar
+Start a hangman game.
+.TP
+.B !obrigado
+Bot responds with a thank-you message.
+.PP
+Command prefix can be configured via
+.B CMD_PREFIX
+in
+.IR manybot.conf .
+Default is
+.BR ! .
+.SH CONFIGURATION
+ManyBot uses a configuration file
+.I manybot.conf
+in the project root. Key options:
+.TP
+.B CLIENT_ID=\fIname\fR
+Unique identifier for the bot session. Creates a session/\fIname\fR folder
+for authentication data. Default: \fIbot_permanente\fR.
+.TP
+.B CMD_PREFIX=\fIchar\fR
+Character prefixing all commands. Default: \fI!\fR.
+.TP
+.B LANGUAGE=\fIcode\fR
+Bot interface language: \fBen\fR (English), \fBpt\fR (Portuguese), or \fBes\fR (Spanish).
+Default: \fBen\fR.
+.TP
+.B CHATS=[\fIid1\fR, \fIid2\fR, ...]
+List of allowed chat IDs. Empty array allows all chats.
+Format: \fBnumber@c.us\fR for private chats, \fBnumber@g.us\fR for groups.
+.TP
+.B PLUGINS=[\fIname1\fR, \fIname2\fR, ...]
+List of plugins to load at startup. Each name corresponds to a folder in
+.IR src/plugins/ .
+.PP
+See
+.BR manybot.conf (5)
+for complete configuration reference.
+.SH PLUGINS
+Plugins extend ManyBot functionality without modifying the kernel. Each plugin
+is a folder under
+.I src/plugins/
+containing:
+.TP
+.I index.js
+Main plugin file exporting a default async function receiving \fB{ msg, api }\fR.
+.TP
+.I manyplug.json
+Plugin manifest describing name, version, category, service status, and dependencies.
+.TP
+.I locale/
+Optional translation files (\fBen.json\fR, \fBpt.json\fR, \fBes.json\fR).
+.PP
+Plugins receive two objects:
+.TP
+.B msg
+Message information including \fBbody\fR, \fBargs\fR, \fBtype\fR, \fBsender\fR,
+\fBhasMedia\fR, methods \fBis()\fR, \fBreply()\fR, \fBdownloadMedia()\fR.
+.TP
+.B api
+Interaction methods including \fBsend()\fR, \fBsendVideo()\fR, \fBsendAudio()\fR,
+\fBsendImage()\fR, \fBsendSticker()\fR, \fBgetPlugin()\fR, and \fBlog\fR methods.
+.SH FILES
+.TP
+.I manybot.conf
+Main configuration file. See \fBmanybot.conf(5)\fR.
+.TP
+.I session/
+Authentication data and WhatsApp session storage.
+.TP
+.I src/plugins/
+Plugin directory containing all installed plugins.
+.TP
+.I src/main.js
+Bot entry point.
+.TP
+.I logs/
+Log files directory.
+.TP
+.I update.log
+Update script log output.
+.SH ENVIRONMENT
+.TP
+.B NODE_ENV
+Set to \fBproduction\fR to disable development features.
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.TP
+.B 130
+Interrupted by user (Ctrl+C)
+.SH EXAMPLES
+.SS First run
+.nf
+$ node ./src/main.js
+# Scan QR code with WhatsApp:
+# Menu \-> Linked Devices \-> Link a Device
+.fi
+.SS Get chat IDs
+.nf
+$ node src/utils/get_id.js
+# Send a message in the target chat to see the ID
+.fi
+.SS Update to latest version
+.nf
+$ bash ./update
+.fi
+.SH SECURITY
+\(bu Bot runs with same privileges as the user running it
+.br
+\(bu Session data stored in \fIsession/\fR should be protected (chmod 700)
+.br
+\(bu CHATS whitelist recommended to limit bot exposure
+.br
+\(bu No official WhatsApp API keys required or used
+.SH SEE ALSO
+.BR manybot.conf (5),
+.BR manybot-plugin (1),
+.BR manyplug (1)
+.SH AUTHOR
+Written by synt-xerror.
+.SH COPYRIGHT
+Licensed under GPLv3. See LICENSE file for details.
+.br
+https://github.com/synt-xerror/manybot
+.SH BUGS
+Report bugs at: https://github.com/synt-xerror/manybot/issues
