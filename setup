@@ -171,6 +171,19 @@ log_info "Instalando Chrome"
 npx puppeteer browsers install chrome
 
 # ------------------------
+# ManyPlug CLI
+# ------------------------
+log_info "Instalando ManyPlug CLI"
+
+if ! command -v manyplug &>/dev/null; then
+    log_info "ManyPlug não encontrado, instalando globalmente..."
+    npm install -g @freakk.dev/manyplug
+    log_ok "ManyPlug instalado com sucesso"
+else
+    log_ok "ManyPlug já está instalado"
+fi
+
+# ------------------------
 # Configuração de exemplo
 # ------------------------
 log_info "Verificando configuração"

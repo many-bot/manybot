@@ -100,6 +100,28 @@ Message information including \fBbody\fR, \fBargs\fR, \fBtype\fR, \fBsender\fR,
 .B api
 Interaction methods including \fBsend()\fR, \fBsendVideo()\fR, \fBsendAudio()\fR,
 \fBsendImage()\fR, \fBsendSticker()\fR, \fBgetPlugin()\fR, and \fBlog\fR methods.
+.SH MANYPLUG
+ManyPlug is the official CLI for managing ManyBot plugins. Install it with:
+.PP
+.nf
+$ npm install -g @freakk.dev/manyplug
+.fi
+.PP
+Common commands:
+.TP
+.B manyplug init \fIname\fR
+Create a new plugin boilerplate in the current directory.
+.TP
+.B manyplug install [\fIname\fR]
+Install a plugin from the registry or use \fB--local \fIpath\fR to install from a local directory.
+.TP
+.B manyplug list
+List all installed plugins in \fIsrc/plugins/\fR.
+.TP
+.B manyplug validate [\fIpath\fR]
+Validate the \fImanyplug.json\fR manifest file.
+.PP
+See \fBmanyplug(1)\fR for complete documentation.
 .SH FILES
 .TP
 .I manybot.conf
