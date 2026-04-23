@@ -6,21 +6,22 @@ Guia completo de instalação do ManyBot em diferentes plataformas.
 
 ## 📑 Índice
 
-- [Docker](#docker) (Recomendado)
-- [Linux](#linux)
+- [Linux (com systemd)](#linux-com-systemd) (Recomendado)
+- [Linux (manual)](#linux-manual)
 - [Windows](#windows)
 - [Termux (Android)](#termux-android)
 
 ---
 
-## Docker
+## Linux (com systemd)
 
-A maneira mais fácil e recomendada de rodar o ManyBot.
+Esta é a maneira **mais fácil e recomendada** de rodar o ManyBot. O serviço systemd gerencia o bot automaticamente.
 
 ### Pré-requisitos
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+- Linux com systemd (Ubuntu, Debian, Fedora, Arch, etc.)
+- Node.js 18+ e npm 9+
+- Acesso root (sudo)
 
 ### Instalação
 
@@ -33,32 +34,56 @@ cd manybot
 cp manybot.conf.example manybot.conf
 nano manybot.conf
 
-# 3. Inicie com Docker
-docker-compose up -d
+# 3. Execute a instalação das dependências
+bash ./setup
 
-# 4. Veja os logs para escanear o QR Code
-docker-compose logs -f
+# 4. Instale e ative o serviço systemd (requer root)
+sudo bash ./setup --install-service
 ```
 
-**Escaneie o QR Code** que aparecerá nos logs.
+**Escaneie o QR Code** que aparecerá nos logs:
+
+```bash
+journalctl -u manybot -f
+```
 
 ### Comandos úteis
 
 ```bash
-# Ver logs
-docker-compose logs -f
+# Ver status do serviço
+systemctl status manybot
+
+# Ver logs em tempo real
+journalctl -u manybot -f
 
 # Parar o bot
-docker-compose down
+systemctl stop manybot
 
-# Atualizar
+# Iniciar o bot
+systemctl start manybot
+
+# Reiniciar o bot
+systemctl restart manybot
+
+# Desabilitar início automático
+systemctl disable manybot
+
+# Atualizar o bot
 git pull
-docker-compose up --build -d
+bash ./setup
+sudo systemctl restart manybot
 ```
+
+### O serviço systemd roda como root?
+
+Sim! O serviço é configurado para rodar como `root` para garantir acesso total ao sistema. Isso é necessário para:
+- Acessar arquivos de sessão e logs
+- Rodar o Chromium/Puppeteer corretamente
+- Ter permissões completas de rede
 
 ---
 
-## Linux
+## Linux (manual)
 
 ### 1. Clone o repositório
 
@@ -118,6 +143,11 @@ node ./src/main.js
 Escaneie o QR Code no WhatsApp:
 
 **Menu → Dispositivos conectados → Conectar um dispositivo**
+
+> 💡 **Dica:** Para rodar em segundo plano sem systemd, use `nohup`:
+> ```bash
+> nohup node ./src/main.js > manybot.log 2>&1 &
+> ```
 
 ---
 

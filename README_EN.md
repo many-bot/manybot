@@ -69,7 +69,7 @@ Add the number **+55 (16) 99459-1903** to your contacts and send `!many` to see 
 
 ---
 
-### Option 2: Install Your Own Version
+### Option 2: Install Your Own Version (Recommended)
 
 ```bash
 # 1. Clone the repository
@@ -85,13 +85,14 @@ nano manybot.conf
 # 4. Run the install script
 bash ./setup
 
-# 5. Run the bot
-node ./src/main.js
+# 5. Install and enable systemd service (requires root)
+sudo bash ./setup --install-service
 ```
 
-📱 **Scan the QR Code** on WhatsApp: Menu → Linked Devices → Link a Device
+📱 **Scan the QR Code** in logs: `journalctl -u manybot -f`
 
-> **⚡ Done!** See the [full documentation](docs/INSTALLATION.md) for more details.
+> **⚡ Done!** The bot runs as a service and starts automatically.
+> See the [full documentation](docs/INSTALLATION.md) for more details.
 
 ---
 
