@@ -6,21 +6,22 @@ Complete installation guide for ManyBot on different platforms.
 
 ## Index
 
-- [Docker](#docker) (Recommended)
-- [Linux](#linux)
+- [Linux (with systemd)](#linux-with-systemd) (Recommended)
+- [Linux (manual)](#linux-manual)
 - [Windows](#windows)
 - [Termux (Android)](#termux-android)
 
 ---
 
-## Docker
+## Linux (with systemd)
 
-The easiest and recommended way to run ManyBot.
+This is the **easiest and recommended** way to run ManyBot. The systemd service manages the bot automatically.
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
+- Linux with systemd (Ubuntu, Debian, Fedora, Arch, etc.)
+- Node.js 18+ and npm 9+
+- Root access (sudo)
 
 ### Installation
 
@@ -33,32 +34,58 @@ cd manybot
 cp manybot.conf.example manybot.conf
 nano manybot.conf
 
-# 3. Start with Docker
-docker-compose up -d
+# 3. Run the dependency installation
+bash ./setup
 
-# 4. Watch logs to scan QR Code
-docker-compose logs -f
+# 4. Install and enable systemd service (requires root)
+sudo bash ./setup --install-service
 ```
 
-**Scan the QR Code** that appears in the logs.
+**Scan the QR Code** that appears in the logs:
+
+```bash
+journalctl -u manybot -f
+```
 
 ### Useful Commands
 
 ```bash
-# View logs
-docker-compose logs -f
+# Check service status
+systemctl status manybot
+
+# View logs in real-time
+journalctl -u manybot -f
 
 # Stop the bot
-docker-compose down
+systemctl stop manybot
 
-# Update
+# Start the bot
+systemctl start manybot
+
+# Restart the bot
+systemctl restart manybot
+
+# Disable auto-start
+systemctl disable manybot
+
+# Update the bot
 git pull
-docker-compose up --build -d
+bash ./setup
+sudo systemctl restart manybot
 ```
+
+### Does the systemd service run as root?
+
+Yes! The service is configured to run as `root` to ensure full system access. This is necessary for:
+- Accessing session files and logs
+- Running Chromium/Puppeteer correctly
+- Having complete network permissions
 
 ---
 
-## Linux
+## Linux (manual)
+
+If you don't use systemd or prefer to run manually:
 
 ### 1. Clone the repository
 
@@ -118,6 +145,11 @@ node ./src/main.js
 Scan the QR Code in WhatsApp:
 
 **Menu → Linked Devices → Link a Device**
+
+> 💡 **Tip:** To run in the background without systemd, use `nohup`:
+> ```bash
+> nohup node ./src/main.js > manybot.log 2>&1 &
+> ```
 
 ---
 

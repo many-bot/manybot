@@ -69,7 +69,7 @@ Adicione o número **+55 (16) 99459-1903** aos seus contatos e envie `!many` par
 
 ---
 
-### Opção 2: Instalar sua Própria Versão
+### Opção 2: Instalar sua Própria Versão (Recomendado)
 
 ```bash
 # 1. Clone o repositório
@@ -85,13 +85,14 @@ nano manybot.conf
 # 4. Execute o script de instalação
 bash ./setup
 
-# 5. Rode o bot
-node ./src/main.js
+# 5. Instale e ative o serviço systemd (requer root)
+sudo bash ./setup --install-service
 ```
 
-📱 **Escaneie o QR Code** no WhatsApp: Menu → Dispositivos conectados → Conectar um dispositivo
+📱 **Escaneie o QR Code** nos logs: `journalctl -u manybot -f`
 
-> **⚡ Pronto!** Veja a [documentação completa](docs/INSTALACAO.md) para mais detalhes.
+> **⚡ Pronto!** O bot roda como serviço e inicia automaticamente.
+> Veja a [documentação completa](docs/INSTALACAO.md) para mais detalhes.
 
 ---
 

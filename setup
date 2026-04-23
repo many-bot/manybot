@@ -201,3 +201,38 @@ else
 fi
 
 log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' para rodar o bot."
+
+# ------------------------
+# Serviço systemd
+# ------------------------
+log_info "Verificando serviço systemd"
+
+if [[ -f "$SCRIPT_DIR/manybot.service" ]]; then
+    if [[ $EUID -ne 0 ]]; then
+        log_warn "O serviço systemd requer execução como root"
+        log_warn "Execute: sudo bash $0 --install-service"
+    else
+        INSTALL_DIR="/opt/manybot"
+        SERVICE_FILE="$SCRIPT_DIR/manybot.service"
+
+        log_info "Instalando ManyBot em $INSTALL_DIR"
+        mkdir -p "$INSTALL_DIR"
+        cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
+
+        log_info "Copiando serviço systemd"
+        cp "$SERVICE_FILE" /etc/systemd/system/manybot.service
+
+        log_info "Recarregando systemd e habilitando serviço"
+        systemctl daemon-reload
+        systemctl enable manybot
+        systemctl start manybot
+
+        log_ok "Serviço systemd instalado e ativado!"
+        log_info "Comandos úteis:"
+        log_info "  systemctl status manybot  - Ver status"
+        log_info "  systemctl stop manybot    - Parar"
+        log_info "  journalctl -u manybot -f  - Ver logs"
+    fi
+else
+    log_debug "Arquivo manybot.service não encontrado, pulando instalação do serviço"
+fi
