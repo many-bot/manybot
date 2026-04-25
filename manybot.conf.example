@@ -7,6 +7,13 @@ CLIENT_ID=meu_bot
 # Command prefix (default: !)
 CMD_PREFIX=!
 
+# Phone number for pairing code authentication (optional)
+# If set, bot will use phone pairing instead of QR Code
+# Format: country code + area + number (no symbols)
+# Example: PHONE_NUMBER=5511999999999
+# Leave commented out to use QR Code
+#PHONE_NUMBER=5511999999999
+
 # Language setting (en, pt, es)
 # Default: en (English)
 LANGUAGE=en

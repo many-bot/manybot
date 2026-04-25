@@ -64,7 +64,20 @@ const __dirname  = path.dirname(__filename);
 
 const filePath = path.join(__dirname, "../manybot.conf");
 
-const raw = fs.readFileSync(filePath, "utf8");
+let raw;
+try {
+  raw = fs.readFileSync(filePath, "utf8");
+} catch (err) {
+  if (err.code === "ENOENT") {
+    console.error("Configuration file not found: manybot.conf");
+    console.error("Copy the example file to get started:");
+    console.error("  cp manybot.conf.example manybot.conf");
+  } else {
+    console.error("Error reading config:", err.message);
+  }
+  process.exit(1);
+}
+
 const config = parseConf(raw);
 
 export const CLIENT_ID     = config.CLIENT_ID  ?? "bot_permanente";
@@ -76,6 +89,9 @@ export const PLUGINS       = config.PLUGINS    ?? [];
 
 /** Bot language — e.g., LANGUAGE=en (fallback: en) */
 export const LANGUAGE      = config.LANGUAGE   ?? "en";
+
+/** Phone number for pairing code auth (optional) — e.g., PHONE_NUMBER=5511999999999 */
+export const PHONE_NUMBER  = config.PHONE_NUMBER ?? null;
 
 /** Export full config for plugins that need custom values */
 export const CONFIG        = config;

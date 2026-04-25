@@ -38,10 +38,15 @@ nano manybot.conf
 bash ./setup
 
 # 4. Install and enable systemd service (requires root)
-sudo bash ./setup --install-service
+sudo bash ./setup
 ```
 
-**Scan the QR Code** that appears in the logs:
+**Authentication:**
+
+ManyBot supports two authentication methods:
+
+1. **QR Code (default):** Scan the QR code in logs
+2. **Pairing code:** Set `PHONE_NUMBER` in `manybot.conf` with your number (e.g., `5511999999999`)
 
 ```bash
 journalctl -u manybot -f
@@ -85,64 +90,31 @@ Yes! The service is configured to run as `root` to ensure full system access. Th
 
 ## Linux (manual)
 
-If you don't use systemd or prefer to run manually:
-
-### 1. Clone the repository
+### Installation
 
 ```bash
+# 1. Clone the repository
 git clone https://git.maneos.net/synt-xerror/manybot
 cd manybot
-```
 
-### 2. Configure the bot
-
-Create the configuration file:
-
-```bash
-touch manybot.conf
+# 2. Create the configuration file
+cp manybot.conf.example manybot.conf
 nano manybot.conf
-```
 
-Example configuration:
+# 3. Run the dependency installation
+bash ./setup
 
-```bash
-# Comments with '#'
-
-CLIENT_ID=bot_permanente
-CMD_PREFIX=!
-LANGUAGE=en
-CHATS=[
-    123456789@c.us,
-    123456789@g.us
-]
-PLUGINS=[
-    video,
-    audio,
-    sticker,
-    guess
-]
-```
-
-**Details:**
-- `CLIENT_ID`: Session ID (default: `bot_permanente`)
-- `CMD_PREFIX`: Command prefix (default: `!`)
-- `LANGUAGE`: Bot language - `pt`, `en`, or `es` (default: `en`)
-- `CHATS`: Allowed chat IDs (leave empty for all)
-- `PLUGINS`: List of active plugins
-
-### 3. Run installation
-
-```bash
+# 4. Initial ManyBot configuration
 bash ./setup
 ```
 
-### 4. First run
+### First run
 
 ```bash
 node ./src/main.js
 ```
 
-Scan the QR Code in WhatsApp:
+Scan the QR Code in WhatsApp (or enter the code if a number was configured):
 
 **Menu → Linked Devices → Link a Device**
 
@@ -164,7 +136,7 @@ ManyBot was designed for Linux, but works on Windows via **Git Bash**.
 
 ### Installation
 
-After installing both, open **Git Bash** and follow the same steps as the [Linux installation](#linux).
+After installing both, open **Git Bash** and follow the same steps as the [Linux installation](#linux-manual).
 
 ---
 
@@ -196,12 +168,12 @@ Follow the Linux configuration steps from step 2.
 ### QR Code scanning error
 
 - Clear Chrome/Chromium data from Termux
-- Delete the `session/` folder and try again
+- Delete the `.wwebjs_*` folders and try again
 
 ### Bot not responding to commands
 
 - Check `CMD_PREFIX` in `manybot.conf`
-- Make sure the plugin is in the `PLUGINS` list
+- Check if the plugin is enabled with `manyplug list` and verify it's in `PLUGINS` in `manybot.conf`
 
 ### Installation errors
 
