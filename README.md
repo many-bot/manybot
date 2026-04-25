@@ -51,10 +51,16 @@ cd manybot
 cp manybot.conf.example manybot.conf
 nano manybot.conf          # edite a configuração
 bash ./setup
-sudo bash ./setup --install-service
 ```
 
-Escaneie o QR Code nos logs: `journalctl -u manybot -f`
+Para instalar o serviço systemd e o ManyPlug globalmente, execute como root:
+```bash
+sudo bash ./setup
+```
+
+Pegue o código ou o QR Code nos logs: `journalctl -u manybot -f`
+
+Veja a documentação de instalação e configuração antes de tentar rodar o Bot!
 
 > 📚 **Documentação completa:** [Instalação](docs/INSTALACAO.md), [Configuração](docs/CONFIGURACAO.md), [Plugins](docs/PLUGINS.md)
 

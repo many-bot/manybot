@@ -4,7 +4,7 @@
 
 **100% Local WhatsApp Bot, no official API**
 
-[🇧🇷 Português](README.md) · 🇺🇸 English
+🇧🇷 Português · 🇺🇸 English
 
 ![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
@@ -51,12 +51,18 @@ cd manybot
 cp manybot.conf.example manybot.conf
 nano manybot.conf          # edit config
 bash ./setup
-sudo bash ./setup --install-service
 ```
 
-Scan the QR Code in logs: `journalctl -u manybot -f`
+To install the systemd service and ManyPlug globally, run as root:
+```bash
+sudo bash ./setup
+```
 
-> 📚 **Full docs:** [Installation](docs/INSTALLATION.md), [Configuration](docs/CONFIGURATION.md), [Plugins](docs/PLUGINS_EN.md)
+Get the code or scan the QR Code in logs: `journalctl -u manybot -f`
+
+Read installation and configuration docs before running ManyBot!
+
+> 📚 **Full documentation:** [Installation](docs/INSTALLATION.md), [Configuration](docs/CONFIGURATION.md), [Plugins](docs/PLUGINS_EN.md)
 
 <div align="center">
 

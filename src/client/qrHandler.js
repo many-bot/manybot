@@ -24,3 +24,13 @@ export async function handleQR(qr) {
     qrcode.generate(qr, { small: true });
   }
 }
+
+/**
+ * Display pairing code for phone number authentication.
+ * @param {string} code  — 8-character pairing code
+ */
+export function handlePairingCode(code) {
+  logger.info(t("system.pairingCodeTitle"));
+  logger.info(t("system.pairingCodeValue", { code }));
+  logger.info(t("system.pairingCodeInstructions"));
+}

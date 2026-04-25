@@ -1,14 +1,15 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+IFS=$'\n\t'
 
-# Salvando diretório para evitar problemas
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ------------------------
-# Cores
-# ------------------------
+# ─────────────────────────────────────────────
+# Colors
+# ─────────────────────────────────────────────
 RESET="\033[0m"
 BOLD="\033[1m"
+DIM="\033[2m"
 
 RED="\033[31m"
 GREEN="\033[32m"
@@ -16,223 +17,451 @@ YELLOW="\033[33m"
 BLUE="\033[34m"
 CYAN="\033[36m"
 MAGENTA="\033[35m"
-GRAY="\033[90m"
 
-timestamp() {
-    date +"%H:%M:%S"
+# ─────────────────────────────────────────────
+# Language detection
+# Priority: MANYBOT_LANG > LANG > LC_ALL > LC_MESSAGES
+# Falls back to English for any non-Portuguese locale.
+# Override example: MANYBOT_LANG=pt bash setup.sh
+# ─────────────────────────────────────────────
+detect_lang() {
+    local lang_var
+    for lang_var in "${MANYBOT_LANG:-}" "${LANG:-}" "${LC_ALL:-}" "${LC_MESSAGES:-}"; do
+        case "${lang_var,,}" in
+            pt*) echo "pt"; return ;;
+        esac
+    done
+    echo "en"
 }
+
+LANG_CODE="$(detect_lang)"
+
+# ─────────────────────────────────────────────
+# i18n — all user-facing strings
+# Usage: t KEY  →  prints the string for LANG_CODE
+# ─────────────────────────────────────────────
+t() {
+    local key="$1"
+    case "$LANG_CODE:$key" in
+
+        # ── Slogan ───────────────────────
+        pt:slogan) echo "A crina que seu grupo precisava." ;;
+        en:slogan) echo "One bot. Many possibilites." ;;
+
+        # ── Log labels ───────────────────────
+        pt:lbl_warn)  echo "[AVISO]" ;;
+        pt:lbl_error) echo "[ERRO]"  ;;
+        en:lbl_warn)  echo "[WARN]"  ;;
+        en:lbl_error) echo "[ERROR]" ;;
+
+        # ── Init ─────────────────────────────
+        pt:init)       echo "Inicializando setup..." ;;
+        en:init)       echo "Initializing setup..." ;;
+
+        # ── Error handler ────────────────────
+        pt:err_line)   echo "Falha na linha" ;;
+        pt:err_exit)   echo "código de saída" ;;
+        pt:err_debug)  echo "Execute com 'bash -x $0' para depurar." ;;
+        en:err_line)   echo "Failure at line" ;;
+        en:err_exit)   echo "exit code" ;;
+        en:err_debug)  echo "Run with 'bash -x $0' for a full trace." ;;
+
+        # ── run_cmd ──────────────────────────
+        pt:cmd_fail)   echo "Falha ao executar:" ;;
+        pt:cmd_done)   echo "Concluído:" ;;
+        en:cmd_fail)   echo "Command failed:" ;;
+        en:cmd_done)   echo "Done:" ;;
+
+        # ── require_cmd ──────────────────────
+        pt:dep_missing) echo "Dependência ausente:" ;;
+        pt:dep_hint)    echo "Instale-a e tente novamente." ;;
+        en:dep_missing) echo "Required command not found:" ;;
+        en:dep_hint)    echo "Please install it and retry." ;;
+
+        # ── Sections ─────────────────────────
+        pt:sec_platform)  echo "Detecção de plataforma" ;;
+        pt:sec_prereqs)   echo "Verificando pré-requisitos" ;;
+        pt:sec_termux)    echo "Ambiente Termux" ;;
+        pt:sec_npm)       echo "Dependências npm" ;;
+        pt:sec_chrome)    echo "Chrome para Puppeteer" ;;
+        pt:sec_manyplug)  echo "ManyPlug CLI" ;;
+        pt:sec_config)    echo "Arquivo de configuração" ;;
+        pt:sec_systemd)   echo "Serviço systemd (opcional)" ;;
+        en:sec_platform)  echo "Platform detection" ;;
+        en:sec_prereqs)   echo "Prerequisites" ;;
+        en:sec_termux)    echo "Termux environment" ;;
+        en:sec_npm)       echo "npm dependencies" ;;
+        en:sec_chrome)    echo "Chrome for Puppeteer" ;;
+        en:sec_manyplug)  echo "ManyPlug CLI" ;;
+        en:sec_config)    echo "Configuration file" ;;
+        en:sec_systemd)   echo "systemd service (optional)" ;;
+
+        # ── Platform ─────────────────────────
+        pt:plat_system)    echo "Sistema    :" ;;
+        pt:plat_arch)      echo "Arquitetura:" ;;
+        pt:plat_platform)  echo "Plataforma :" ;;
+        pt:plat_unknown)   echo "Plataforma não reconhecida — o script pode não funcionar corretamente." ;;
+        en:plat_system)    echo "System      :" ;;
+        en:plat_arch)      echo "Architecture:" ;;
+        en:plat_platform)  echo "Platform    :" ;;
+        en:plat_unknown)   echo "Unrecognized platform — the script may not work as expected." ;;
+
+        # ── Node / npm ───────────────────────
+        pt:node_ver)  echo "Node.js :" ;;
+        pt:npm_ver)   echo "npm     :" ;;
+        pt:node_old)  echo "Node.js >= 18 é obrigatório (encontrado:" ;;
+        pt:node_ok)   echo "Versão do Node.js compatível." ;;
+        en:node_ver)  echo "Node.js :" ;;
+        en:npm_ver)   echo "npm     :" ;;
+        en:node_old)  echo "Node.js >= 18 is required (found:" ;;
+        en:node_ok)   echo "Node.js version is compatible." ;;
+
+        # ── Termux / packages ────────────────
+        pt:pkg_ok)      echo "já instalado." ;;
+        pt:pkg_missing) echo "não encontrado. Instalando..." ;;
+        en:pkg_ok)      echo "is already installed." ;;
+        en:pkg_missing) echo "not found. Installing..." ;;
+
+        # ── Chrome ───────────────────────────
+        pt:chrome_termux)  echo "Ambiente Termux: usando o Chromium do sistema, pulando download do Puppeteer." ;;
+        pt:chrome_install) echo "Instalando Chrome via Puppeteer..." ;;
+        en:chrome_termux)  echo "Termux environment: using system Chromium, skipping Puppeteer browser download." ;;
+        en:chrome_install) echo "Installing Chrome via Puppeteer..." ;;
+
+        # ── ManyPlug ─────────────────────────
+        pt:mp_found)      echo "ManyPlug encontrado e atualizado" ;;
+        pt:mp_found_skip) echo "Pulando." ;;
+        pt:mp_not_found)  echo "ManyPlug não encontrado." ;;
+        pt:mp_outdated)   echo "ManyPlug encontrado, mas está desatualizado." ;;
+        pt:mp_prompt_update)  echo "Deseja atualizar o ManyPlug globalmente? [S/n]: " ;;
+        pt:mp_prompt)     echo "Deseja instalar o ManyPlug globalmente? [S/n]: " ;;
+        pt:mp_prompt_yes) echo "s" ;;
+        pt:mp_installing) echo "Instalando @freakk.dev/manyplug globalmente..." ;;
+        pt:mp_fail)       echo "Falha ao instalar ManyPlug. Verifique suas permissões ou use 'sudo'." ;;
+        pt:mp_no_path)    echo "ManyPlug instalado, mas não encontrado no PATH." ;;
+        pt:mp_path_hint)  echo "Adicione o diretório global do npm ao seu PATH e tente novamente." ;;
+        pt:mp_success)    echo "ManyPlug instalado com sucesso!" ;;
+        pt:mp_cancelled)  echo "Instalação do ManyPlug cancelada pelo usuário." ;;
+        en:mp_found)      echo "ManyPlug found and it's up to date" ;;
+        en:mp_found_skip) echo "Skipping." ;;
+        en:mp_not_found)  echo "ManyPlug not found." ;;
+        en:mp_outdated)   echo "ManyPlug was found, but it's outdated." ;;
+        en:mp_prompt_update)  echo "Update ManyPlug globally? [Y/n]: " ;;
+        en:mp_prompt)     echo "Install ManyPlug globally? [Y/n]: " ;;
+        en:mp_prompt_yes) echo "y" ;;
+        en:mp_installing) echo "Installing @freakk.dev/manyplug globally..." ;;
+        en:mp_fail)       echo "Failed to install ManyPlug. Check your permissions or try with 'sudo'." ;;
+        en:mp_no_path)    echo "ManyPlug was installed but is not found in PATH." ;;
+        en:mp_path_hint)  echo "Add the npm global bin directory to your PATH and retry." ;;
+        en:mp_success)    echo "ManyPlug installed successfully!" ;;
+        en:mp_cancelled)  echo "ManyPlug installation cancelled by user." ;;
+
+        # ── Config ───────────────────────────
+        pt:conf_exists)  echo "manybot.conf já existe — verifique se está atualizado." ;;
+        pt:conf_created) echo "manybot.conf criado a partir do arquivo de exemplo." ;;
+        pt:conf_edit)    echo "Edite o arquivo antes de iniciar o bot!" ;;
+        pt:conf_missing) echo "manybot.conf.example não encontrado — configure o bot manualmente." ;;
+        en:conf_exists)  echo "manybot.conf already exists — make sure it is up to date." ;;
+        en:conf_created) echo "manybot.conf created from the example file." ;;
+        en:conf_edit)    echo "Edit the file before starting the bot!" ;;
+        en:conf_missing) echo "manybot.conf.example not found — configure the bot manually." ;;
+
+        # ── systemd ──────────────────────────
+        pt:svc_not_found)  echo "manybot.service não encontrado — pulando instalação do serviço." ;;
+        pt:svc_need_root)  echo "Para instalar o serviço systemd, execute como root:" ;;
+        pt:svc_copying)    echo "Copiando arquivos para" ;;
+        pt:svc_installing) echo "Instalando serviço systemd..." ;;
+        pt:svc_done)       echo "Serviço instalado e iniciado!" ;;
+        pt:svc_cmds)       echo "Comandos úteis:" ;;
+        pt:svc_status)     echo "  systemctl status manybot   — Ver status" ;;
+        pt:svc_stop)       echo "  systemctl stop manybot     — Parar" ;;
+        pt:svc_logs)       echo "  journalctl -u manybot -f   — Acompanhar logs" ;;
+        en:svc_not_found)  echo "manybot.service not found — skipping service installation." ;;
+        en:svc_need_root)  echo "To install the systemd service, run as root:" ;;
+        en:svc_copying)    echo "Copying files to" ;;
+        en:svc_installing) echo "Installing systemd service..." ;;
+        en:svc_done)       echo "Service installed and started!" ;;
+        en:svc_cmds)       echo "Useful commands:" ;;
+        en:svc_status)     echo "  systemctl status manybot   — Check status" ;;
+        en:svc_stop)       echo "  systemctl stop manybot     — Stop the service" ;;
+        en:svc_logs)       echo "  journalctl -u manybot -f   — Follow logs" ;;
+
+        # ── Final message ────────────────────
+        pt:done_title) echo "Setup concluído com sucesso!" ;;
+        pt:done_hint)  echo "Para iniciar o bot, execute na raiz do projeto:" ;;
+        en:done_title) echo "Setup complete!" ;;
+        en:done_hint)  echo "To start the bot, run from the project root:" ;;
+
+        # ── Language notice ──────────────────
+        pt:lang_notice) echo "Idioma detectado: Português  |  Use MANYBOT_LANG=en para inglês." ;;
+        en:lang_notice) echo "Detected language: English   |  Use MANYBOT_LANG=pt for Portuguese." ;;
+
+        *) echo "$key" ;;  # fallback: return the key itself
+    esac
+}
+
+# ─────────────────────────────────────────────
+# Logging
+# ─────────────────────────────────────────────
+timestamp() { date +"%H:%M:%S"; }
 
 log() {
-    local level="$1"
-    local color="$2"
+    local level="$1" color="$2"
     shift 2
-    echo -e "${GRAY}[$(timestamp)]${RESET} ${color}${level}${RESET} $*"
+    printf "${DIM}[$(timestamp)]${RESET} ${color}${BOLD}${level}${RESET} %s\n" "$*"
 }
 
-log_info()  { log "[INFO]"  "$BLUE" "$@"; }
-log_ok()    { log "[OK]"    "$GREEN" "$@"; }
-log_warn()  { log "[WARN]"  "$YELLOW" "$@"; }
-log_error() { log "[ERROR]" "$RED" "$@"; }
-log_cmd()   { log "[CMD]"   "$CYAN" "${BOLD}$*${RESET}"; }
-log_debug() { log "[DBG]"   "$GRAY" "$@"; }
+log_info()    { log "[INFO]"        "$BLUE"    "$@"; }
+log_ok()      { log "[OK]"          "$GREEN"   "$@"; }
+log_warn()    { log "$(t lbl_warn)" "$YELLOW"  "$@"; }
+log_error()   { log "$(t lbl_error)" "$RED"    "$@" >&2; }
+log_cmd()     { log "[CMD]"         "$CYAN"    "$*"; }
+log_section() { printf "\n${MAGENTA}${BOLD}── %s${RESET}\n" "$*"; }
 
-# ------------------------
+# ─────────────────────────────────────────────
+# Error handler
+# ─────────────────────────────────────────────
+on_error() {
+    local code=$? line=$1
+    log_error "$(t err_line) ${line} ($(t err_exit): ${code})"
+    log_error "$(t err_debug)"
+    exit "$code"
+}
+trap 'on_error $LINENO' ERR
+
+# ─────────────────────────────────────────────
 # Banner
-# ------------------------
-print_banner() {
-echo -e "${MAGENTA}${BOLD}"
-cat << "EOF"
- _____             _____     _
-|     |___ ___ _ _| __  |___| |_
-| | | | .'|   | | | __ -| . |  _|
-|_|_|_|__,|_|_|_  |_____|___|_|
-              |___|
+# ─────────────────────────────────────────────
+website="https://git.maneos.net/synt-xerror/manybot"
 
-website: www.mlplovers.com.br/manybot
-repos: git.maneos.net/synt-xerror/manybot
-       codeberg.org/synt-xerror/manybot
+print_centered() {
+    local text="$1"
+    local term_width
+    term_width=$(tput cols)
 
-EOF
-echo -e "${RESET}"
+    local padding=$(( (term_width - ${#text}) / 2 ))
+    ((padding < 0)) && padding=0
+
+    printf "%*s%s\n" "$padding" "" "$text"
 }
 
-print_banner
-log_info "Inicializando setup..."
+print_banner() {
+    printf "\n"
+    printf "${BLUE}${BOLD}"
 
-# ------------------------
-# Executar comandos
-# ------------------------
+    print_centered "███╗   ███╗ █████╗ ███╗   ██╗██╗   ██╗██████╗  ██████╗ ████████╗" 
+    print_centered "████╗ ████║██╔══██╗████╗  ██║╚██╗ ██╔╝██╔══██╗██╔═══██╗╚══██╔══╝" 
+    print_centered "██╔████╔██║███████║██╔██╗ ██║ ╚████╔╝ ██████╔╝██║   ██║   ██║   " 
+    print_centered "██║╚██╔╝██║██╔══██║██║╚██╗██║  ╚██╔╝  ██╔══██╗██║   ██║   ██║   " 
+    print_centered "██║ ╚═╝ ██║██║  ██║██║ ╚████║   ██║   ██████╔╝╚██████╔╝   ██║   " 
+    print_centered "╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═════╝  ╚═════╝    ╚═╝   " 
+
+    print_centered "$(t slogan)"
+    print_centered "$website"
+
+    printf "${RESET}"
+    printf "\n"
+}
+print_banner
+
+log_info "$(t lang_notice)"
+log_info "$(t init)"
+
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
 run_cmd() {
     log_cmd "$*"
-    "$@"
-    log_ok "Comando finalizado: $1"
-}
-
-# ------------------------
-# Download
-# ------------------------
-download_file() {
-    local url="$1"
-    local dest="$2"
-
-    log_debug "download_file(url=$url, dest=$dest)"
-
-    if [[ -f "$dest" ]]; then
-        log_warn "Arquivo já existe: $dest"
-        return
-    fi
-
-    log_info "Baixando $url"
-    log_debug "Destino: $dest"
-
-    if command -v curl >/dev/null 2>&1; then
-        log_debug "Downloader: curl"
-        curl -L "$url" -o "$dest"
-    elif command -v wget >/dev/null 2>&1; then
-        log_debug "Downloader: wget"
-        wget "$url" -O "$dest"
-    else
-        log_error "curl ou wget não encontrados"
+    if ! "$@"; then
+        log_error "$(t cmd_fail) $*"
         exit 1
     fi
-
-    chmod +x "$dest" 2>/dev/null || true
-    log_ok "Arquivo pronto: $dest"
+    log_ok "$(t cmd_done) $1"
 }
 
-# ------------------------
-# Detectar plataforma
-# ------------------------
-log_info "Detectando plataforma"
+require_cmd() {
+    local cmd="$1"
+    if ! command -v "$cmd" &>/dev/null; then
+        log_error "$(t dep_missing) '$cmd'. $(t dep_hint)"
+        exit 1
+    fi
+}
+
+# ─────────────────────────────────────────────
+# Platform detection
+# ─────────────────────────────────────────────
+log_section "$(t sec_platform)"
 
 UNAME="$(uname -s)"
 ARCH="$(uname -m)"
-
 PLATFORM=""
+
 case "$UNAME" in
-    Linux*)   PLATFORM="linux";;
-    Darwin*)  PLATFORM="mac";;
-    MINGW*|MSYS*|CYGWIN*) PLATFORM="win";;
-    *)        PLATFORM="unknown";;
+    Linux*)               PLATFORM="linux"   ;;
+    Darwin*)              PLATFORM="mac"     ;;
+    MINGW*|MSYS*|CYGWIN*) PLATFORM="windows" ;;
+    *)                    PLATFORM="unknown" ;;
 esac
 
-log_info "Sistema: $UNAME"
-log_info "Arquitetura: $ARCH"
-log_info "Plataforma: $PLATFORM"
+log_info "$(t plat_system) $UNAME"
+log_info "$(t plat_arch) $ARCH"
+log_info "$(t plat_platform) $PLATFORM"
 
-# ------------------------
-# Informações do ambiente
-# ------------------------
-log_info "Verificando ambiente"
-
-log_debug "Node: $(node -v 2>/dev/null || echo 'não encontrado')"
-log_debug "npm:  $(npm -v 2>/dev/null || echo 'não encontrado')"
-log_debug "PREFIX: ${PREFIX:-<vazio>}"
-
-# ------------------------
-# Termux
-# ------------------------
-install_deps() {
-    local packages=("$@")
-
-    for pkg in "${packages[@]}"; do
-        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-            log_warn "$pkg não encontrado, instalando"
-            run_cmd pkg install -y "$pkg"
-        else
-            log_ok "$pkg já instalado"
-        fi
-    done
-}
-
-if [[ "$PREFIX" == *"com.termux"* ]]; then
-    log_info "Ambiente Termux detectado"
-
-    deps=(
-        chromium
-    )
-
-    install_deps "${deps[@]}"
+if [[ "$PLATFORM" == "unknown" ]]; then
+    log_warn "$(t plat_unknown)"
 fi
 
-# ------------------------
-# Setup npm
-# ------------------------
-log_info "Instalando dependências npm"
+# ─────────────────────────────────────────────
+# Prerequisites
+# ─────────────────────────────────────────────
+log_section "$(t sec_prereqs)"
+
+require_cmd node
+require_cmd npm
+
+NODE_VER="$(node -v)"
+NPM_VER="$(npm -v)"
+log_info "$(t node_ver) $NODE_VER"
+log_info "$(t npm_ver) $NPM_VER"
+
+NODE_MAJOR="${NODE_VER#v}"
+NODE_MAJOR="${NODE_MAJOR%%.*}"
+if (( NODE_MAJOR < 18 )); then
+    log_error "$(t node_old) $NODE_VER)."
+    exit 1
+fi
+log_ok "$(t node_ok)"
+
+# ─────────────────────────────────────────────
+# Termux (Beta)
+# ─────────────────────────────────────────────
+install_pkg_if_missing() {
+    local pkg="$1"
+    if dpkg -s "$pkg" &>/dev/null; then
+        log_ok "$pkg $(t pkg_ok)"
+    else
+        log_warn "$pkg $(t pkg_missing)"
+        run_cmd pkg install -y "$pkg"
+    fi
+}
+
+if [[ "${PREFIX:-}" == *"com.termux"* ]]; then
+    log_section "$(t sec_termux)"
+    install_pkg_if_missing chromium
+fi
+
+# ─────────────────────────────────────────────
+# npm dependencies
+# ─────────────────────────────────────────────
+log_section "$(t sec_npm)"
 
 export PUPPETEER_SKIP_DOWNLOAD=1
 run_cmd npm install
 
-# ------------------------
-# Chrome Puppeeter
-# ------------------------
-log_info "Instalando Chrome"
+# ─────────────────────────────────────────────
+# Chrome (Puppeteer)
+# ─────────────────────────────────────────────
+log_section "$(t sec_chrome)"
 
-npx puppeteer browsers install chrome
+if [[ "$PLATFORM" == "linux" && "${PREFIX:-}" == *"com.termux"* ]]; then
+    log_info "$(t chrome_termux)"
+else
+    log_info "$(t chrome_install)"
+    run_cmd npx puppeteer browsers install chrome
+fi
 
-# ------------------------
+# ─────────────────────────────────────────────
 # ManyPlug CLI
-# ------------------------
-log_info "Instalando ManyPlug CLI"
+# ─────────────────────────────────────────────
+log_section "$(t sec_manyplug)"
 
-if ! command -v manyplug &>/dev/null; then
-    log_info "ManyPlug não encontrado, instalando globalmente..."
-    npm install -g @freakk.dev/manyplug
-    log_ok "ManyPlug instalado com sucesso"
-else
-    log_ok "ManyPlug já está instalado"
-fi
+install_mp() {
+    read -r -p "$1" choice
+    choice="${choice,,}"
+    YES="$(t mp_prompt_yes)"
 
-# ------------------------
-# Configuração de exemplo
-# ------------------------
-log_info "Verificando configuração"
+    if [[ "$choice" == "$YES" || -z "$choice" ]]; then
+        log_info "$(t mp_installing)"
+        npm install -g @freakk.dev/manyplug \
+            || { log_error "$(t mp_fail)"; exit 1; }
 
-if [[ ! -f "$SCRIPT_DIR/manybot.conf" ]]; then
-    if [[ -f "$SCRIPT_DIR/manybot.conf.example" ]]; then
-        cp "$SCRIPT_DIR/manybot.conf.example" "$SCRIPT_DIR/manybot.conf"
-        log_ok "Arquivo manybot.conf criado a partir do exemplo"
-        log_warn "Edite o manybot.conf para configurar seu bot antes de executar"
+        if command -v manyplug &>/dev/null; then
+            log_ok "$(t mp_success)"
+        else
+            log_error "$(t mp_no_path)"
+            log_warn "$(t mp_path_hint)"
+        fi
     else
-        log_warn "Arquivo manybot.conf.example não encontrado"
+        log_warn "$(t mp_cancelled)"
     fi
+}
+
+if command -v manyplug &>/dev/null; then
+  MANYPLUG_VER="$(manyplug --version)"
+  MANYPLUG_REMVER="$(npm view @freakk.dev/manyplug version)"
+
+  if [[ "$MANYPLUG_VER" != "$MANYPLUG_REMVER" ]]; then
+    log_warn "$(t mp_outdated)"
+    install_mp "$(t mp_prompt_update)"
+  fi
+
+  log_ok "$(t mp_found) ($MANYPLUG_VER). $(t mp_found_skip)"
 else
-    log_ok "manybot.conf já existe"
+  log_warn "$(t mp_not_found)"
+  install_mp "$(t mp_prompt)"
 fi
 
-log_ok "Setup concluído com sucesso.\nRode sempre na raíz: 'node src/main.js' para rodar o bot."
+# ─────────────────────────────────────────────
+# Configuration file
+# ─────────────────────────────────────────────
+log_section "$(t sec_config)"
 
-# ------------------------
-# Serviço systemd
-# ------------------------
-log_info "Verificando serviço systemd"
+CONF_FILE="$SCRIPT_DIR/manybot.conf"
+CONF_EXAMPLE="$SCRIPT_DIR/manybot.conf.example"
 
-if [[ -f "$SCRIPT_DIR/manybot.service" ]]; then
-    if [[ $EUID -ne 0 ]]; then
-        log_warn "O serviço systemd requer execução como root"
-        log_warn "Execute: sudo bash $0 --install-service"
-    else
-        INSTALL_DIR="/opt/manybot"
-        SERVICE_FILE="$SCRIPT_DIR/manybot.service"
-
-        log_info "Instalando ManyBot em $INSTALL_DIR"
-        mkdir -p "$INSTALL_DIR"
-        cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
-
-        log_info "Copiando serviço systemd"
-        cp "$SERVICE_FILE" /etc/systemd/system/manybot.service
-
-        log_info "Recarregando systemd e habilitando serviço"
-        systemctl daemon-reload
-        systemctl enable manybot
-        systemctl start manybot
-
-        log_ok "Serviço systemd instalado e ativado!"
-        log_info "Comandos úteis:"
-        log_info "  systemctl status manybot  - Ver status"
-        log_info "  systemctl stop manybot    - Parar"
-        log_info "  journalctl -u manybot -f  - Ver logs"
-    fi
+if [[ -f "$CONF_FILE" ]]; then
+    log_warn "$(t conf_exists)"
+elif [[ -f "$CONF_EXAMPLE" ]]; then
+    cp "$CONF_EXAMPLE" "$CONF_FILE"
+    log_ok "$(t conf_created)"
+    log_warn "⚠  $CONF_FILE — $(t conf_edit)"
 else
-    log_debug "Arquivo manybot.service não encontrado, pulando instalação do serviço"
+    log_warn "$(t conf_missing)"
 fi
+
+# ─────────────────────────────────────────────
+# systemd service (optional, requires root)
+# ─────────────────────────────────────────────
+log_section "$(t sec_systemd)"
+
+SERVICE_SRC="$SCRIPT_DIR/manybot.service"
+
+if [[ ! -f "$SERVICE_SRC" ]]; then
+    log_info "$(t svc_not_found)"
+elif [[ $EUID -ne 0 ]]; then
+    log_warn "$(t svc_need_root)"
+    log_warn "  sudo bash $0"
+else
+    INSTALL_DIR="/opt/manybot"
+    log_info "$(t svc_copying) $INSTALL_DIR..."
+    mkdir -p "$INSTALL_DIR"
+    cp -r "$SCRIPT_DIR"/* "$INSTALL_DIR/"
+
+    log_info "$(t svc_installing)"
+    cp "$SERVICE_SRC" /etc/systemd/system/manybot.service
+    systemctl daemon-reload
+    systemctl enable --now manybot
+
+    log_ok "$(t svc_done)"
+    log_info "$(t svc_cmds)"
+    log_info "$(t svc_status)"
+    log_info "$(t svc_stop)"
+    log_info "$(t svc_logs)"
+fi
+
+# ─────────────────────────────────────────────
+# Done
+# ─────────────────────────────────────────────
+printf "\n${GREEN}${BOLD}✔  $(t done_title)${RESET}\n"
+printf "${DIM}$(t done_hint)${RESET}\n"
+printf "  ${CYAN}${BOLD}node src/main.js${RESET}\n\n"
