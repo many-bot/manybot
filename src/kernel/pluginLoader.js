@@ -14,7 +14,7 @@ import path from "path";
 import { logger } from "../logger/logger.js";
 import { t }      from "../i18n/index.js";
 
-const PLUGINS_DIR = path.resolve("src/plugins");
+const PLUGINS_DIR = path.resolve("plugins");
 
 /**
  * Each entry in registry:
