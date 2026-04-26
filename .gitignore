@@ -15,5 +15,3 @@ update.log
 logs/audio-error.log
 logs/video-error.log
 registry.json
-manybot.service
-
