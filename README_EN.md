@@ -29,11 +29,11 @@ ManyBot is a WhatsApp bot that runs locally, without the official API.
 ## What it can do on the official version
 
 - `!video`, `!audio` - Download videos and audio files, sends a download link
-- `!sticker` - Create stickers with images, GIFs, and videos
-- `!guess` - Number guessing game
-- `!hangman` - Hangman game
+- `!igurinha` - Create stickers with images, GIFs, and videos
+- `!adivinhacao` - Number guessing game
+- `!figurinha` - Hangman game
 
-> New features are added frequently!
+> Disclaimer: the official version has Brazilian Portuguese as the default language.
 
 ## Self-hosted version features
 
