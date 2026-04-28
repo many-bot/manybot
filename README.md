@@ -4,7 +4,7 @@
 
 **Bot para WhatsApp 100% gratuito e de código aberto**
 
-[]🇧🇷 Português](README.md) · [🇺🇸 English](README_EN.md)
+[🇧🇷 Português](README.md) · [🇺🇸 English](README_EN.md)
 
 ![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
