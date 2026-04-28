@@ -2,9 +2,9 @@
 
 ![ManyBot Logo](logo.png)
 
-**Bot para WhatsApp 100% local, sem API oficial**
+**Bot para WhatsApp 100% gratuito e de código aberto**
 
-🇧🇷 Português · [🇺🇸 English](README_EN.md)
+[]🇧🇷 Português](README.md) · [🇺🇸 English](README_EN.md)
 
 ![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
@@ -14,9 +14,10 @@
 <br>
 
 > **Versão Oficial Online**
+>
 > Adicione **+55 (16) 99459-1903** e envie `!many`
 >
-> [Termos de Uso](TERMOS_pt-br.md)
+> Por favor, leia os [Termos de Uso](TERMOS_pt-br.md)
 
 </div>
 
