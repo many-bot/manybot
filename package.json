@@ -1,12 +1,13 @@
 {
   "name": "manybot",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "type": "module",
   "dependencies": {
     "node-addon-api": "^7",
     "node-gyp": "^12.2.0",
     "node-webpmux": "^3.2.1",
     "qrcode-terminal": "^0.12.0",
+    "sqlite3": "^5.1.7",
     "wa-sticker-formatter": "^4.4.4",
     "whatsapp-web.js": "^1.24.0"
   },
