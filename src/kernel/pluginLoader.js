@@ -13,6 +13,7 @@ import fs   from "fs";
 import path from "path";
 import { logger } from "../logger/logger.js";
 import { t }      from "../i18n/index.js";
+import { pathToFileURL } from "url";
 
 const PLUGINS_DIR = path.resolve("src/plugins");
 
@@ -87,7 +88,7 @@ async function loadPlugin(name) {
   }
 
   try {
-    const mod = await import(pluginPath);
+    const mod = await import(pathToFileURL(pluginPath).href);
 
     // Plugin must export a default function — this is called on every message
     if (typeof mod.default !== "function") {
