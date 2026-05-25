@@ -17,7 +17,7 @@
 >
 > Adicione **+55 (16) 99459-1903** e envie `!many`
 >
-> Por favor, leia os [Termos de Uso](TERMOS_pt-br.md)
+> Por favor, leia os [Termos de Uso](docs/TERMOS_pt-br.md)
 
 </div>
 
