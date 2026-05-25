@@ -2,8 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
-and this project adheres to [Semantic Versioning](https://semver.org/).
+## [3.0.3] - 2026-04-29
+
+- Now changelogs will use just git log for simplicity.
+- fix: convert pluginPath to URL, so the Node.js ESM can understand paths on Windows (fa1e63e)
 
 ## [3.0.2] - 2026-04-25
 
