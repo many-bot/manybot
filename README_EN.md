@@ -17,7 +17,7 @@
 >
 > Add **+55 (16) 99459-1903** and send `!many`
 >
-> Please, read [Terms of Use](TERMS_en-us.md)
+> Please, read [Terms of Use](docs/TERMS_en-us.md)
 
 </div>
 
