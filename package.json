@@ -15,6 +15,9 @@
     "conventional-changelog-cli": "^5.0.0"
   },
   "scripts": {
-    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0"
+    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",
+    "prepare": "husky",
+    "test": "node --test",
+    "test:watch": "node --test --watch"
   }
 }
