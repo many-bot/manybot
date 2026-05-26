@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.5] - 2026-05-26
+- 4010d3c refactor(update): rewrite update script
+    - git fetch + reset --hard to origin/<branch>
+    - backup manybot.conf, .wwebjs_{auth,cache}, src/plugins/ before reset
+    - restore backed up files after npm install
+    - tmp/ preserved on failure with manual restore hint
+    - block root execution
+
+- 09d0709 refactor(setup): rewrite setup script
+    - remove Termux support
+    - remove ASCII banner, replace with compact one-liner
+    - generates service file inline, no source file needed
+    - systemd installs as user service (~/.config/systemd/user/)
+    - add 3-option prompt: user service / save locally / skip
+    - block root execution
+    - fix ManyPlug version comparison (semver_lt via sort -V)
+    - simplify output: ✓ · ! ✗ prefixes, no timestamps, no spinner
+
+- 3003a3a remove manybot.service as setup doesn't need it anymore
+
+
 ## [3.0.4] - 2026-05-26
 - fix systemd restart by catching SIGTERM signal correctly (a4acd2b)
 
