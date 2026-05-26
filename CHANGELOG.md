@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.4] - 2026-05-26
+- fix systemd restart by catching SIGTERM signal correctly (a4acd2b)
+
 ## [3.0.3] - 2026-04-29
 
 - Now changelogs will use just git log for simplicity.
