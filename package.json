@@ -1,6 +1,6 @@
 {
   "name": "manybot",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "type": "module",
   "dependencies": {
     "node-addon-api": "^7",
@@ -16,7 +16,6 @@
   },
   "scripts": {
     "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",
-    "prepare": "husky",
     "test": "node --test",
     "test:watch": "node --test --watch"
   }
