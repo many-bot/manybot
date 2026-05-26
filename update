@@ -1,141 +1,227 @@
 #!/bin/bash
-# ==============================================================================
-# update.sh — Script de atualização segura do ManyBot
-# ==============================================================================
-
 set -euo pipefail
+IFS=$'\n\t'
 
-# ------------------------------------------------------------------------------
-# Configuração
-# ------------------------------------------------------------------------------
-dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-tmp_dir="$dir/tmp"
-log_file="$dir/update.log"
-config_items=(".wwebjs_auth" ".wwebjs_cache")
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ------------------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------------------
-log() {
-  local level="$1"; shift
-  local msg="$*"
-  local timestamp
-  timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
-  echo "[$timestamp] [$level] $msg" | tee -a "$log_file"
+# Colors
+R="\033[0m" BOLD="\033[1m" DIM="\033[2m"
+RED="\033[31m" GREEN="\033[32m" YELLOW="\033[33m"
+BLUE="\033[34m" MAGENTA="\033[35m"
+
+# ── Language detection ────────────────────────────────────────────────────────
+detect_lang() {
+    local v
+    for v in "${MANYBOT_LANG:-}" "${LANG:-}" "${LC_ALL:-}" "${LC_MESSAGES:-}"; do
+        case "${v,,}" in pt*) echo "pt"; return ;; esac
+    done
+    echo "en"
+}
+LANG_CODE="$(detect_lang)"
+
+t() {
+    local key="$1"
+    case "$LANG_CODE:$key" in
+        pt:prompt_yes)          echo "s" ;;
+        en:prompt_yes)          echo "y" ;;
+
+        pt:root_blocked)        echo "Não execute o update como root." ;;
+        en:root_blocked)        echo "Do not run the update as root." ;;
+
+        pt:dep_missing)         echo "Dependência ausente:" ;;
+        pt:dep_hint)            echo "Instale-a e tente novamente." ;;
+        en:dep_missing)         echo "Required command not found:" ;;
+        en:dep_hint)            echo "Please install it and retry." ;;
+
+        pt:not_git)             echo "Este diretório não é um repositório git:" ;;
+        en:not_git)             echo "This directory is not a git repository:" ;;
+
+        pt:remote)              echo "Remote:" ;;
+        en:remote)              echo "Remote:" ;;
+
+        pt:dirty_warn)          echo "Há alterações locais não commitadas — serão descartadas." ;;
+        pt:dirty_prompt)        echo "Continuar mesmo assim? [S/n]: " ;;
+        pt:dirty_abort)         echo "Atualização cancelada." ;;
+        en:dirty_warn)          echo "There are uncommitted local changes — they will be discarded." ;;
+        en:dirty_prompt)        echo "Continue anyway? [Y/n]: " ;;
+        en:dirty_abort)         echo "Update cancelled." ;;
+
+        pt:backup_skip)         echo "não encontrado, pulando." ;;
+        pt:backup_done)         echo "backup feito." ;;
+        en:backup_skip)         echo "not found, skipping." ;;
+        en:backup_done)         echo "backed up." ;;
+
+        pt:fetch)               echo "Buscando atualizações..." ;;
+        pt:branch)              echo "Branch:" ;;
+        pt:already_up_to_date)  echo "Já está na versão mais recente." ;;
+        pt:updated)             echo "Atualizado:" ;;
+        en:fetch)               echo "Fetching updates..." ;;
+        en:branch)              echo "Branch:" ;;
+        en:already_up_to_date)  echo "Already up to date." ;;
+        en:updated)             echo "Updated:" ;;
+
+        pt:npm_install)         echo "Instalando dependências..." ;;
+        en:npm_install)         echo "Installing dependencies..." ;;
+
+        pt:restore_missing)     echo "Item esperado no backup não encontrado:" ;;
+        pt:restore_done)        echo "restaurado." ;;
+        en:restore_missing)     echo "Expected backup item not found:" ;;
+        en:restore_done)        echo "restored." ;;
+
+        pt:err_backup)          echo "Falha durante o update. Arquivos de backup preservados em:" ;;
+        pt:err_restore_hint)    echo "Restaure manualmente com:  mv tmp/* ." ;;
+        en:err_backup)          echo "Update failed. Backup files preserved at:" ;;
+        en:err_restore_hint)    echo "Restore manually with:  mv tmp/* ." ;;
+
+        pt:done)                echo "ManyBot atualizado. Para reiniciar:  node src/main.js" ;;
+        en:done)                echo "ManyBot updated. To restart:  node src/main.js" ;;
+
+        *) echo "$key" ;;
+    esac
 }
 
-# ------------------------------------------------------------------------------
-# Trap: executa em caso de qualquer erro
-# ------------------------------------------------------------------------------
-cleanup_on_error() {
-  local exit_code=$?
-  log "ERROR" "Falha durante a atualização (código: $exit_code)."
-  if [ -d "$tmp_dir" ] && [ "$(ls -A "$tmp_dir" 2>/dev/null)" ]; then
-    log "WARN"  "Arquivos de configuração preservados em: $tmp_dir"
-    log "WARN"  "Restaure manualmente com: mv \"$tmp_dir\"/* \"$dir\"/"
-  fi
-  exit $exit_code
+# ── Logging ───────────────────────────────────────────────────────────────────
+ok()   { printf "  ${GREEN}✓${R}  %s\n"          "$*"; }
+info() { printf "  ${BLUE}·${R}  ${DIM}%s${R}\n"  "$*"; }
+warn() { printf "  ${YELLOW}!${R}  %s\n"          "$*"; }
+err()  { printf "  ${RED}✗${R}  %s\n"             "$*" >&2; }
+step() { printf "\n${MAGENTA}${BOLD}%s${R}\n"     "$*"; }
+
+# ── Error handler ─────────────────────────────────────────────────────────────
+TMP_DIR="$SCRIPT_DIR/tmp"
+
+on_error() {
+    local code=$? line=$1
+    err "$(t err_backup) $TMP_DIR"
+    err "$(t err_restore_hint)"
+    exit "$code"
 }
-trap cleanup_on_error ERR
+trap 'on_error $LINENO' ERR
 
-# ------------------------------------------------------------------------------
-# Validações iniciais
-# ------------------------------------------------------------------------------
-log "INFO" "Iniciando atualização do ManyBot..."
+confirm() {
+    local choice
+    read -r -p "       $1" choice
+    choice="${choice,,}"
+    local yes; yes="$(t prompt_yes)"
+    [[ "$choice" == "$yes" || -z "$choice" ]]
+}
 
-# Verifica dependências obrigatórias
-for cmd in git npm; do
-  if ! command -v "$cmd" &>/dev/null; then
-    log "ERROR" "Dependência ausente: '$cmd' não encontrado no PATH."
-    exit 1
-  fi
+# ── Root guard ────────────────────────────────────────────────────────────────
+if [[ $EUID -eq 0 ]]; then
+    err "$(t root_blocked)"; exit 1
+fi
+
+# ── Prerequisites ─────────────────────────────────────────────────────────────
+step "Prerequisites"
+
+for cmd in git npm node; do
+    if ! command -v "$cmd" &>/dev/null; then
+        err "$(t dep_missing) '$cmd'. $(t dep_hint)"; exit 1
+    fi
 done
 
-# Verifica se está em um repositório git
-if ! git -C "$dir" rev-parse --is-inside-work-tree &>/dev/null; then
-  log "ERROR" "'$dir' não é um repositório git."
-  exit 1
+if ! git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+    err "$(t not_git) $SCRIPT_DIR"; exit 1
 fi
 
-# Exibe o remote para transparência
-remote_url=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "(não definido)")
-log "INFO" "Remote: $remote_url"
+REMOTE_URL="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || echo '?')"
+info "$(t remote) $REMOTE_URL"
+ok "git + node + npm"
 
-# Verifica se há alterações locais não commitadas
-if ! git -C "$dir" diff --quiet || ! git -C "$dir" diff --cached --quiet; then
-  log "WARN" "Existem alterações locais não commitadas. Elas serão descartadas pelo reset."
-  read -r -p "Deseja continuar mesmo assim? [s/N] " confirm
-  confirm="${confirm:-N}"
-  if [[ ! "$confirm" =~ ^[sS]$ ]]; then
-    log "INFO" "Atualização cancelada pelo usuário."
-    exit 0
-  fi
+# ── Check for local changes ───────────────────────────────────────────────────
+step "Local changes"
+
+if ! git -C "$SCRIPT_DIR" diff --quiet || ! git -C "$SCRIPT_DIR" diff --cached --quiet; then
+    warn "$(t dirty_warn)"
+    confirm "$(t dirty_prompt)" || { info "$(t dirty_abort)"; exit 0; }
+else
+    ok "clean"
 fi
 
-# ------------------------------------------------------------------------------
-# Backup dos arquivos de configuração
-# ------------------------------------------------------------------------------
-rm -rf "$tmp_dir"
-mkdir -p "$tmp_dir"
+# ── Backup ────────────────────────────────────────────────────────────────────
+step "Backup"
+
+# Items to preserve across update.
+# Glob entries (e.g. src/plugins/*) are intentionally unquoted below.
+BACKUP_ITEMS=(
+    "manybot.conf"
+    ".wwebjs_auth"
+    ".wwebjs_cache"
+)
+BACKUP_GLOBS=(
+    "src/plugins"
+)
+
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
 
 backed_up=()
-for item in "${config_items[@]}"; do
-  src="$dir/$item"
-  if [ -e "$src" ]; then
-    mv "$src" "$tmp_dir/"
-    backed_up+=("$item")
-    log "INFO" "Backup: $item → tmp/"
-  fi
+
+for item in "${BACKUP_ITEMS[@]}"; do
+    src="$SCRIPT_DIR/$item"
+    if [[ -e "$src" ]]; then
+        cp -r "$src" "$TMP_DIR/"
+        backed_up+=("$item")
+        ok "$item — $(t backup_done)"
+    else
+        info "$item — $(t backup_skip)"
+    fi
 done
 
-# ------------------------------------------------------------------------------
-# Atualização do repositório
-# ------------------------------------------------------------------------------
-log "INFO" "Buscando atualizações..."
-git -C "$dir" fetch origin
-
-branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
-log "INFO" "Branch atual: $branch"
-
-# Registra o hash antes e depois para auditoria
-hash_before=$(git -C "$dir" rev-parse HEAD)
-git -C "$dir" reset --hard "origin/$branch"
-hash_after=$(git -C "$dir" rev-parse HEAD)
-
-if [ "$hash_before" = "$hash_after" ]; then
-  log "INFO" "Repositório já estava atualizado (sem mudanças)."
-else
-  log "INFO" "Atualizado: $hash_before → $hash_after"
-fi
-
-# ------------------------------------------------------------------------------
-# Instalação de dependências Node
-# ------------------------------------------------------------------------------
-log "INFO" "Instalando dependências Node..."
-npm ci --omit=dev 2>&1 | tee -a "$log_file"
-
-# ------------------------------------------------------------------------------
-# Restauração dos arquivos de configuração
-# ------------------------------------------------------------------------------
-if [ ${#backed_up[@]} -gt 0 ]; then
-  for item in "${backed_up[@]}"; do
-    src="$tmp_dir/$item"
-    dst="$dir/$item"
-    if [ -e "$src" ]; then
-      # Remove o que npm possa ter criado (ex: node_modules)
-      rm -rf "$dst"
-      mv "$src" "$dst"
-      log "INFO" "Restaurado: $item"
+for item in "${BACKUP_GLOBS[@]}"; do
+    src="$SCRIPT_DIR/$item"
+    if [[ -e "$src" ]]; then
+        mkdir -p "$TMP_DIR/$(dirname "$item")"
+        cp -r "$src" "$TMP_DIR/$(dirname "$item")/"
+        backed_up+=("$item")
+        ok "$item — $(t backup_done)"
     else
-      log "WARN" "Item esperado no backup não encontrado: $item"
+        info "$item — $(t backup_skip)"
     fi
-  done
+done
+
+# ── Fetch & reset ─────────────────────────────────────────────────────────────
+step "Update"
+
+info "$(t fetch)"
+git -C "$SCRIPT_DIR" fetch origin
+
+BRANCH="$(git -C "$SCRIPT_DIR" rev-parse --abbrev-ref HEAD)"
+info "$(t branch) $BRANCH"
+
+HASH_BEFORE="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
+git -C "$SCRIPT_DIR" reset --hard "origin/$BRANCH"
+HASH_AFTER="$(git -C "$SCRIPT_DIR" rev-parse HEAD)"
+
+if [[ "$HASH_BEFORE" == "$HASH_AFTER" ]]; then
+    ok "$(t already_up_to_date)"
+else
+    ok "$(t updated) ${HASH_BEFORE:0:7} → ${HASH_AFTER:0:7}"
 fi
 
-# Limpa tmp apenas após restauração bem-sucedida
-rm -rf "$tmp_dir"
+# ── npm install ───────────────────────────────────────────────────────────────
+step "npm install"
 
-# ------------------------------------------------------------------------------
-# Concluído
-# ------------------------------------------------------------------------------
-log "INFO" "ManyBot atualizado com sucesso."
+info "$(t npm_install)"
+PUPPETEER_SKIP_DOWNLOAD=1 npm install
+ok "npm install"
+
+# ── Restore ───────────────────────────────────────────────────────────────────
+step "Restore"
+
+for item in "${backed_up[@]}"; do
+    src="$TMP_DIR/$item"
+    dst="$SCRIPT_DIR/$item"
+    if [[ -e "$src" ]]; then
+        rm -rf "$dst"
+        cp -r "$src" "$dst"
+        ok "$item — $(t restore_done)"
+    else
+        warn "$(t restore_missing) $item"
+    fi
+done
+
+rm -rf "$TMP_DIR"
+
+# ── Done ──────────────────────────────────────────────────────────────────────
+printf "\n  ${GREEN}${BOLD}$(t done)${R}\n\n"
