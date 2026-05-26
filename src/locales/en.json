@@ -6,6 +6,9 @@
     "error": {
       "uncaught": "Uncaught exception",
       "unhandled": "Unhandled rejection"
+    },
+    "signal": {
+      "sigterm": "Process interrupted. Shutting down..."
     }
   },
   "log": {

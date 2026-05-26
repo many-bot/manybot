@@ -6,6 +6,9 @@
     "error": {
       "uncaught": "Excepción no capturada",
       "unhandled": "Rechazo no manejado"
+    },
+    "signal": {
+      "sigterm": "Proceso interrumpida. Apagando..."
     }
   },
   "log": {

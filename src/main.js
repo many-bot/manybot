@@ -25,6 +25,13 @@ process.on("unhandledRejection", (reason) => {
   logger.error(`${t("bot.error.unhandled")} — ${msg}`);
 });
 
+// Clean shutdown
+process.on("SIGTERM", async () => {
+  console.log(t("bot.signal.sigterm"));
+
+  process.exit(0);
+});
+
 // Load plugins before connecting
 await loadPlugins(PLUGINS);
 
