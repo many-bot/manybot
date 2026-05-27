@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.7] - 2026-05-27
+- f390f17 fix: replace cjs syntax with esm syntax
+- 451cd01 add devtools with tools for development
+- c2fab62 refactor(update): use atomic directory replacement during updates
+
 ## [3.0.6] - 2026-05-26
 - ab10266 refactor(update): downloads the zip to not depends on git anymore. also refactor ouput to avoid useless complexity
 
