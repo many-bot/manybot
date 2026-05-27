@@ -1,6 +1,6 @@
 {
   "name": "manybot",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "type": "module",
   "dependencies": {
     "node-addon-api": "^7",
