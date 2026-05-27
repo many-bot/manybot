@@ -5,29 +5,28 @@ LATEST_URL="https://git.stxerr.dev/manybot.git/plain/latest"
 DOWNLOAD_BASE="https://git.stxerr.dev/manybot.git/snapshot"
 
 SCRIPT_PATH="$(realpath "$0")"
-SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+INSTALL_DIR="$(dirname "$SCRIPT_PATH")"
 
 TMP_DIR="$(mktemp -d)"
-WORK_DIR="$TMP_DIR/work"
-BACKUP_DIR="$TMP_DIR/backup"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-if [[ "${1:-}" == "--internal-run" ]]; then
-    SCRIPT_DIR="$2"
-    EXTRACT_DIR="$3"
+if [[ "${1:-}" == "--apply-update" ]]; then
+    INSTALL_DIR="$2"
+    NEW_DIR="$3"
     BACKUP_DIR="$4"
 
-    echo
-    echo "[7/8] Replacing old installation..."
-
-    find "$SCRIPT_DIR" \
-        -mindepth 1 \
-        ! -name "$(basename "$0")" \
-        -exec rm -rf {} +
-
-    cp -a "$EXTRACT_DIR"/. "$SCRIPT_DIR/"
+    OLD_DIR="${INSTALL_DIR}.old"
 
     echo
-    echo "[8/8] Restoring persistent files..."
+    echo "[7/9] Replacing installation..."
+
+    rm -rf "$OLD_DIR"
+
+    mv "$INSTALL_DIR" "$OLD_DIR"
+    mv "$NEW_DIR" "$INSTALL_DIR"
+
+    echo
+    echo "[8/9] Restoring persistent files..."
 
     BACKUP_ITEMS=(
         "manybot.conf"
@@ -38,14 +37,24 @@ if [[ "${1:-}" == "--internal-run" ]]; then
 
     for item in "${BACKUP_ITEMS[@]}"; do
         SRC="$BACKUP_DIR/$item"
+        DST="$INSTALL_DIR/$item"
 
         if [[ -e "$SRC" ]]; then
-            mkdir -p "$SCRIPT_DIR/$(dirname "$item")"
-            cp -a "$SRC" "$SCRIPT_DIR/$item"
+            rm -rf "$DST"
+
+            mkdir -p "$(dirname "$DST")"
+            cp -a "$SRC" "$DST"
 
             echo "  restored: $item"
         fi
     done
+
+    echo
+    echo "[9/9] Fixing permissions..."
+
+    chown -R "$(id -u):$(id -g)" "$INSTALL_DIR" 2>/dev/null || true
+
+    rm -rf "$OLD_DIR"
 
     echo
     echo "ManyBot updated successfully."
@@ -54,45 +63,56 @@ if [[ "${1:-}" == "--internal-run" ]]; then
     exit 0
 fi
 
-cleanup() {
-    rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT
-
-mkdir -p "$WORK_DIR"
-mkdir -p "$BACKUP_DIR"
-
-echo "[1/8] Fetching latest version..."
+echo "[1/9] Fetching latest version..."
 
 VERSION="$(curl -fsSL "$LATEST_URL" | tr -d '\n')"
 
 [[ -n "$VERSION" ]]
 
+echo "Latest version: $VERSION"
+
 ARCHIVE="manybot-${VERSION}.zip"
 URL="${DOWNLOAD_BASE}/${ARCHIVE}"
 
-echo "Latest version: $VERSION"
-
 echo
-echo "[2/8] Downloading release..."
+echo "[2/9] Downloading release..."
 
 curl -fL "$URL" -o "$TMP_DIR/$ARCHIVE"
 
 echo
-echo "[3/8] Extracting release..."
+echo "[3/9] Extracting release..."
 
-unzip -q "$TMP_DIR/$ARCHIVE" -d "$WORK_DIR"
+mkdir "$TMP_DIR/extract"
 
-echo
-echo "[4/8] Locating extracted directory..."
+unzip -q "$TMP_DIR/$ARCHIVE" -d "$TMP_DIR/extract"
 
-EXTRACT_DIR="$(find "$WORK_DIR" -mindepth 1 -maxdepth 1 -type d | head -n1)"
+EXTRACT_DIR="$(find "$TMP_DIR/extract" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 
 [[ -n "$EXTRACT_DIR" ]]
 [[ -f "$EXTRACT_DIR/package.json" ]]
 
 echo
-echo "[5/8] Backing up persistent files..."
+echo "[4/9] Building runtime package..."
+
+RUNTIME_DIR="$TMP_DIR/runtime"
+
+mkdir "$RUNTIME_DIR"
+
+cp -a "$EXTRACT_DIR/src" "$RUNTIME_DIR/"
+cp -a "$EXTRACT_DIR/package.json" "$RUNTIME_DIR/"
+cp -a "$EXTRACT_DIR/package-lock.json" "$RUNTIME_DIR/"
+cp -a "$EXTRACT_DIR/README.md" "$RUNTIME_DIR/"
+cp -a "$EXTRACT_DIR/update" "$RUNTIME_DIR/"
+
+if [[ -f "$EXTRACT_DIR/manybot.conf.example" ]]; then
+    cp -a "$EXTRACT_DIR/manybot.conf.example" "$RUNTIME_DIR/"
+fi
+
+echo
+echo "[5/9] Backing up persistent files..."
+
+BACKUP_DIR="$TMP_DIR/backup"
+mkdir "$BACKUP_DIR"
 
 BACKUP_ITEMS=(
     "manybot.conf"
@@ -102,7 +122,7 @@ BACKUP_ITEMS=(
 )
 
 for item in "${BACKUP_ITEMS[@]}"; do
-    SRC="$SCRIPT_DIR/$item"
+    SRC="$INSTALL_DIR/$item"
 
     if [[ -e "$SRC" ]]; then
         mkdir -p "$BACKUP_DIR/$(dirname "$item")"
@@ -113,13 +133,15 @@ for item in "${BACKUP_ITEMS[@]}"; do
 done
 
 echo
-echo "[6/8] Moving updater to temporary execution..."
+echo "[6/9] Moving updater to temporary execution..."
 
 TMP_SCRIPT="$TMP_DIR/update-runtime.sh"
+
 cp "$SCRIPT_PATH" "$TMP_SCRIPT"
 chmod +x "$TMP_SCRIPT"
 
-exec "$TMP_SCRIPT" --internal-run \
-    "$SCRIPT_DIR" \
-    "$EXTRACT_DIR" \
+exec "$TMP_SCRIPT" \
+    --apply-update \
+    "$INSTALL_DIR" \
+    "$RUNTIME_DIR" \
     "$BACKUP_DIR"
