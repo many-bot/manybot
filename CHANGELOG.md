@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.6] - 2026-05-26
+- ab10266 refactor(update): downloads the zip to not depends on git anymore. also refactor ouput to avoid useless complexity
+
 ## [3.0.5] - 2026-05-26
 - 4010d3c refactor(update): rewrite update script
     - git fetch + reset --hard to origin/<branch>
