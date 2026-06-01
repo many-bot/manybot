@@ -1,7 +1,7 @@
 /**
  * config.js
  *
- * Reads and parses manybot.conf.
+ * Reads and parses manybot.conf and manyplug.conf.
  * Supports multiline lists and inline comments.
  */
 
@@ -63,6 +63,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
 const filePath = path.join(__dirname, "../manybot.conf");
+const plugFilePath = path.join(__dirname, "../manyplug.conf");
 
 let raw;
 try {
@@ -78,7 +79,27 @@ try {
   process.exit(1);
 }
 
-const config = parseConf(raw);
+let plugRaw;
+try {
+  plugRaw = fs.readFileSync(plugFilePath, "utf8");
+} catch (err) {
+  if (err.code === "ENOENT") {
+    console.warn("Plugin file not found: manyplug.conf")
+    console.log("You probably don't have executed manyplug to install some plugins yet")
+  } else {
+    console.warn("Error when reading manyplug.conf: ", err.message);
+  }
+}
+const bringTogheter = plugRaw !== undefined;
+
+let completeRaw;
+if (bringTogheter) {
+  completeRaw = raw + "\n" + plugRaw;
+} else {
+  completeRaw = raw;
+}
+
+const config = parseConf(completeRaw);
 
 export const CLIENT_ID     = config.CLIENT_ID  ?? "bot_permanente";
 export const CMD_PREFIX    = config.CMD_PREFIX ?? "!";
