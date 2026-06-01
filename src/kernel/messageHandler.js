@@ -18,8 +18,6 @@ import { getChatId }           from "../utils/getChatId.js";
 import { buildApi }            from "./pluginApi.js";
 import { pluginRegistry }      from "./pluginLoader.js";
 import { runPlugin }           from "./pluginGuard.js";
-import { buildMessageContext } from "../logger/messageContext.js";
-import { logger }              from "../logger/logger.js";
 import client                  from "../client/whatsappClient.js";
 
 export async function handleMessage(msg) {
@@ -29,15 +27,10 @@ export async function handleMessage(msg) {
   // CHATS empty = accepts all chats
   if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
 
-  const ctx = await buildMessageContext(msg, chat);
-  logger.msg(ctx);
-
   const api     = buildApi({ msg, chat, client, pluginRegistry });
   const context = { msg: api.msg, chat: api.chat, api };
 
   for (const plugin of pluginRegistry.values()) {
     await runPlugin(plugin, context);
   }
-
-  logger.done("message_create", `de +${ctx.senderNumber}`);
 }
