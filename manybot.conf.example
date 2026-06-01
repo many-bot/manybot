@@ -23,15 +23,3 @@ LANGUAGE=en
 # Format: number@c.us for private chats
 CHATS=[
 ]
-
-# Active plugins
-PLUGINS=[
-many,
-figurinha,
-audio,
-video,
-adivinhação,
-forca,
-obrigado,
-a
-]
