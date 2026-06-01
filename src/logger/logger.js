@@ -8,10 +8,10 @@ import {
  * Each method only handles output — no business logic or external I/O.
  */
 export const logger = {
-  info:    (...a) => console.log(`${c.gray}${now()}${c.reset}${c.cyan}INFO   ${c.reset}`, ...a),
-  success: (...a) => console.log(`${c.gray}${now()}${c.reset}${c.green}OK     ${c.reset}`, ...a),
-  warn:    (...a) => console.log(`${c.gray}${now()}${c.reset}${c.yellow}WARN   ${c.reset}`, ...a),
-  error:   (...a) => console.log(`${c.gray}${now()}${c.reset}${c.red}ERROR  ${c.reset}`, ...a),
+  info:    (...a) => console.log(`${c.cyan  }INFO  ${c.reset}`, ...a),
+  success: (...a) => console.log(`${c.green }OK    ${c.reset}`, ...a),
+  warn:    (...a) => console.log(`${c.yellow}WARN  ${c.reset}`, ...a),
+  error:   (...a) => console.log(`${c.red   }ERROR ${c.reset}`, ...a),
 
   cmd: (cmd, extra = "") =>
     console.log(
