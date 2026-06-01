@@ -4,7 +4,6 @@
  * ManyBot entry point.
  * Initializes WhatsApp client and loads plugins.
  */
-
 import client               from "./client/whatsappClient.js";
 import { handleMessage }    from "./kernel/messageHandler.js";
 import { loadPlugins, setupPlugins } from "./kernel/pluginLoader.js";
@@ -27,8 +26,7 @@ process.on("unhandledRejection", (reason) => {
 
 // Clean shutdown
 process.on("SIGTERM", async () => {
-  console.log(t("bot.signal.sigterm"));
-
+  logger.error(t("bot.signal.sigterm"));
   process.exit(0);
 });
 
