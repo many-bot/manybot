@@ -11,6 +11,7 @@ cookies.txt
 bin/
 mychats.txt
 manybot.conf
+manyplug.conf
 update.log
 logs/audio-error.log
 logs/video-error.log
