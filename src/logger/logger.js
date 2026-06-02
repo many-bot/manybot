@@ -1,6 +1,5 @@
 import {
   c, now,
-  formatType, formatContext, formatBody, formatReply,
 } from "./formatter.js";
 
 /**
