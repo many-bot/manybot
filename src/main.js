@@ -30,23 +30,41 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
-// Load plugins before connecting
-await loadPlugins(PLUGINS);
+let state = "BOOT";
+// BOOT → AUTH → SYNC → READY
 
-client.on("message_create", async (msg) => {
-  try {
-    await handleMessage(msg);
-  } catch (err) {
-    logger.error(
-      `${t("errors.messageProcess")} — ${err.message}`,
-      `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`
-    );
-  }
+function setState(next) {
+  state = next;
+}
+
+client.on("loading_screen", (p, msg) => {
+  setState("SYNC");
+  logger.info(`loading ${p}% ${msg}`);
 });
 
 client.on("ready", async () => {
+  setState("READY_INIT");
+
+  await loadPlugins(PLUGINS);
   await setupPlugins(buildSetupApi(client));
+
+  // buffer anti-replay / sync ghost messages
+  setTimeout(() => {
+    setState("READY");
+  }, 2000);
 });
+
+client.on("message_create", async (msg) => {
+  if (state !== "READY") return;
+
+  if (!msg.body && !msg.hasMedia) return;
+
+  try {
+    await handleMessage(msg);
+  } catch (err) {
+    logger.error(err);
+  }
+});
+
 client.initialize();
-console.log("\n");
 logger.info(t("bot.initialized"));
