@@ -1,48 +1,43 @@
-import { c } from "../logger/formatter.js";
+const C = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+
+  blue: "\x1b[94m",
+  magenta: "\x1b[95m",
+  cyan: "\x1b[96m",
+  gray: "\x1b[90m",
+  yellow: "\x1b[93m",
+};
 
 export function printBanner() {
-
   const banner = [
-`   _____             _____     _   `,
-`  |     |___ ___ _ _| __  |___| |_ `,
-`  | | | | . |   | | | __ -| . |  _|`,
-`  |_|_|_|__,|_|_|_  |_____|___|_|  `,
-`                |___|              `
+    `                             _           _  `,
+    `                            | |         | | `,
+    ` _ __ ___   __ _ _ __  _   _| |__   ___ | |_`,
+    `| '_ \` _ \\ / _\` | '_ \\| | | | '_ \\ / _ \\| __`,
+    `| | | | | | (_| | | | | |_| | |_) | (_) | |_`,
+    `|_| |_| |_|\\__,_|_| |_|\\__, |_.__/ \\___/ \\__`,
+    `                        __/ |               `,
+    `                       |___/                `
   ];
 
-  const pony = [
-`  ⠴⢮⠭⠍⠉⠉⠒⠤⣀`,
-` ⢀⢊           ⢱⠊⠑⡀`,
-` ⠋⡎  ⣀⡠⠤⠠⠖⠋⢉⠉ ⡄⢸`,
-` ⣘⡠⠊⣩⡅  ⣴⡟⣯⠙⣊ ⢁⠜`,
-`     ⣿⡇⢸⣿⣷⡿⢀⠇⢀⢎`,
-`    ⠰⡉ ⠈⠛⠛⠋⠁⢀⠜ ⢂`,
-`     ⠈⠒⠒⡲⠂⣠⣔⠁   ⡇  ⢀⡴⣾⣛⡛⠻⣦`,
-`       ⢠⠃  ⢠⠞   ⡸⠉⠲⣿⠿⢿⣿⣿⣷⡌⢷`,
-`   ⢀⠔⠂⢼   ⡎⡔⡄⠰⠃    ⢣ ⢻⣿⣿⣿⠘⣷`,
-`  ⡐⠁   ⠸⡀ ⠏ ⠈⠃     ⢸  ⣿⣿⣿⡇⣿⡇`,
-`  ⡇   ⡎⠉⠉⢳  ⡤⠤⡤⠲⡀ ⢇   ⣿⣿⣿⣇⣿⣷`,
-`  ⡇  ⡠⠃  ⡸  ⡇  ⡇ ⢱⡀ ⢣  ⣿⣿⣿⣿⣿⡄`,
-`  ⠑⠊    ⢰   ⠇ ⢸  ⡇⡇  ⡇  ⢳⣿⣿⣿⣿⡇`,
-`      ⢠⠃   ⡸ ⡎   ⡜⡇   ⡇   ⠻⡏⠻⣿⣿⣄`,
-`     ⣔⣁⣀⣀⡠⠁ ⠈⠉⠉⠁⣎⣀⣀⣀⡸`
-  ];
+  console.log(`${C.bold}${C.blue}`);
+  console.log(banner.join("\n"));
+  console.log(C.reset);
 
-
-
-  console.log(`${c.blue}${c.bold}`);
-
-  const max = Math.max(banner.length, pony.length);
-
-  for (let i = 0; i < max; i++) {
-    const left = banner[i] || " ".repeat(banner[0].length);
-    const right = pony[i] || "";
-    console.log(left + "   " + right);
-  }
+  console.log(
+    `  made with ${C.magenta}<3${C.reset} by ${C.bold}${C.cyan}SyntaxError!${C.reset} ${C.gray}<me@stxerr.dev>${C.reset}`
+  );
 
   console.log();
-  console.log(`  website : ${c.reset}${c.cyan}www.mlplovers.com.br/manybot${c.reset}`);
-  console.log(`  repo    : ${c.reset}${c.cyan}github.com/synt-xerror/manybot${c.reset}`);
+
+  console.log(
+    `  ${C.gray}website${C.reset} : ${C.yellow}https://manybot.stxerr.dev${C.reset}`
+  );
+
+  console.log(
+    `  ${C.gray}github ${C.reset} : ${C.yellow}https://github.com/many-bot${C.reset}`
+  );
+
   console.log();
 }
-
