@@ -1,10 +1,10 @@
 import pkg                    from "whatsapp-web.js";
-import { CLIENT_ID, PHONE_NUMBER } from "../config.js";
-import { logger }             from "../logger/logger.js";
-import { t }                  from "../i18n/index.js";
+import { CLIENT_ID, PHONE_NUMBER } from "#config";
+import { logger }             from "#logger";
+import { t }                  from "#i18n";
 import { isTermux, resolvePuppeteerConfig } from "./environment.js";
-import { handleQR, handlePairingCode } from "./qrHandler.js";
-import { printBanner }        from "./banner.js";
+import { handleQR, handlePairingCode } from "#client/qrHandler.js";
+import { printBanner }        from "#client/banner.js";
 import fs                     from "fs";
 import path                   from "path";
 import { fileURLToPath }      from "url";

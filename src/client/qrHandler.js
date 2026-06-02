@@ -1,7 +1,7 @@
 import qrcode   from "qrcode-terminal";
 import path     from "path";
-import { logger } from "../logger/logger.js";
-import { t }      from "../i18n/index.js";
+import { logger } from "#logger";
+import { t }      from "#i18n";
 import { isTermux } from "./environment.js";
 
 const QR_PATH = path.resolve("qr.png");

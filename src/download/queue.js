@@ -12,8 +12,8 @@
  *   enqueue(async () => { ... all plugin logic ... }, onError);
  */
 
-import { logger } from "../logger/logger.js";
-import { t }      from "../i18n/index.js";
+import { logger } from "#logger";
+import { t }      from "#i18n";
 
 /**
  * @typedef {{

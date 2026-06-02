@@ -4,13 +4,13 @@
  * ManyBot entry point.
  * Initializes WhatsApp client and loads plugins.
  */
-import client               from "./client/whatsappClient.js";
-import { handleMessage }    from "./kernel/messageHandler.js";
-import { loadPlugins, setupPlugins } from "./kernel/pluginLoader.js";
-import { buildSetupApi }    from "./kernel/pluginApi.js";
-import { logger }           from "./logger/logger.js";
-import { PLUGINS }          from "./config.js";
-import { t }                from "./i18n/index.js";
+import client               from "#client/whatsappClient.js";
+import { handleMessage }    from "#kernel/messageHandler.js";
+import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
+import { buildSetupApi }    from "#manyapi";
+import { logger }           from "#logger";
+import { PLUGINS }          from "#config";
+import { t }                from "#i18n";
 
 logger.info(t("bot.starting"));
 

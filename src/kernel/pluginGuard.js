@@ -10,9 +10,9 @@
  * Disabled or errored plugins are silently ignored.
  */
 
-import { logger }         from "../logger/logger.js";
-import { t }              from "../i18n/index.js";
-import { pluginRegistry } from "./pluginLoader.js";
+import { logger }         from "#logger";
+import { t }              from "#i18";
+import { pluginRegistry } from "#kernel/pluginLoader.js";
 
 /**
  * @param {object} plugin   — pluginRegistry entry

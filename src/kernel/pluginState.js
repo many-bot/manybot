@@ -7,7 +7,7 @@
  * - Non-services are blocked when another plugin is running in the same chat
  */
 
-import { logger } from "../logger/logger.js";
+import { logger } from "#logger";
 
 /**
  * Map<chatId, { pluginName: string, startedAt: Date }>
