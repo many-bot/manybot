@@ -9,6 +9,9 @@ const C = {
   yellow: "\x1b[93m",
 };
 
+import { readFileSync } from "fs";
+const v = readFileSync("latest", "utf8").replace(/[\r\n]+/g, '');
+
 export function printBanner() {
   const banner = [
     `                             _           _  `,
@@ -18,7 +21,7 @@ export function printBanner() {
     `| | | | | | (_| | | | | |_| | |_) | (_) | |_`,
     `|_| |_| |_|\\__,_|_| |_|\\__, |_.__/ \\___/ \\__`,
     `                        __/ |               `,
-    `                       |___/                `
+    ` ${v}                 |___/                `
   ];
 
   console.log(`${C.bold}${C.blue}`);
