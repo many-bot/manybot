@@ -11,8 +11,8 @@
 
 import fs   from "fs";
 import path from "path";
-import { logger } from "../logger/logger.js";
-import { t }      from "../i18n/index.js";
+import { logger } from "#logger";
+import { t }      from "#i18n";
 import { pathToFileURL } from "url";
 
 const PLUGINS_DIR = path.resolve("src/plugins");

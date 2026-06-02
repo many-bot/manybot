@@ -21,7 +21,7 @@
 import fs   from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { LANGUAGE } from "../config.js";
+import { LANGUAGE } from "#config";
 
 // Default/fallback language
 const DEFAULT_LANG = "en";

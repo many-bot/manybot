@@ -12,7 +12,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 
-import { logger } from "./logger/logger.js"
+import { logger } from "#logger";
 
 const CONFIG_DIR = path.join(os.homedir(), ".manybot");
 const CONFIG_FILE = path.join(CONFIG_DIR, "manybot.conf");

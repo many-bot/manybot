@@ -13,12 +13,12 @@
  * Each plugin decides on its own whether to act or ignore.
  */
 
-import { CHATS }  from "../config.js";
-import { getChatId }           from "../utils/getChatId.js";
-import { buildApi }            from "./pluginApi.js";
-import { pluginRegistry }      from "./pluginLoader.js";
-import { runPlugin }           from "./pluginGuard.js";
-import client                  from "../client/whatsappClient.js";
+import { CHATS }  from "#config";
+import { getChatId }           from "#utils/getChatId.js";
+import { buildApi }            from "#manyapi";
+import { pluginRegistry }      from "#kernel/pluginLoader.js";
+import { runPlugin }           from "#kernel/pluginGuard.js";
+import client                  from "#client/whatsappClient.js";
 
 export async function handleMessage(msg) {
   const chat   = await msg.getChat();

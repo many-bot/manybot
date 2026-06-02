@@ -8,7 +8,7 @@
  * so plugins don't need and can't choose destination.
  */
 
-import { logger }      from "../logger/logger.js";
+import { logger }      from "#logger";
 import pkg             from "whatsapp-web.js";
 
 const { MessageMedia } = pkg;
