@@ -14,11 +14,11 @@
  */
 
 import { CHATS }  from "#config";
-import { getChatId }           from "#utils/getChatId.js";
+import { getChatId }           from "#utils/getChatId";
 import { buildApi }            from "#manyapi";
-import { pluginRegistry }      from "#kernel/pluginLoader.js";
-import { runPlugin }           from "#kernel/pluginGuard.js";
-import client                  from "#client/whatsappClient.js";
+import { pluginRegistry }      from "#kernel/pluginLoader";
+import { runPlugin }           from "#kernel/pluginGuard";
+import client                  from "#client/whatsappClient";
 
 export async function handleMessage(msg) {
   const chat   = await msg.getChat();

@@ -11,8 +11,8 @@
  */
 
 import { logger }         from "#logger";
-import { t }              from "#i18";
-import { pluginRegistry } from "#kernel/pluginLoader.js";
+import { t }              from "#i18n";
+import { pluginRegistry } from "#kernel/pluginLoader";
 
 /**
  * @param {object} plugin   — pluginRegistry entry
