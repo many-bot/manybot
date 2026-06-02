@@ -1,5 +1,4 @@
 .auth_*
-.env
 src/plugins/
 .wwebjs_auth
 .wwebjs_cache
