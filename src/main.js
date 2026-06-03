@@ -4,6 +4,13 @@
  * ManyBot entry point.
  * Initializes WhatsApp client and loads plugins.
  */
+
+import Module from "module";
+import path from "path";
+
+process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
+Module._initPaths();
+
 import client, { handleQR, handlePairingCode } from "#client/whatsappClient";
 import { handleMessage }                       from "#kernel/messageHandler";
 import { loadPlugins, setupPlugins }           from "#kernel/pluginLoader";
