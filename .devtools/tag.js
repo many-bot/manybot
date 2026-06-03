@@ -157,7 +157,7 @@ function updateChangelog(version, log) {
     } 
     // 4. Outros (refactor, chore, build, docs, style, perf, test)
     else {
-      others.push(cleanLine);
+      others.push(message);
     }
   });
 
