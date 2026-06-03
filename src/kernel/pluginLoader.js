@@ -2,22 +2,21 @@
  * pluginLoader.js
  *
  * Responsible for:
- *   1. Reading active plugins from manybot.conf (PLUGINS=[...])
- *   2. Loading each plugin from /plugins folder
+ *   1. Reading active plugins (config.js imports this module and give the list)
+ *   2. Loading each plugin from ~/.manybot/plugins folder
  *   3. Registering in pluginRegistry with status and public exports
  *   4. Exposing pluginRegistry to kernel and pluginApi
  *
  */
 
-import fs   from "fs";
-import path from "path";
-import { logger } from "#logger";
-import { t }      from "#i18n";
+import fs                from "fs";
+import path              from "path";
+import { logger }        from "#logger";
+import { t }             from "#i18n";
 import { pathToFileURL } from "url";
-import { PATHS } from "#config";
+import { PATHS }         from "#config";
 
 const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
-console.log(PLUGINS_DIR)
 
 /**
  * Each entry in registry:
@@ -41,8 +40,7 @@ export const pluginRegistry = new Map();
  */
 export async function loadPlugins(activePlugins) {
   if (!fs.existsSync(PLUGINS_DIR)) {
-    logger.warn(t("system.pluginsFolderNotFound"));
-    return;
+    fs.mkdirSync(PLUGINS_DIR, { recursive: true });
   }
 
   for (const name of activePlugins) {
