@@ -64,10 +64,23 @@ function getRcTags(base) {
 
 function detectBump(commits) {
   const lines = commits.split("\n");
+  
   for (const l of lines) {
-    if (/^[\w]+(!)|BREAKING CHANGE/.test(l)) return "major";
+    // 1. Verifica Breaking Change explícito
+    if (l.includes("BREAKING CHANGE")) return "major";
+    
+    // 2. Verifica o cabeçalho (ex: "fix!", "feat(scope)!", "chore!")
+    // Pega tudo até o primeiro ":"
+    const header = l.split(":")[0];
+    
+    // Se o cabeçalho termina com "!", é breaking change
+    if (header.endsWith("!")) return "major";
+    
+    // 3. Verifica Feature (Minor)
+    // Deve começar com "feat" e ter ":" (opcionalmente com scope)
     if (/^feat(\([^)]+\))?!?:/.test(l)) return "minor";
   }
+  
   return "patch";
 }
 
