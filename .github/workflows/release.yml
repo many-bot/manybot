@@ -88,8 +88,6 @@ jobs:
       # O script cria a tag localmente, mas precisamos enviá-la
       - name: Push tags to remote
         run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
           git push origin --tags
           echo "🚀 Tags enviadas com sucesso."
 
