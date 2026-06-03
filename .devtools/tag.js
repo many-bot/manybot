@@ -160,6 +160,13 @@ function runRc() {
   console.log("Creating tag:", tag);
 
   execSync(`git tag ${tag}`);
+  
+  execSync(`npm version ${tag} --no-git-tag-version --yes`);
+  
+  const log = generateLog(tag);
+  updateChangelog(version, log);
+
+  console.log("✅ Tag, versão e changelog atualizados.");
 }
 
 function runFinal() {
