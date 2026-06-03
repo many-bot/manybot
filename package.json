@@ -1,5 +1,5 @@
 {
-  "name": "manybot",
+  "name": "@manybot/manybot",
   "description": "Free and open source WhatsApp bot",
   "author": {
     "name": "SyntaxError!",
