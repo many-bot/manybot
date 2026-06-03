@@ -4,19 +4,22 @@
  * ManyBot entry point.
  * Initializes WhatsApp client and loads plugins.
  */
-import client               from "#client/whatsappClient";
-import { handleMessage }    from "#kernel/messageHandler";
-import { loadPlugins, setupPlugins } from "#kernel/pluginLoader";
-import { buildSetupApi }    from "#manyapi";
-import { logger }           from "#logger";
-import { PLUGINS }          from "#config";
-import { t }                from "#i18n";
+import client, { handleQR, handlePairingCode } from "#client/whatsappClient";
+import { handleMessage }                       from "#kernel/messageHandler";
+import { loadPlugins, setupPlugins }           from "#kernel/pluginLoader";
+import { buildSetupApi }                       from "#manyapi";
+import { logger }                              from "#logger";
+import { PLUGINS }                             from "#config";
+import { t }                                   from "#i18n";
+import { printBanner }                         from "#client/banner";
+import { CLIENT_ID }                           from "#config";
 
 logger.info(t("bot.starting"));
 
 // Global safety net — no error should crash the bot
 process.on("uncaughtException", (err) => {
-  logger.error(`${t("bot.error.uncaught")} — ${err.message}`, `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`);
+  logger.error(`${t("bot.error.uncaught")} — ${err.message}`,
+    `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`);
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -45,6 +48,11 @@ client.on("loading_screen", (p, msg) => {
 client.on("ready", async () => {
   setState("READY_INIT");
 
+  logger.success(t("system.connected"));
+  logger.info(t("system.clientId", { id: CLIENT_ID }));
+
+  printBanner();
+
   await loadPlugins(PLUGINS);
   await setupPlugins(buildSetupApi(client));
 
@@ -64,6 +72,24 @@ client.on("message_create", async (msg) => {
   } catch (err) {
     logger.error(err);
   }
+});
+
+client.on("disconnected", (reason) => {
+  logger.warn(t("system.disconnected", { reason }));
+  logger.info(t("system.reconnecting", { seconds: 5 }));
+  setTimeout(() => {
+    logger.info(t("system.reinitializing"));
+    client.initialize();
+  }, 5000);
+});
+
+// -- Events ----------------------------------------------------
+client.on("code", (code) => {
+  handlePairingCode(code);
+});
+
+client.on("qr", (qr) => {
+  handleQR(qr);
 });
 
 client.initialize();
