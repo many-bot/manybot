@@ -121,14 +121,75 @@ function generateLog(fromTag) {
 }
 
 function updateChangelog(version, log) {
-  const entry = `
-## [${version}] - ${date}
+  const lines = log.split("\n").filter(l => l.trim());
+  
+  // Arrays para categorizar
+  const breakingChanges = [];
+  const features = [];
+  const fixes = [];
+  const others = []; // refactor, chore, build, docs, etc.
 
-${log}
+  lines.forEach(line => {
+    // Remove o hash e o tipo inicial para analisar o conteúdo
+    // Formato: "- abc1234 tipo: mensagem"
+    const match = line.match(/^- [a-f0-9]+ (.+): (.+)$/);
+    
+    if (!match) {
+      // Se não seguir o padrão, joga em "outros"
+      others.push(line);
+      return;
+    }
 
-`;
+    const [, type, message] = match;
+    const cleanLine = `- ${message}`; // Formato limpo sem hash
 
-  writeFileSync("CHANGELOG.md", entry);
+    // 1. Verifica Breaking Change
+    if (message.includes("BREAKING CHANGE") || type.endsWith("!")) {
+      breakingChanges.push(cleanLine);
+    } 
+    // 2. Verifica Features
+    else if (type.startsWith("feat")) {
+      features.push(cleanLine);
+    } 
+    // 3. Verifica Fixes
+    else if (type.startsWith("fix")) {
+      fixes.push(cleanLine);
+    } 
+    // 4. Outros (refactor, chore, build, docs, style, perf, test)
+    else {
+      others.push(cleanLine);
+    }
+  });
+
+  // Constrói o conteúdo do changelog
+  let entry = `## [${version}] - ${date}\n\n`;
+
+  if (breakingChanges.length > 0) {
+    entry += "### ⚠️ Breaking Changes\n\n";
+    entry += breakingChanges.join("\n") + "\n\n";
+  }
+
+  if (features.length > 0) {
+    entry += "### ✨ Features\n\n";
+    entry += features.join("\n") + "\n\n";
+  }
+
+  if (fixes.length > 0) {
+    entry += "### 🐛 Bug Fixes\n\n";
+    entry += fixes.join("\n") + "\n\n";
+  }
+
+  if (others.length > 0) {
+    entry += "### 🛠 Other Changes\n\n";
+    entry += others.join("\n") + "\n\n";
+  }
+
+  // Prepend no arquivo existente
+  const current = existsSync("CHANGELOG.md")
+    ? readFileSync("CHANGELOG.md", "utf8")
+    : "# Changelog\n\n";
+
+  writeFileSync("CHANGELOG.md", entry + current);
 }
 
 // -------------------- COMMANDS --------------------
