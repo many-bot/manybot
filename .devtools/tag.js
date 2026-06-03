@@ -184,12 +184,7 @@ function updateChangelog(version, log) {
     entry += others.join("\n") + "\n\n";
   }
 
-  // Prepend no arquivo existente
-  const current = existsSync("CHANGELOG.md")
-    ? readFileSync("CHANGELOG.md", "utf8")
-    : "# Changelog\n\n";
-
-  writeFileSync("CHANGELOG.md", entry + current);
+  writeFileSync("CHANGELOG.md", entry);
 }
 
 // -------------------- COMMANDS --------------------
