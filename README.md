@@ -2,7 +2,7 @@
 
 ![ManyBot Logo](logo.png)
 
-**Just a cool opem source WhatsApp bot**
+**Just a cool open source WhatsApp bot**
 
 [🇧🇷 Português](README.md) · [🇺🇸 English](README_EN.md)
 
