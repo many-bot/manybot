@@ -106,7 +106,7 @@ jobs:
         with:
           tag_name: v${{ steps.tag_script.outputs.version }}
           name: ${{ steps.tag_script.outputs.mode == 'rc' && format('[RC] Release v{0}', steps.tag_script.outputs.version) || format('Release v{0}', steps.tag_script.outputs.version) }}
-          body_path: CHANGELOG.md # Usa o changelog gerado pelo script
+          body_path: ${{ github.ref == 'refs/heads/master' && 'CHANGELOG.md' || '' }} # Changelog only if sending to master
           prerelease: ${{ github.ref == 'refs/heads/dev' }}
           files: |
             *.tgz
