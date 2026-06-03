@@ -37,9 +37,6 @@ function parseValue(value) {
   if (value === "false")
     return false;
 
-  if (/^-?\d+$/.test(value))
-    return Number(value);
-
   return value;
 }
 
@@ -163,8 +160,8 @@ try {
   await fs.writeFile(CONFIG_FILE, defaultConfig);
 }
 
-const baseConfig = readFileSafe(CONFIG_FILE);
-const pluginConfig = readFileSafe(PLUGIN_FILE);
+const baseConfig = await readFileSafe(CONFIG_FILE);
+const pluginConfig = await readFileSafe(PLUGIN_FILE);
 
 export const CONFIG = parseConf(baseConfig + "\n" + pluginConfig);
 
