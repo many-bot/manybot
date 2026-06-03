@@ -164,7 +164,7 @@ function runRc() {
   execSync(`npm version ${tag} --no-git-tag-version --yes`);
   
   const log = generateLog(tag);
-  updateChangelog(version, log);
+  updateChangelog(tag, log);
 
   console.log("✅ Tag, versão e changelog atualizados.");
 }
