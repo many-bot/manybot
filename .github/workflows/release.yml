@@ -97,6 +97,9 @@ jobs:
           git push origin --tags
           echo "🚀 Tags enviadas com sucesso."
 
+      - name: Build package
+        run: npm pack
+
       # 8. Criar Release no GitHub
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
