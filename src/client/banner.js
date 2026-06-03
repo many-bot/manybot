@@ -10,7 +10,18 @@ const C = {
 };
 
 import { readFileSync } from "fs";
-const v = readFileSync("latest", "utf8").replace(/[\r\n]+/g, '');
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const v = JSON.parse(
+  readFileSync(
+    path.join(__dirname, "../../package.json"),
+    "utf8"
+  )
+).version;
 
 export function printBanner() {
   const banner = [
