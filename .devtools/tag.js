@@ -1,105 +1,192 @@
 #!/usr/bin/env node
 
-import fs from "fs";
+/* TAG.JS
+ *
+ * This script make tags and creates changelog
+ * It is used only the github actions workflow 
+ *
+ * */
+
+
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { execSync } from "child_process";
 
-const version = process.argv[2];
-
-if (!version) {
-    console.error("uso: ./release.js 1.2.3");
-    process.exit(1);
-}
-
-function updateJson(path) {
-    const json = JSON.parse(fs.readFileSync(path, "utf8"));
-
-    json.version = version;
-
-    fs.writeFileSync(
-        path,
-        JSON.stringify(json, null, 2) + "\n"
-    );
-}
-
+const mode = process.argv[2];
+const arg = process.argv[3];
 const date = new Date().toISOString().split("T")[0];
 
-function getLastTag() {
-    try {
-        return execSync("git describe --tags --abbrev=0")
-            .toString()
-            .trim();
-    } catch {
-        return null;
-    }
+// -------------------- GIT --------------------
+
+function sh(cmd) {
+  return execSync(cmd).toString().trim();
 }
+
+if (!existsSync('./package.json')) {
+  console.error('package.json not found');
+  process.exit(1);
+}
+
+try {
+  sh('git rev-parse --git-dir');
+} catch {
+  console.error('This is not git repository');
+  process.exit(1);
+}
+
+const status = sh('git status --porcelain');
+if (status) {
+  console.error('Dirty working tree. Commit your changes or stash them.');
+  process.exit(1);
+}
+
+function getLastTag() {
+  try {
+    return sh("git describe --tags --abbrev=0");
+  } catch {
+    return null;
+  }
+}
+
+function getCommits(fromTag) {
+  const range = fromTag ? `${fromTag}..HEAD` : "HEAD";
+  return sh(`git log ${range} --pretty=format:"- %h %s"`);
+}
+
+function getRcTags(base) {
+  try {
+    return sh(`git tag --list "${base}-rc.*"`).split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+// -------------------- VERSIONING --------------------
+
+function detectBump(commits) {
+  const lines = commits.split("\n");
+  for (const l of lines) {
+    if (/^[\w]+(!)|BREAKING CHANGE/.test(l)) return "major";
+    if (/^feat(\([^)]+\))?!?:/.test(l)) return "minor";
+  }
+  return "patch";
+}
+
+function incVersion(version, type) {
+  const [maj, min, pat] = version.split(".").map(Number);
+
+  if (type === "major") return `${maj + 1}.0.0`;
+  if (type === "minor") return `${maj}.${min + 1}.0`;
+  return `${maj}.${min}.${pat + 1}`;
+}
+
+function getBaseVersion(lastTag, bump) {
+  if (!lastTag) return "0.0.1";
+
+  const clean = lastTag.replace(/-rc\.\d+/, "");
+  return incVersion(clean, bump);
+}
+
+// -------------------- RC ENGINE ----------------------
+
+function nextRc(base) {
+  const tags = getRcTags(base);
+
+  if (tags.length === 0) return 1;
+
+  const nums = tags
+    .map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0))
+    .filter(n => n > 0);
+
+  return Math.max(...nums) + 1;
+}
+
+// -------------------- LOG / FILES --------------------
 
 function generateLog(fromTag) {
-    const range = fromTag
-        ? `${fromTag}..HEAD`
-        : "";
-
-    return execSync(
-        `git log ${range} --pretty=format:"- %h %s"`
-    )
-        .toString()
-        .trim();
+  const range = fromTag ? `${fromTag}..HEAD` : "";
+  return sh(`git log ${range} --pretty=format:"- %h %s"`);
 }
 
-function updateChangelog(version) {
-    const lastTag = getLastTag();
-    const log = generateLog(lastTag);
-
-    const entry = `
+function updateChangelog(version, log) {
+  const entry = `
 ## [${version}] - ${date}
+
 ${log}
 
 `;
 
-    let current = "";
-
-    if (fs.existsSync("CHANGELOG.md")) {
-        current = fs.readFileSync(
-            "CHANGELOG.md",
-            "utf8"
-        );
-    } else {
-        current =
-`# Changelog
-
-All notable changes to this project will be documented in this file.
-
-`;
-    }
-
-    const updated = current.replace(
-        /(# Changelog\s+All notable changes to this project will be documented in this file\.\s+)/,
-        `$1${entry}`
-    );
-
-    fs.writeFileSync(
-        "CHANGELOG.md",
-        updated
-    );
+  writeFileSync("CHANGELOG.md", entry);
 }
 
-console.log("[1/4] Updating package.json...");
-updateJson("./package.json");
+// -------------------- COMMANDS --------------------
 
-console.log("[2/4] Updating package-lock.json...");
-updateJson("./package-lock.json");
+function runDry() {
+  const lastTag = getLastTag();
+  const commits = getCommits(lastTag);
 
-console.log("[3/4] Writing latest...");
-fs.writeFileSync("./latest", version + "\n");
+  const bump = detectBump(commits);
+  const base = getBaseVersion(lastTag, bump);
 
-console.log("[4/4] Writing changelog...");
-updateChangelog(version)
+  console.log("\n[DRY RUN]");
+  console.log("Last tag:", lastTag);
+  console.log("Bump:", bump);
+  console.log("Next stable:", base);
+}
 
-console.log(`
-Next steps:
+function runRc() {
+  const lastTag = getLastTag();
+  const commits = getCommits(lastTag);
 
-git diff
-git add .
-git commit -m "release: ${version}"
-git tag ${version}
-git pushall && git pushall --tags
+  const bump = detectBump(commits);
+  const base = getBaseVersion(lastTag, bump);
+
+  const rc = nextRc(base);
+  const tag = `${base}-rc.${rc}`;
+
+  console.log("\n[APPLY CHANGES]");
+  console.log("Creating tag:", tag);
+
+  execSync(`git tag ${tag}`);
+}
+
+function runFinal() {
+  const lastTag = getLastTag();
+  const commits = getCommits(lastTag);
+  const bump = detectBump(commits);
+  const version = getBaseVersion(lastTag, bump);  // Calcular versão, não pedir argumento
+  
+  console.log("\n[FINAL RELEASE]");
+  console.log("Version:", version);
+  
+  execSync(`git tag ${version}`);
+  execSync(`npm version ${version} --no-git-tag-version --yes`);  // Usar npm version
+  
+  const log = generateLog(lastTag);
+  updateChangelog(version, log);
+  
+  console.log("Released:", version);
+}
+
+// -------------------- ROUTER --------------------
+
+switch (mode) {
+  case "--dry":
+    runDry();
+    break;
+
+  case "--rc":
+    runRc();
+    break;
+
+  case "--final":
+    runFinal();
+    break;
+
+  default:
+    console.log(`
+Usage:
+  --dry
+  --rc
+  --final
 `);
+}
