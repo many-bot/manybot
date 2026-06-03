@@ -117,7 +117,7 @@ jobs:
       # 9. Publicar no npm (APENAS se for master)
       - name: Publish to npm
         if: ${{ github.ref == 'refs/heads/master' }}
-        run: npm publish
+        run: npm publish --access=public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
