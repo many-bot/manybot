@@ -108,6 +108,8 @@ jobs:
           name: ${{ steps.tag_script.outputs.mode == 'rc' && format('[RC] Release v{0}', steps.tag_script.outputs.version) || format('Release v{0}', steps.tag_script.outputs.version) }}
           body_path: CHANGELOG.md # Usa o changelog gerado pelo script
           prerelease: ${{ github.ref == 'refs/heads/dev' }}
+          files: |
+            *.tgz
           generate_release_notes: false # Já usamos o body_path
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
