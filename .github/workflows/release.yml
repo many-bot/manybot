@@ -2,6 +2,12 @@ name: Release Pipeline
 
 on:
   push:
+    paths:
+      - "src/**"
+      - "package.json"
+      - "LICENSE"
+      - ".github/workflows/**"
+      - ".devtools/**"
     branches:
       - 'dev'
       - 'master'
