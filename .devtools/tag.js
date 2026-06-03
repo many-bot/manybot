@@ -270,8 +270,7 @@ function runRc() {
   const tag = `${base}-rc.${rcNumber}`;
   console.log("Creating tag:", tag);
   
-  execSync(`git tag ${tag}`);
-  execSync(`npm version ${tag} --no-git-tag-version --yes`);
+  execSync(`npm version ${tag} --yes`);
 
   const log = generateLog(lastTag);
   updateChangelog(tag, log);
@@ -288,8 +287,7 @@ function runFinal() {
   console.log("\n[FINAL RELEASE]");
   console.log("Version:", version);
   
-  execSync(`git tag ${version}`);
-  execSync(`npm version ${version} --no-git-tag-version --yes`);  // Usar npm version
+  execSync(`npm version ${version} --yes`);  // Usar npm version
   
   const log = generateLog(lastTag);
   updateChangelog(version, log);
