@@ -21,16 +21,19 @@ import { runPlugin }           from "#kernel/pluginGuard";
 import client                  from "#client/whatsappClient";
 
 export async function handleMessage(msg) {
-  const chat   = await msg.getChat();
+  const chat = await msg.getChat();
   const chatId = getChatId(chat);
 
-  // CHATS empty = accepts all chats
   if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
 
-  const api     = buildApi({ msg, chat, client, pluginRegistry });
-  const context = { msg: api.msg, chat: api.chat, api };
+  const ctx = buildApi({
+    msg,
+    chat,
+    client,
+    pluginRegistry
+  });
 
   for (const plugin of pluginRegistry.values()) {
-    await runPlugin(plugin, context);
+    await runPlugin(plugin, ctx);
   }
 }
