@@ -14,8 +14,10 @@ import path from "path";
 import { logger } from "#logger";
 import { t }      from "#i18n";
 import { pathToFileURL } from "url";
+import { PATHS } from "#config";
 
-const PLUGINS_DIR = path.resolve("src/plugins");
+const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
+console.log(PLUGINS_DIR)
 
 /**
  * Each entry in registry:
