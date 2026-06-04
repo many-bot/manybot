@@ -1,16 +1,11 @@
 /**
  * config.js
  *
-<<<<<<< HEAD
- * Reads and parses manybot.conf and manyplug.conf.
- * Supports multiline lists and inline comments.
-=======
  * Loads:
  *   ~/.manybot/manybot.conf
  *   ~/.manybot/manyplug.conf
  *
  * Merges both files into a single configuration object.
->>>>>>> dev
  */
 
 import fs from "fs/promises";
@@ -144,10 +139,6 @@ async function readFileSafe(file) {
   }
 }
 
-<<<<<<< HEAD
-const filePath = path.join(__dirname, "../manybot.conf");
-const plugFilePath = path.join(__dirname, "../manyplug.conf");
-=======
 const defaultConfig = 
 `
 # Many bot configuration file
@@ -159,7 +150,6 @@ CHATS=[]
 LANGUAGE=en
 PHONE_NUMBER=
 `;
->>>>>>> dev
 
 try {
   await fs.stat(CONFIG_FILE);
@@ -170,32 +160,8 @@ try {
   await fs.writeFile(CONFIG_FILE, defaultConfig);
 }
 
-<<<<<<< HEAD
-let plugRaw;
-try {
-  plugRaw = fs.readFileSync(plugFilePath, "utf8");
-} catch (err) {
-  if (err.code === "ENOENT") {
-    console.warn("Plugin file not found: manyplug.conf")
-    console.log("You probably don't have executed manyplug to install some plugins yet")
-  } else {
-    console.warn("Error when reading manyplug.conf: ", err.message);
-  }
-}
-const bringTogheter = plugRaw !== undefined;
-
-let completeRaw;
-if (bringTogheter) {
-  completeRaw = raw + "\n" + plugRaw;
-} else {
-  completeRaw = raw;
-}
-
-const config = parseConf(completeRaw);
-=======
 const baseConfig = await readFileSafe(CONFIG_FILE);
 const pluginConfig = await readFileSafe(PLUGIN_FILE);
->>>>>>> dev
 
 export const CONFIG = {
   CMD_PREFIX: "!",
