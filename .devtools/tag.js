@@ -53,12 +53,13 @@ function getCommits(fromTag) {
 
 function getRcTags(base) {
   try {
-    return sh(`git tag --list "${base}-rc.*"`).split("\n").filter(Boolean);
+    const clean = base.replace(/^v/, "");
+    const tags = sh(`git tag --list "*${clean}-rc.*"`).split("\n").filter(Boolean);
+    return tags;
   } catch {
     return [];
   }
 }
-
 // -------------------- VERSIONING --------------------
 
 function detectBump(commits) {
@@ -200,14 +201,16 @@ function runDry() {
   let nextTag = base;
   
   // Se a última tag era um RC, simulamos o próximo RC
-  const rcMatch = lastTag ? lastTag.match(/^(.+)-rc\.\d+$/) : null;
+  const rcMatch = lastTag ? lastTag.replace(/^v/, "").match(/^(.+)-rc\.\d+$/) : null;
   
   if (rcMatch) {
     const currentBase = rcMatch[1];
     // Se a base calculada é a mesma da tag anterior, continuamos a série RC
     if (currentBase === base) {
       const tags = getRcTags(currentBase);
-      const nums = tags.map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0)).filter(n => n > 0);
+      const nums = tags
+        .map(t => Number(t.replace(/^v/, "").match(/-rc\.(\d+)$/)?.[1] || 0))
+        .filter(n => n > 0);
       const nextRcNum = nums.length > 0 ? Math.max(...nums) + 1 : 1;
       nextTag = `${currentBase}-rc.${nextRcNum}`;
     } else {
@@ -230,7 +233,7 @@ function runRc() {
   const lastTag = getLastTag();
   
   // 1. Detectar se a última tag é um RC da mesma série
-  const rcMatch = lastTag ? lastTag.match(/^(.+)-rc\.\d+$/) : null;
+  const rcMatch = lastTag ? lastTag.replace(/^v/, "").match(/^(.+)-rc\.\d+$/) : null;
   
   let base;
   let rcNumber;
