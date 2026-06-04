@@ -163,28 +163,22 @@ try {
 const baseConfig = await readFileSafe(CONFIG_FILE);
 const pluginConfig = await readFileSafe(PLUGIN_FILE);
 
-export const CONFIG = parseConf(baseConfig + "\n" + pluginConfig);
+export const CONFIG = {
+  CMD_PREFIX: "!",
+  CLIENT_ID: "manybot",
+  CHATS: [],
+  PLUGINS: [],
+  LANGUAGE: "en",
+  PHONE_NUMBER: null,
+  ...parseConf(baseConfig + "\n" + pluginConfig),
+};
 
-/**
- * Common exports.
- */
-export const CLIENT_ID =
-  CONFIG.CLIENT_ID ?? "manybot";
-
-export const CMD_PREFIX =
-  CONFIG.CMD_PREFIX ?? "!";
-
-export const CHATS =
-  CONFIG.CHATS ?? [];
-
-export const PLUGINS =
-  CONFIG.PLUGINS ?? [];
-
-export const LANGUAGE =
-  CONFIG.LANGUAGE ?? "en";
-
-export const PHONE_NUMBER =
-  CONFIG.PHONE_NUMBER ?? null;
+export const CLIENT_ID    = CONFIG.CLIENT_ID;
+export const CMD_PREFIX   = CONFIG.CMD_PREFIX;
+export const CHATS        = CONFIG.CHATS;
+export const PLUGINS      = CONFIG.PLUGINS;
+export const LANGUAGE     = CONFIG.LANGUAGE;
+export const PHONE_NUMBER = CONFIG.PHONE_NUMBER;
 
 /**
  * Useful paths for plugins/modules.
