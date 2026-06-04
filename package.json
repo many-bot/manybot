@@ -5,7 +5,7 @@
     "name": "SyntaxError!",
     "email": "me@stxerr.dev"
   },
-  "version": "4.0.0",
+  "version": "4.0.0-rc.1",
   "license": "GPL-3.0-only",
   "private": false,
   "engines": {
@@ -51,4 +51,3 @@
     "#main": "./src/main.js"
   }
 }
-
