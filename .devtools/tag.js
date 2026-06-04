@@ -14,6 +14,10 @@ import { execSync } from "child_process";
 const mode = process.argv[2];
 const date = new Date().toISOString().split("T")[0];
 
+const jsonversion = JSON.parse(
+  readFileSync('./package.json', "utf8")
+).version;
+
 // -------------------- GIT --------------------
 
 function sh(cmd) {
@@ -114,6 +118,27 @@ function getBaseVersion(lastTag, bump) {
   return incVersion(clean, bump);
 }
 
+// Compara duas versões semver (ignora sufixo rc). Retorna true se a >= b.
+function semverGte(a, b) {
+  const pa = a.replace(/^v/, "").split("-")[0].split(".").map(Number);
+  const pb = b.replace(/^v/, "").split("-")[0].split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return true;
+    if ((pa[i] || 0) < (pb[i] || 0)) return false;
+  }
+  return true; // igual
+}
+
+// Retorna a maior das duas versões base (sem sufixo rc).
+// Garante que a versão manual do package.json nunca seja ignorada.
+function maxVersion(generated, pkg) {
+  if (!semverGte(generated, pkg)) {
+    console.log(`[VERSION GUARD] Generated ${generated} < package.json ${pkg}. Using ${pkg}.`);
+    return pkg;
+  }
+  return generated;
+}
+
 // -------------------- LOG / FILES --------------------
 
 function generateLog(fromTag) {
@@ -195,7 +220,7 @@ function runDry() {
   const commits = getCommits(lastTag);
 
   const bump = detectBump(commits);
-  let base = getBaseVersion(lastTag, bump);
+  let base = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
 
   // Lógica extra para simular o próximo RC
   let nextTag = base;
@@ -226,7 +251,7 @@ function runDry() {
   console.log("Last tag:", lastTag);
   console.log("Bump:", bump);
   console.log("Next base:", base);
-  console.log("Next RC tag:", nextTag); // <--- Nova linha
+  console.log("Next RC tag:", nextTag);
 }
 
 function runRc() {
@@ -240,7 +265,8 @@ function runRc() {
 
   if (rcMatch) {
     // Se a última tag é um RC (ex: 4.0.0-rc.1), mantemos a base (4.0.0)
-    base = rcMatch[1];
+    // mas ainda garantimos que não seja menor que o package.json
+    base = maxVersion(rcMatch[1], jsonversion);
     
     // Calcula o próximo número do RC
     const tags = getRcTags(base);
@@ -254,15 +280,14 @@ function runRc() {
     const commits = getCommits(lastTag);
     const bump = detectBump(commits);
     
-    // Se bump for "none", a base não muda (mantém a última tag limpa)
-    base = getBaseVersion(lastTag, bump);
+    base = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
     
     const tags = getRcTags(base);
     const nums = tags.map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0)).filter(n => n > 0);
     rcNumber = nums.length > 0 ? Math.max(...nums) + 1 : 1;
     
     console.log(`\n[NEW RC SERIES]`);
-    console.log(`Last tag: ${lastTag}, Bump: ${bump}, Base: ${base}`);
+    console.log(`Last tag: ${lastTag}, Base: ${base}`);
   }
 
   const tag = `${base}-rc.${rcNumber}`;
@@ -280,7 +305,7 @@ function runFinal() {
   const lastTag = getLastTag();
   const commits = getCommits(lastTag);
   const bump = detectBump(commits);
-  const version = getBaseVersion(lastTag, bump);
+  const version = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
 
   console.log("\n[FINAL RELEASE]");
   console.log("Version:", version);
