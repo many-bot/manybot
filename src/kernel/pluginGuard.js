@@ -10,13 +10,13 @@
  * Disabled or errored plugins are silently ignored.
  */
 
-import { logger }         from "../logger/logger.js";
-import { t }              from "../i18n/index.js";
-import { pluginRegistry } from "./pluginLoader.js";
+import { logger }         from "#logger";
+import { t }              from "#i18n";
+import { pluginRegistry } from "#kernel/pluginLoader";
 
 /**
  * @param {object} plugin   — pluginRegistry entry
- * @param {object} context  — { msg, chat, api }
+ * @param {object} context  — buildApi ctx
  */
 export async function runPlugin(plugin, context) {
   if (plugin.status !== "active") return;

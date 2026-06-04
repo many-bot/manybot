@@ -13,7 +13,7 @@
 import pkg     from "whatsapp-web.js";
 import qrcode  from "qrcode-terminal";
 import fs      from "fs";
-import { resolvePuppeteerConfig } from "../client/environment.js";
+import { resolvePuppeteerConfig } from "#client/environment";
 
 const CLIENT_ID = "getId";
 const { Client, LocalAuth } = pkg;

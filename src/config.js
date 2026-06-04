@@ -1,84 +1,176 @@
 /**
  * config.js
  *
+<<<<<<< HEAD
  * Reads and parses manybot.conf and manyplug.conf.
  * Supports multiline lists and inline comments.
+=======
+ * Loads:
+ *   ~/.manybot/manybot.conf
+ *   ~/.manybot/manyplug.conf
+ *
+ * Merges both files into a single configuration object.
+>>>>>>> dev
  */
 
-import fs from "fs";
+import fs from "fs/promises";
+import os from "os";
 import path from "path";
-import { fileURLToPath } from "url";
 
+import { logger } from "#logger";
+
+const CONFIG_DIR = path.join(os.homedir(), ".manybot");
+const CONFIG_FILE = path.join(CONFIG_DIR, "manybot.conf");
+const PLUGIN_FILE = path.join(CONFIG_DIR, "manyplug.conf");
+
+/**
+ * Converts strings to native JS values.
+ */
+function parseValue(value) {
+  value = value.trim();
+
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+
+  if (value === "true")
+    return true;
+
+  if (value === "false")
+    return false;
+
+  return value;
+}
+
+/**
+ * Reads comments safely.
+ * Ignores # inside quoted strings.
+ */
+function stripInlineComment(line) {
+  let result = "";
+  let quote = null;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if ((ch === '"' || ch === "'") && line[i - 1] !== "\\") {
+      if (quote === ch)
+        quote = null;
+      else if (!quote)
+        quote = ch;
+    }
+
+    if (ch === "#" && !quote)
+      break;
+
+    result += ch;
+  }
+
+  return result.trim();
+}
+
+/**
+ * Parses manybot.conf syntax.
+ */
 function parseConf(raw) {
-  const lines = raw.split("\n");
+  const lines = raw.split(/\r?\n/);
 
-  const cleaned = [];
+  const mergedLines = [];
+
   let insideList = false;
   let buffer = "";
 
   for (let line of lines) {
-    line = line.replace(/#.*$/, "").trim();
-    if (!line) continue;
+    line = stripInlineComment(line);
+
+    if (!line)
+      continue;
 
     if (!insideList) {
-      if (line.includes("=[") && !line.includes("]")) {
+      if (/=\s*\[$/.test(line)) {
         insideList = true;
         buffer = line;
       } else {
-        cleaned.push(line);
+        mergedLines.push(line);
       }
     } else {
-      buffer += line;
+      buffer += " " + line;
+
       if (line.includes("]")) {
-        insideList = false;
-        cleaned.push(buffer);
+        mergedLines.push(buffer);
         buffer = "";
+        insideList = false;
       }
     }
   }
 
-  const result = {};
-  for (const line of cleaned) {
-    const eqIdx = line.indexOf("=");
-    if (eqIdx === -1) continue;
+  const config = {};
 
-    const key = line.slice(0, eqIdx).trim();
-    const raw = line.slice(eqIdx + 1).trim();
+  for (const line of mergedLines) {
+    const idx = line.indexOf("=");
 
-    if (raw.startsWith("[") && raw.endsWith("]")) {
-      result[key] = raw
+    if (idx === -1)
+      continue;
+
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+
+    if (value.startsWith("[") && value.endsWith("]")) {
+      config[key] = value
         .slice(1, -1)
         .split(",")
-        .map(x => x.trim())
-        .filter(Boolean);
-    } else {
-      result[key] = raw;
+        .map(v => parseValue(v))
+        .filter(v => v !== "");
+      continue;
     }
+
+    config[key] = parseValue(value);
   }
 
-  return result;
+  return config;
 }
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname  = path.dirname(__filename);
+async function readFileSafe(file) {
+  try {
+    return await fs.readFile(file, "utf-8");
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      logger.warn(`Error reading ${file}: ${err.message}`);
+    }
+    return "";
+  }
+}
 
+<<<<<<< HEAD
 const filePath = path.join(__dirname, "../manybot.conf");
 const plugFilePath = path.join(__dirname, "../manyplug.conf");
+=======
+const defaultConfig = 
+`
+# Many bot configuration file
+# See https://manybot.stxerr.dev/docs/config to learn more
 
-let raw;
+CLIENT_ID="manybot"
+CMD_PREFIX="!"
+CHATS=[]
+LANGUAGE=en
+PHONE_NUMBER=
+`;
+>>>>>>> dev
+
 try {
-  raw = fs.readFileSync(filePath, "utf8");
-} catch (err) {
-  if (err.code === "ENOENT") {
-    console.error("Configuration file not found: manybot.conf");
-    console.error("Copy the example file to get started:");
-    console.error("  cp manybot.conf.example manybot.conf");
-  } else {
-    console.error("Error reading config:", err.message);
-  }
-  process.exit(1);
+  await fs.stat(CONFIG_FILE);
+} catch {
+  logger.warn("Configuration file not found: ", CONFIG_FILE, ". Creating a new one.");
+
+  await fs.mkdir(CONFIG_DIR, { recursive: true });
+  await fs.writeFile(CONFIG_FILE, defaultConfig);
 }
 
+<<<<<<< HEAD
 let plugRaw;
 try {
   plugRaw = fs.readFileSync(plugFilePath, "utf8");
@@ -100,19 +192,39 @@ if (bringTogheter) {
 }
 
 const config = parseConf(completeRaw);
+=======
+const baseConfig = await readFileSafe(CONFIG_FILE);
+const pluginConfig = await readFileSafe(PLUGIN_FILE);
+>>>>>>> dev
 
-export const CLIENT_ID     = config.CLIENT_ID  ?? "bot_permanente";
-export const CMD_PREFIX    = config.CMD_PREFIX ?? "!";
-export const CHATS         = config.CHATS      ?? [];
+export const CONFIG = parseConf(baseConfig + "\n" + pluginConfig);
 
-/** Active plugin list — e.g., PLUGINS=[video, audio, hello] */
-export const PLUGINS       = config.PLUGINS    ?? [];
+/**
+ * Common exports.
+ */
+export const CLIENT_ID =
+  CONFIG.CLIENT_ID ?? "manybot";
 
-/** Bot language — e.g., LANGUAGE=en (fallback: en) */
-export const LANGUAGE      = config.LANGUAGE   ?? "en";
+export const CMD_PREFIX =
+  CONFIG.CMD_PREFIX ?? "!";
 
-/** Phone number for pairing code auth (optional) — e.g., PHONE_NUMBER=5511999999999 */
-export const PHONE_NUMBER  = config.PHONE_NUMBER ?? null;
+export const CHATS =
+  CONFIG.CHATS ?? [];
 
-/** Export full config for plugins that need custom values */
-export const CONFIG        = config;
+export const PLUGINS =
+  CONFIG.PLUGINS ?? [];
+
+export const LANGUAGE =
+  CONFIG.LANGUAGE ?? "en";
+
+export const PHONE_NUMBER =
+  CONFIG.PHONE_NUMBER ?? null;
+
+/**
+ * Useful paths for plugins/modules.
+ */
+export const PATHS = {
+  HOME: CONFIG_DIR,
+  CONFIG_FILE,
+  PLUGIN_FILE
+};

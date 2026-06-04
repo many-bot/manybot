@@ -1,22 +1,53 @@
 {
-  "name": "manybot",
-  "version": "3.0.7",
+  "name": "@manybot/manybot",
+  "description": "Free and open source WhatsApp bot",
+  "author": {
+    "name": "SyntaxError!",
+    "email": "me@stxerr.dev"
+  },
+  "version": "4.0.0",
+  "license": "GPL-3.0-only",
+  "private": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/many-bot/manybot.git"
+  },
   "type": "module",
+  "bin": {
+    "manybot": "./src/main.js"
+  },
+  "files": [
+    "src/client",
+    "src/config.js",
+    "src/download",
+    "src/i18n",
+    "src/kernel",
+    "src/locales",
+    "src/logger",
+    "src/main.js",
+    "src/utils",
+    "README.md",
+    "README_EN.md",
+    "latest",
+    "LICENSE"
+  ],
   "dependencies": {
-    "node-addon-api": "^7",
-    "node-gyp": "^12.2.0",
     "node-webpmux": "^3.2.1",
     "qrcode-terminal": "^0.12.0",
-    "sqlite3": "^5.1.7",
-    "wa-sticker-formatter": "^4.4.4",
     "whatsapp-web.js": "^1.24.0"
   },
-  "devDependencies": {
-    "conventional-changelog-cli": "^5.0.0"
-  },
-  "scripts": {
-    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s -r 0",
-    "test": "node --test",
-    "test:watch": "node --test --watch"
+  "imports": {
+    "#client/*": "./src/client/*.js",
+    "#kernel/*": "./src/kernel/*.js",
+    "#manyapi": "./src/kernel/pluginApi.js",
+    "#logger": "./src/logger/logger.js",
+    "#utils/*": "./src/utils/*.js",
+    "#i18n": "./src/i18n/index.js",
+    "#download": "./src/download/queue.js",
+    "#config": "./src/config.js",
+    "#main": "./src/main.js"
   }
 }

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 /**
  * main.js
  *
@@ -5,19 +7,28 @@
  * Initializes WhatsApp client and loads plugins.
  */
 
-import client               from "./client/whatsappClient.js";
-import { handleMessage }    from "./kernel/messageHandler.js";
-import { loadPlugins, setupPlugins } from "./kernel/pluginLoader.js";
-import { buildSetupApi }    from "./kernel/pluginApi.js";
-import { logger }           from "./logger/logger.js";
-import { PLUGINS }          from "./config.js";
-import { t }                from "./i18n/index.js";
+import Module from "module";
+import path from "path";
+
+process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
+Module._initPaths();
+
+import client, { handleQR, handlePairingCode } from "#client/whatsappClient";
+import { handleMessage }                       from "#kernel/messageHandler";
+import { loadPlugins, setupPlugins }           from "#kernel/pluginLoader";
+import { buildSetupApi }                       from "#manyapi";
+import { logger }                              from "#logger";
+import { PLUGINS }                             from "#config";
+import { t }                                   from "#i18n";
+import { printBanner }                         from "#client/banner";
+import { CLIENT_ID }                           from "#config";
 
 logger.info(t("bot.starting"));
 
 // Global safety net — no error should crash the bot
 process.on("uncaughtException", (err) => {
-  logger.error(`${t("bot.error.uncaught")} — ${err.message}`, `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`);
+  logger.error(`${t("bot.error.uncaught")} — ${err.message}`,
+    `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`);
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -27,28 +38,68 @@ process.on("unhandledRejection", (reason) => {
 
 // Clean shutdown
 process.on("SIGTERM", async () => {
-  console.log(t("bot.signal.sigterm"));
-
+  logger.error(t("bot.signal.sigterm"));
   process.exit(0);
 });
 
-// Load plugins before connecting
-await loadPlugins(PLUGINS);
+let state = "BOOT";
+// BOOT → AUTH → SYNC → READY
 
-client.on("message_create", async (msg) => {
-  try {
-    await handleMessage(msg);
-  } catch (err) {
-    logger.error(
-      `${t("errors.messageProcess")} — ${err.message}`,
-      `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`
-    );
-  }
+function setState(next) {
+  state = next;
+}
+
+client.on("loading_screen", (p, msg) => {
+  setState("SYNC");
+  logger.info(`loading ${p}% ${msg}`);
 });
 
 client.on("ready", async () => {
+  setState("READY_INIT");
+
+  logger.success(t("system.connected"));
+  logger.info(t("system.clientId", { id: CLIENT_ID }));
+
+  printBanner();
+
+  await loadPlugins(PLUGINS);
   await setupPlugins(buildSetupApi(client));
+
+  // buffer anti-replay / sync ghost messages
+  setTimeout(() => {
+    setState("READY");
+  }, 2000);
 });
+
+client.on("message_create", async (msg) => {
+  if (state !== "READY") return;
+
+  if (!msg.body && !msg.hasMedia) return;
+
+  try {
+    await handleMessage(msg);
+  } catch (err) {
+    logger.error(err);
+  }
+});
+
+client.on("disconnected", (reason) => {
+  logger.warn(t("system.disconnected", { reason }));
+  logger.info(t("system.reconnecting", { seconds: 5 }));
+  setTimeout(() => {
+    logger.info(t("system.reinitializing"));
+    client.initialize();
+  }, 5000);
+});
+
+// -- Events ----------------------------------------------------
+client.on("code", (code) => {
+  handlePairingCode(code);
+});
+
+client.on("qr", (qr) => {
+  handleQR(qr);
+});
+
 client.initialize();
-console.log("\n");
 logger.info(t("bot.initialized"));

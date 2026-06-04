@@ -11,8 +11,8 @@
  */
 
 import cron   from "node-cron";
-import { logger } from "../logger/logger.js";
-import { t }      from "../i18n/index.js";
+import { logger } from "#logger";
+import { t }      from "#i18n";
 
 /** List of active tasks (for eventual teardown) */
 const tasks = [];

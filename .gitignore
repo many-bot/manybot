@@ -1,5 +1,4 @@
 .auth_*
-env
 src/plugins/
 .wwebjs_auth
 .wwebjs_cache
@@ -11,7 +10,9 @@ cookies.txt
 bin/
 mychats.txt
 manybot.conf
+manyplug.conf
 update.log
 logs/audio-error.log
 logs/video-error.log
 registry.json
+manybot-*.tgz
