@@ -280,16 +280,17 @@ function runFinal() {
   const lastTag = getLastTag();
   const commits = getCommits(lastTag);
   const bump = detectBump(commits);
-  const version = getBaseVersion(lastTag, bump);  // Calcular versão, não pedir argumento
-  
+  const version = getBaseVersion(lastTag, bump);
+
   console.log("\n[FINAL RELEASE]");
   console.log("Version:", version);
-  
-  execSync(`npm version ${version} --yes`);  // Usar npm version
-  
+
+  // Só cria a tag git, sem mexer no package.json
+  sh(`git tag -a ${version} -m "Release ${version}"`);
+
   const log = generateLog(lastTag);
   updateChangelog(version, log);
-  
+
   console.log("Released:", version);
 }
 
