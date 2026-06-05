@@ -2,45 +2,31 @@
 
 /* TAG.JS
  *
- * This script make tags and creates changelog
- * It is used only the github actions workflow 
+ * This script makes tags and bumps the version.
+ * Used only by the GitHub Actions workflow.
  *
+ * Usage:
+ *   --dry    Preview next version without making changes
+ *   --rc     Create a release candidate tag (dev branch)
+ *   --final  Create a final release tag (master branch)
  * */
 
-
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import { execSync } from "child_process";
 
 const mode = process.argv[2];
-const date = new Date().toISOString().split("T")[0];
 
-const jsonversion = JSON.parse(
-  readFileSync('./package.json', "utf8")
-).version;
-
-// -------------------- GIT --------------------
+// -------------------- HELPERS --------------------
 
 function sh(cmd) {
-  return execSync(cmd).toString().trim();
+  return execSync(cmd, { stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
 }
 
-if (!existsSync('./package.json')) {
-  console.error('package.json not found');
-  process.exit(1);
+function readPackageVersion() {
+  return JSON.parse(readFileSync("./package.json", "utf8")).version;
 }
 
-try {
-  sh('git rev-parse --git-dir');
-} catch {
-  console.error('This is not git repository');
-  process.exit(1);
-}
-
-const status = sh('git status --porcelain');
-if (status) {
-  console.error('Dirty working tree. Commit your changes or stash them.');
-  process.exit(1);
-}
+// -------------------- GIT --------------------
 
 function getLastTag() {
   try {
@@ -56,36 +42,38 @@ function getCommits(fromTag) {
 }
 
 function getRcTags(base) {
-  try {
-    const clean = base.replace(/^v/, "");
-    const tags = sh(`git tag --list "*${clean}-rc.*"`).split("\n").filter(Boolean);
-    return tags;
-  } catch {
-    return [];
-  }
+  // Uses exact anchor (^v?) to avoid matching longer versions (e.g. 13.0.7 matching 3.0.7)
+  const clean = base.replace(/^v/, "");
+  const raw = sh(`git tag --list`);
+  return raw
+    .split("\n")
+    .filter(Boolean)
+    .filter(t => new RegExp(`^v?${clean.replace(/\./g, "\\.")}-rc\\.\\d+$`).test(t));
 }
+
+function nextRcNumber(base) {
+  const tags = getRcTags(base);
+  const nums = tags
+    .map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0))
+    .filter(n => n > 0);
+  return nums.length > 0 ? Math.max(...nums) + 1 : 1;
+}
+
 // -------------------- VERSIONING --------------------
 
 function detectBump(commits) {
-  const lines = commits.split("\n");
   let hasMajor = false;
   let hasMinor = false;
   let hasPatch = false;
 
-  for (const l of lines) {
-    // 1. Major: BREAKING CHANGE ou ! no header
-    if (l.includes("BREAKING CHANGE")) { hasMajor = true; continue; }
-    
-    if (l.includes(":")) {
-      const header = l.split(":")[0];
-      if (header.endsWith("!")) { hasMajor = true; continue; }
-      
-      // 2. Minor: feat
-      if (/^feat(\([^)]+\))?!?:/.test(l)) hasMinor = true;
-      
-      // 3. Patch: fix
-      if (/^fix(\([^)]+\))?!?:/.test(l)) hasPatch = true;
-    }
+  for (const line of commits.split("\n")) {
+    if (line.includes("BREAKING CHANGE")) { hasMajor = true; continue; }
+    if (!line.includes(":")) continue;
+
+    const header = line.split(":")[0];
+    if (header.endsWith("!")) { hasMajor = true; continue; }
+    if (/^- [a-f0-9]+ feat(\([^)]+\))?:/.test(line)) hasMinor = true;
+    if (/^- [a-f0-9]+ fix(\([^)]+\))?:/.test(line)) hasPatch = true;
   }
 
   if (hasMajor) return "major";
@@ -95,30 +83,21 @@ function detectBump(commits) {
 }
 
 function incVersion(version, type) {
-  const [maj, min, pat] = version.split(".").map(Number);
+  const [maj, min, pat] = version.replace(/^v/, "").split(".").map(Number);
   if (type === "major") return `${maj + 1}.0.0`;
   if (type === "minor") return `${maj}.${min + 1}.0`;
   if (type === "patch") return `${maj}.${min}.${pat + 1}`;
-  // Se for "none", retorna a versão original sem mudar
-  return version; 
+  return version;
 }
 
+// Strips RC suffix and optionally bumps the version.
 function getBaseVersion(lastTag, bump) {
   if (!lastTag) return "0.0.1";
-
-  // LIMPEZA DO SUFIXO RC
-  const clean = lastTag.replace(/-rc\.\d+$/, "");
-
-  // SE NÃO HOUVER BUMP, RETORNA A BASE LIMPA SEM INCREMENTAR
-  if (bump === "none") {
-    return clean;
-  }
-
-  // SENÃO, APLICA O BUMP
-  return incVersion(clean, bump);
+  const clean = lastTag.replace(/^v/, "").replace(/-rc\.\d+$/, "");
+  return bump === "none" ? clean : incVersion(clean, bump);
 }
 
-// Compara duas versões semver (ignora sufixo rc). Retorna true se a >= b.
+// Returns the higher of two semver strings (ignores RC suffix).
 function semverGte(a, b) {
   const pa = a.replace(/^v/, "").split("-")[0].split(".").map(Number);
   const pb = b.replace(/^v/, "").split("-")[0].split(".").map(Number);
@@ -126,11 +105,10 @@ function semverGte(a, b) {
     if ((pa[i] || 0) > (pb[i] || 0)) return true;
     if ((pa[i] || 0) < (pb[i] || 0)) return false;
   }
-  return true; // igual
+  return true;
 }
 
-// Retorna a maior das duas versões base (sem sufixo rc).
-// Garante que a versão manual do package.json nunca seja ignorada.
+// Guards against the generated version going below what's in package.json.
 function maxVersion(generated, pkg) {
   if (!semverGte(generated, pkg)) {
     console.log(`[VERSION GUARD] Generated ${generated} < package.json ${pkg}. Using ${pkg}.`);
@@ -139,206 +117,88 @@ function maxVersion(generated, pkg) {
   return generated;
 }
 
-// -------------------- LOG / FILES --------------------
-
-function generateLog(fromTag) {
-  const range = fromTag ? `${fromTag}..HEAD` : "";
-  return sh(`git log ${range} --pretty=format:"- %h %s"`);
-}
-
-function updateChangelog(version, log) {
-  const lines = log.split("\n").filter(l => l.trim());
-  
-  // Arrays para categorizar
-  const breakingChanges = [];
-  const features = [];
-  const fixes = [];
-  const others = []; // refactor, chore, build, docs, etc.
-
-  lines.forEach(line => {
-    // Remove o hash e o tipo inicial para analisar o conteúdo
-    // Formato: "- abc1234 tipo: mensagem"
-    const match = line.match(/^- [a-f0-9]+ (.+): (.+)$/);
-    
-    if (!match) {
-      // Se não seguir o padrão, joga em "outros"
-      others.push(line);
-      return;
-    }
-
-    const [, type, message] = match;
-    const cleanLine = `- ${message}`; // Formato limpo sem hash
-
-    // 1. Verifica Breaking Change
-    if (message.includes("BREAKING CHANGE") || type.endsWith("!")) {
-      breakingChanges.push(cleanLine);
-    } 
-    // 2. Verifica Features
-    else if (type.startsWith("feat")) {
-      features.push(cleanLine);
-    } 
-    // 3. Verifica Fixes
-    else if (type.startsWith("fix")) {
-      fixes.push(cleanLine);
-    } 
-    // 4. Outros (refactor, chore, build, docs, style, perf, test)
-    else {
-      others.push(message);
-    }
-  });
-
-  // Constrói o conteúdo do changelog
-  let entry = `## [${version}] - ${date}\n\n`;
-
-  if (breakingChanges.length > 0) {
-    entry += "### ⚠️ Breaking Changes\n\n";
-    entry += breakingChanges.join("\n") + "\n\n";
-  }
-
-  if (features.length > 0) {
-    entry += "### ✨ Features\n\n";
-    entry += features.join("\n") + "\n\n";
-  }
-
-  if (fixes.length > 0) {
-    entry += "### 🐛 Bug Fixes\n\n";
-    entry += fixes.join("\n") + "\n\n";
-  }
-
-  if (others.length > 0) {
-    entry += "### 🛠 Other Changes\n\n";
-    entry += others.join("\n") + "\n\n";
-  }
-
-  writeFileSync("CHANGELOG.md", entry);
-}
-
 // -------------------- COMMANDS --------------------
 
 function runDry() {
   const lastTag = getLastTag();
   const commits = getCommits(lastTag);
-
   const bump = detectBump(commits);
-  let base = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
+  const base = maxVersion(getBaseVersion(lastTag, bump), readPackageVersion());
 
-  // Lógica extra para simular o próximo RC
-  let nextTag = base;
-  
-  // Se a última tag era um RC, simulamos o próximo RC
-  const rcMatch = lastTag ? lastTag.replace(/^v/, "").match(/^(.+)-rc\.\d+$/) : null;
-  
-  if (rcMatch) {
-    const currentBase = rcMatch[1];
-    // Se a base calculada é a mesma da tag anterior, continuamos a série RC
-    if (currentBase === base) {
-      const tags = getRcTags(currentBase);
-      const nums = tags
-        .map(t => Number(t.replace(/^v/, "").match(/-rc\.(\d+)$/)?.[1] || 0))
-        .filter(n => n > 0);
-      const nextRcNum = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-      nextTag = `${currentBase}-rc.${nextRcNum}`;
-    } else {
-      // Se a base mudou (ex: de 3.0.7 para 4.0.0), começamos um novo RC
-      nextTag = `${base}-rc.1`;
-    }
+  const rcMatch = lastTag?.replace(/^v/, "").match(/^(.+)-rc\.\d+$/);
+  let nextTag;
+
+  if (rcMatch && rcMatch[1] === base) {
+    nextTag = `${base}-rc.${nextRcNumber(base)}`;
   } else {
-    // Se a última tag não era RC, o próximo seria o primeiro RC da nova base
     nextTag = `${base}-rc.1`;
   }
 
   console.log("\n[DRY RUN]");
-  console.log("Last tag:", lastTag);
-  console.log("Bump:", bump);
+  console.log("Last tag :", lastTag ?? "(none)");
+  console.log("Bump     :", bump);
   console.log("Next base:", base);
-  console.log("Next RC tag:", nextTag);
+  console.log("Next RC  :", nextTag);
 }
 
 function runRc() {
   const lastTag = getLastTag();
-  
-  // 1. Detectar se a última tag é um RC da mesma série
-  const rcMatch = lastTag ? lastTag.replace(/^v/, "").match(/^(.+)-rc\.\d+$/) : null;
-  
+  const rcMatch = lastTag?.replace(/^v/, "").match(/^(.+)-rc\.\d+$/);
+
   let base;
-  let rcNumber;
 
   if (rcMatch) {
-    // Se a última tag é um RC (ex: 4.0.0-rc.1), mantemos a base (4.0.0)
-    // mas ainda garantimos que não seja menor que o package.json
-    base = maxVersion(rcMatch[1], jsonversion);
-    
-    // Calcula o próximo número do RC
-    const tags = getRcTags(base);
-    const nums = tags.map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0)).filter(n => n > 0);
-    rcNumber = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-    
-    console.log(`\n[CONTINUING RC SERIES]`);
-    console.log(`Base: ${base}, Next RC: ${rcNumber}`);
+    // Continuing an existing RC series — don't re-bump
+    base = maxVersion(rcMatch[1], readPackageVersion());
+    console.log(`\n[CONTINUING RC SERIES] Base: ${base}`);
   } else {
-    // Se a última tag NÃO é um RC (ex: 3.0.7), calculamos a nova base
+    // First RC after a stable release — detect bump from commits
     const commits = getCommits(lastTag);
     const bump = detectBump(commits);
-    
-    base = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
-    
-    const tags = getRcTags(base);
-    const nums = tags.map(t => Number(t.match(/-rc\.(\d+)$/)?.[1] || 0)).filter(n => n > 0);
-    rcNumber = nums.length > 0 ? Math.max(...nums) + 1 : 1;
-    
-    console.log(`\n[NEW RC SERIES]`);
-    console.log(`Last tag: ${lastTag}, Base: ${base}`);
+    if (bump === "none") {
+      console.log("⏭ Nothing to release (no feat/fix/breaking commits). Skipping.");
+      process.exit(0);
+    }
+    base = maxVersion(getBaseVersion(lastTag, bump), readPackageVersion());
+    console.log(`\n[NEW RC SERIES] Last tag: ${lastTag ?? "(none)"}, Base: ${base}`);
   }
 
+  const rcNumber = nextRcNumber(base);
   const tag = `${base}-rc.${rcNumber}`;
-  console.log("Creating tag:", tag);
-  
-  execSync(`npm version ${tag} --yes`);
 
-  const log = generateLog(lastTag);
-  updateChangelog(tag, log);
-  
-  console.log("✅ Tag e versão atualizadas.");
+  console.log("Creating tag:", tag);
+  execSync(`npm version ${tag} --yes`, { stdio: "inherit" });
+
+  console.log(`✅ RC tag created: v${tag}`);
 }
 
 function runFinal() {
   const lastTag = getLastTag();
   const commits = getCommits(lastTag);
   const bump = detectBump(commits);
-  const version = maxVersion(getBaseVersion(lastTag, bump), jsonversion);
+
+  if (bump === "none") {
+    console.log("⏭ Nothing to release (no feat/fix/breaking commits). Skipping.");
+    process.exit(0);
+  }
+
+  const version = maxVersion(getBaseVersion(lastTag, bump), readPackageVersion());
 
   console.log("\n[FINAL RELEASE]");
   console.log("Version:", version);
 
-  // Só cria a tag git, sem mexer no package.json
-  sh(`git tag -a ${version} -m "Release ${version}"`);
+  execSync(`npm version ${version} --yes`, { stdio: "inherit" });
 
-  const log = generateLog(lastTag);
-  updateChangelog(version, log);
-
-  console.log("Released:", version);
+  console.log(`✅ Release tag created: v${version}`);
 }
 
 // -------------------- ROUTER --------------------
 
 switch (mode) {
-  case "--dry":
-    runDry();
-    break;
-
-  case "--rc":
-    runRc();
-    break;
-
-  case "--final":
-    runFinal();
-    break;
-
+  case "--dry":   runDry();   break;
+  case "--rc":    runRc();    break;
+  case "--final": runFinal(); break;
   default:
-    console.log(`
-Usage:
-  --dry
-  --rc
-  --final
-`);
+    console.log("Usage:\n  node tag.js --dry\n  node tag.js --rc\n  node tag.js --final");
+    process.exit(1);
 }
