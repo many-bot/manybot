@@ -9,26 +9,23 @@ on:
       - ".github/workflows/**"
       - ".devtools/**"
     branches:
-      - 'dev'
-      - 'master'
+      - dev
+      - master
 
-# Permissões necessárias para criar releases e pushar tags
 permissions:
   contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    
+
     steps:
-      # 1. Checkout com histórico completo (CRÍTICO para o script funcionar)
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Necessário para 'git log' e 'git describe'
-          token: ${{ secrets.GITHUB_TOKEN }} # Garante que o token tenha permissão de push
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -36,88 +33,59 @@ jobs:
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
 
-      # 3. Instalar dependências
       - name: Install dependencies
         run: npm ci
 
-      # 4. Validar ambiente (Prevenção de falhas silenciosas)
-      - name: Validate environment
-        run: |
-          if [ ! -f ".devtools/tag.js" ]; then
-            echo "❌ Erro: .devtools/tag.js não encontrado!"
-            exit 1
-          fi
-          if [ ! -f "package.json" ]; then
-            echo "❌ Erro: package.json não encontrado!"
-            exit 1
-          fi
-          echo "✅ Ambiente validado."
-
-      - name: Configure Git User
+      - name: Configure Git
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
 
-      # 5. Executar o script de tagging
-      - name: Run tag script
-        id: tag_script
+      - name: Tag and version
+        id: tag
         run: |
-          echo "🚀 Executando script de tagging..."
-          
           if [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "Modo: RC (Dev)"
-            node .devtools/tag.js --rc
-            IS_PRERELEASE="true"
-            MODE="rc"
-          elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
-            echo "Modo: Final (Master)"
-            node .devtools/tag.js --final
-            IS_PRERELEASE="false"
-            MODE="final"
+            OUTPUT=$(node .devtools/tag.js --rc)
+            echo "$OUTPUT"
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            OUTPUT=$(node .devtools/tag.js --final)
+            echo "$OUTPUT"
+            echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
-          
-          # Captura a versão do package.json após o script rodar
-          # O script deve ter atualizado o package.json (ou nós lemos o output)
-          VERSION=$(node -p "require('./package.json').version")
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
-          echo "mode=$MODE" >> $GITHUB_OUTPUT
-          
-          echo "✅ Tag gerada: v$VERSION"
 
-      # 6. Rodar testes (Falha aqui impede o release)
-      #- name: Run tests
-      #  run: npm test
+          if echo "$OUTPUT" | grep -q "Nothing to release"; then
+            echo "skipped=true" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          fi
 
-      # 7. Pushar tags para o repositório remoto
-      # O script cria a tag localmente, mas precisamos enviá-la
-      - name: Push tags to remote
-        run: |
-          git push origin --tags
-          echo "🚀 Tags enviadas com sucesso."
+      - name: Push tags
+        if: steps.tag.outputs.skipped == 'false'
+        run: git push origin HEAD --tags
 
-      - name: Build package
-        run: npm pack
+      # Uncomment when tests are ready:
+      # - name: Run tests
+      #   run: npm test
 
-      # 8. Criar Release no GitHub
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        if: steps.tag.outputs.skipped == 'false'
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.tag_script.outputs.version }}
-          name: ${{ steps.tag_script.outputs.mode == 'rc' && format('[RC] Release v{0}', steps.tag_script.outputs.version) || format('Release v{0}', steps.tag_script.outputs.version) }}
-          body_path: ${{ github.ref == 'refs/heads/master' && 'CHANGELOG.md' || '' }} # Changelog only if sending to master
-          prerelease: ${{ github.ref == 'refs/heads/dev' }}
-          files: |
-            *.tgz
-          generate_release_notes: false # Já usamos o body_path
+          tag_name: v${{ steps.tag.outputs.version }}
+          name: >-
+            ${{ steps.tag.outputs.prerelease == 'true'
+              && format('[RC] v{0}', steps.tag.outputs.version)
+              || format('Release v{0}', steps.tag.outputs.version) }}
+          prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 9. Publicar no npm (APENAS se for master)
       - name: Publish to npm
-        if: ${{ github.ref == 'refs/heads/master' }}
+        if: steps.tag.outputs.skipped == 'false' && github.ref == 'refs/heads/master'
         run: npm publish --access=public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
