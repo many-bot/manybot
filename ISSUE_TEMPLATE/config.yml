@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Plugin issues
+    url: https://github.com/many-bot/manyplug/issues
+    about: Issues with plugins go here, not in the core repo.
+  - name: Discord server
+    url: https://discord.gg/gC7aKChXmA
+    about: General feedback, command suggestions, and community chat.
+  - name: WhatsApp group
+    url: https://chat.whatsapp.com/KfOuIwhpQjN8fcZTMHmaGQ
+    about: Quick feedback and suggestions in the community group.

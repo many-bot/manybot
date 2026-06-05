@@ -1,0 +1,60 @@
+name: Bug Report
+description: Report a problem with the bot's core behavior.
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!WARNING]
+        > **Plugin issues don't belong here.** If the problem is with a plugin, open an issue at [many-bot/manyplug](https://github.com/many-bot/manyplug) instead.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem.
+      placeholder: "When I do X, Y happens instead of Z."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: Step-by-step instructions to trigger the bug.
+      placeholder: |
+        1. Start the bot with ...
+        2. Send the message ...
+        3. See the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full logs
+      description: Paste the complete logs **from the start of the process**, not just the error line. Truncated logs make debugging much harder.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node.js version, OS, and Many version.
+      placeholder: |
+        Node: v20.x
+        OS: Ubuntu 22.04
+        Many: v4.0.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Anything else that might be relevant (config snippets, screenshots, etc.).
+    validations:
+      required: false
