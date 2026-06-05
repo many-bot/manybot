@@ -263,6 +263,10 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       async reply(text) {
         return msg.reply(text);
       },
+
+      async react(emoji) {
+        return msg.react(emoji);
+      },
     },
 
     // ── chat ─────────────────────────────────────────────────
