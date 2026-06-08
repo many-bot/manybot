@@ -112,7 +112,7 @@ function buildPluginsApi(pluginRegistry) {
     require(name) {
       const plugin = pluginRegistry.get(name);
       if (!plugin || plugin.status !== "active") {
-        throw new Error(`Plugin dependency "${name}" is not active.`);
+        throw new Error(`Plugin dependency "${name}" does not exists or is not active.`);
       }
       return plugin.exports;
     },
