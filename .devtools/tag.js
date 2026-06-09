@@ -134,11 +134,22 @@ function runDry() {
     nextTag = `${base}-rc.1`;
   }
 
+  const current = readPackageVersion();
+
+  const version = maxVersion(
+    getBaseVersion(lastTag, bump),
+    current
+  );
+  
+  const alreadyApplied = current === version;
+
   console.log("\n[DRY RUN]");
-  console.log("Last tag :", lastTag ?? "(none)");
-  console.log("Bump     :", bump);
-  console.log("Next base:", base);
-  console.log("Next RC  :", nextTag);
+  console.log("Last tag        :", lastTag ?? "(none)");
+  console.log("Bump            :", bump);
+  console.log("Next base       :", base);
+  console.log("Next RC         :", nextTag);
+  console.log("Current version :", current);
+  console.log("Already applied :", alreadyApplied);
 }
 
 function runRc() {
@@ -166,6 +177,14 @@ function runRc() {
   const rcNumber = nextRcNumber(base);
   const tag = `${base}-rc.${rcNumber}`;
 
+  const current = readPackageVersion();
+
+  if (current === version) {
+    console.log(`Version already applied, making tag ${tag} with Git.`);
+    execSync(`git tag ${tag}`)
+    return;
+  }
+
   console.log("Creating tag:", tag);
   execSync(`npm version ${tag} --yes`, { stdio: "inherit" });
 
@@ -186,6 +205,14 @@ function runFinal() {
 
   console.log("\n[FINAL RELEASE]");
   console.log("Version:", version);
+
+  const current = readPackageVersion();
+
+  if (current === version) {
+    console.log(`Version already applied, making tag ${version} with Git.`);
+    execSync(`git tag ${version}`)
+    return;
+  }
 
   execSync(`npm version ${version} --yes`, { stdio: "inherit" });
 
