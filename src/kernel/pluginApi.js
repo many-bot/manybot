@@ -16,7 +16,6 @@ import { enqueue }                             from "#download";
 import { emptyFolder }                         from "#utils/file";
 import { getChatId }                           from "#utils/getChatId";
 import pkg                                     from "whatsapp-web.js";
-import { client }                              from "#client/whatsappClient";
 
 const { MessageMedia } = pkg;
 
@@ -112,7 +111,7 @@ function buildPluginsApi(pluginRegistry) {
     require(name) {
       const plugin = pluginRegistry.get(name);
       if (!plugin || plugin.status !== "active") {
-        throw new Error(`Plugin dependency "${name}" does not exists or is not active.`);
+        throw new Error(`Plugin dependency "${name}" does not exist or is not active.`);
       }
       return plugin.exports;
     },
@@ -181,6 +180,47 @@ function chatIdTarget(client, chatId) {
   };
 }
 
+// ── Send APIs ────────────────────────────────────────────────────────────────
+
+/** Send to a specific chat by ID. Available in both setup and runtime. */
+function buildSendToApi(client) {
+  return {
+    sendTo:        (chatId, text)              => client.sendMessage(chatId, text),
+    sendImageTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).image(filePath, caption),
+    sendVideoTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).video(filePath, caption),
+    sendAudioTo:   (chatId, filePath)          => makeSender(chatIdTarget(client, chatId)).audio(filePath),
+    sendStickerTo: (chatId, source)            => makeSender(chatIdTarget(client, chatId)).sticker(source),
+  };
+}
+
+/** Send to the current chat. Only available in runtime. */
+function buildSendApi(chat) {
+  const sender = makeSender(chat);
+  return {
+    send:        (text)              => sender.text(text),
+    sendImage:   (filePath, caption) => sender.image(filePath, caption),
+    sendVideo:   (filePath, caption) => sender.video(filePath, caption),
+    sendAudio:   (filePath)          => sender.audio(filePath),
+    sendSticker: (source)            => sender.sticker(source),
+  };
+}
+
+// ── Base API (shared between setup and runtime) ───────────────────────────────
+
+function buildBaseApi(client, pluginRegistry) {
+  return {
+    log,
+    t,
+    config:   buildConfigApi(),
+    i18n:     buildI18nApi(),
+    utils:    buildUtilsApi(),
+    download: buildDownloadApi(),
+    plugins:  buildPluginsApi(pluginRegistry),
+    botId:    client.info?.wid?._serialized ?? null,
+    ...buildSendToApi(client),
+  };
+}
+
 // ── Setup API ────────────────────────────────────────────────────────────────
 
 /**
@@ -193,20 +233,7 @@ function chatIdTarget(client, chatId) {
  */
 export function buildSetupApi(client, pluginRegistry) {
   return {
-    sendTo:        (chatId, text)              => client.sendMessage(chatId, text),
-    sendImageTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).image(filePath, caption),
-    sendVideoTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).video(filePath, caption),
-    sendAudioTo:   (chatId, filePath)          => makeSender(chatIdTarget(client, chatId)).audio(filePath),
-    sendStickerTo: (chatId, source)            => makeSender(chatIdTarget(client, chatId)).sticker(source),
-
-    log,
-    t,
-    config:   buildConfigApi(),
-    i18n:     buildI18nApi(),
-    utils:    buildUtilsApi(),
-    download: buildDownloadApi(),
-    plugins:  buildPluginsApi(pluginRegistry),
-    botId:    client.info?.wid?._serialized ?? null,
+    ...buildBaseApi(client, pluginRegistry),
   };
 }
 
@@ -224,10 +251,9 @@ export function buildSetupApi(client, pluginRegistry) {
  * @returns {object} ctx
  */
 export function buildApi({ msg, chat, client, pluginRegistry }) {
-
-  const currentSender = makeSender(chat);
-
   return {
+    ...buildBaseApi(client, pluginRegistry),
+    ...buildSendApi(chat),
 
     // ── msg ──────────────────────────────────────────────────
 
@@ -276,32 +302,5 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       name:    chat.name || chat.id.user,
       isGroup: /@g\.us$/.test(chat.id._serialized),
     },
-
-    // ── send (current chat) ──────────────────────────────────
-
-    send:        (text)              => currentSender.text(text),
-    sendImage:   (filePath, caption) => currentSender.image(filePath, caption),
-    sendVideo:   (filePath, caption) => currentSender.video(filePath, caption),
-    sendAudio:   (filePath)          => currentSender.audio(filePath),
-    sendSticker: (source)            => currentSender.sticker(source),
-
-    // ── sendTo (specific chat) ───────────────────────────────
-
-    sendTo:        (chatId, text)              => client.sendMessage(chatId, text),
-    sendImageTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).image(filePath, caption),
-    sendVideoTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).video(filePath, caption),
-    sendAudioTo:   (chatId, filePath)          => makeSender(chatIdTarget(client, chatId)).audio(filePath),
-    sendStickerTo: (chatId, source)            => makeSender(chatIdTarget(client, chatId)).sticker(source),
-
-    // ── system ───────────────────────────────────────────────
-
-    log,
-    t,
-    config:   buildConfigApi(),
-    i18n:     buildI18nApi(),
-    utils:    buildUtilsApi(),
-    download: buildDownloadApi(),
-    plugins:  buildPluginsApi(pluginRegistry),
-    botId: client.info?.wid?._serialized ?? null,
   };
 }
