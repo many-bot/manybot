@@ -2,8 +2,6 @@
 
 ![ManyBot Logo](logo.png)
 
-**Just a cool open source WhatsApp bot**
-
 ![Node.js 18+](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
 ![GPL v3](https://img.shields.io/badge/License-GPL--v3-blue.svg)
@@ -14,7 +12,7 @@
 
 ---
 
-ManyBot is a free, open source WhatsApp bot built around a modular plugin system. Instead of a monolithic bot with features baked in, ManyBot gives you a lightweight core and lets you pick exactly what you want through plugins - no cloud dependency, no subscription, no black box.
+ManyBot is free and open-source a messaging automation ecosystem for online businesses and communities.
 
 ## Requirements
 
