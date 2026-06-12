@@ -1,103 +1,147 @@
 /* whatsappClient
  *
- * Initialize client and connect to WhatsApp
+ * Initialize client and connect to WhatsApp via Baileys
  *
- * if PHONE_NUMBER is set on config, it will request a verficiation code
- * but if it is not, it will display a QR Code on the screen to scan using your phone
+ * if PHONE_NUMBER is set on config, it will request a pairing code
+ * but if it is not, it will display a QR Code on the screen to scan
  *
  * */
-
-import pkg                         from "whatsapp-web.js";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from "@whiskeysockets/baileys";
 import fs                          from "fs";
 import path                        from "path";
 import { fileURLToPath }           from "url";
 import { PHONE_NUMBER, CLIENT_ID } from "#config";
 import { logger }                  from "#logger";
 import qrcode                      from "qrcode-terminal";
-import { t }                       from "#i18n"
+import { t }                       from "#i18n";
+import pino                        from "pino";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-export const { Client, LocalAuth, MessageMedia } = pkg;
+// -- Auth paths ------------------------------------------------
+const AUTH_DIR        = path.join(__dirname, `../../.baileys_auth_${CLIENT_ID}`);
+const AUTH_STATE_PATH = path.join(__dirname, `../../.auth_${CLIENT_ID}.json`);
 
-// -- Instance --------------------------------------------------
-const clientOptions = {
-  authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
-  puppeteer: {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox'
-    ],
-  },
-};
+// -- Phone Number Validation -----------------------------------
+function isValidPhoneNumber(phone) {
+  if (!phone || typeof phone !== "string") return false;
+  return /^\d{10,15}$/.test(phone);
+}
 
-// -- Qr Handle --------------------------------------------------
+function hasPhoneNumberChanged(currentPhone) {
+  try {
+    if (!fs.existsSync(AUTH_STATE_PATH)) return false;
+    const state = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, "utf8"));
+    return (state.phoneNumber ?? null) !== currentPhone;
+  } catch {
+    return false;
+  }
+}
+
+function savePhoneNumber(phone) {
+  try {
+    fs.writeFileSync(
+      AUTH_STATE_PATH,
+      JSON.stringify({ phoneNumber: phone, savedAt: new Date().toISOString() })
+    );
+  } catch { /* ignore */ }
+}
+
+// Force re-auth if phone number changed
+if (PHONE_NUMBER && hasPhoneNumberChanged(PHONE_NUMBER)) {
+  if (fs.existsSync(AUTH_DIR)) {
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    logger.info("Phone number changed — cleared auth state.");
+  }
+}
+
+if (PHONE_NUMBER) savePhoneNumber(PHONE_NUMBER);
+
+// -- QR Handle -------------------------------------------------
 export function handleQR(qr) {
   logger.info(t("system.qrScan"));
   qrcode.generate(qr, { small: true });
 }
 
-// -- Handle pairing code ---------------------------------------
+// -- Pairing Code Handle ---------------------------------------
 export function handlePairingCode(code) {
   logger.info(t("system.pairingCodeTitle"));
-  logger.info(t("system.pairingCodeValue", { code: code }));
+  logger.info(t("system.pairingCodeValue", { code }));
   logger.info(t("system.pairingCodeInstructions"));
 }
 
-// -- Phone Number Validation ------------------------------------
-const AUTH_STATE_PATH = path.join(__dirname, `../../.auth_${CLIENT_ID}.json`);
+// -- Client Factory --------------------------------------------
+// Baileys doesn't keep a persistent client instance the same way
+// wwebjs does — the socket is recreated on reconnect, so we expose
+// a `connect()` factory and a `getClient()` accessor instead.
 
-// Validates if phone string has 10-15 characters
-function isValidPhoneNumber(phone) {
-  if (!phone || typeof phone !== 'string') return false;
-  const phoneRegex = /^\d{10,15}$/;
-  return phoneRegex.test(phone);
+let _socket = null;
+
+export function getClient() {
+  return _socket;
 }
 
-// Checks if phone number changed since last authentication
-function hasPhoneNumberChanged(currentPhone) {
-  try {
-    if (!fs.existsSync(AUTH_STATE_PATH)) return false;
-    const state = JSON.parse(fs.readFileSync(AUTH_STATE_PATH, 'utf8'));
-    const storedPhone = state.phoneNumber || null;
-    return storedPhone !== currentPhone;
-  } catch {
-    return false;
-  }
+export async function connect() {
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+  const { version }          = await fetchLatestBaileysVersion();
+
+  _socket = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+    },
+    printQRInTerminal: false,          // we handle QR ourselves
+    logger: pino({ level: "silent" }), // suppress Baileys noise; use your own logger
+    browser: ["ManyBot", "Chrome", "1.0.0"],
+  });
+
+  // Persist credentials whenever they update
+  _socket.ev.on("creds.update", saveCreds);
+
+  // -- QR / pairing code on connection update ------------------
+  _socket.ev.on("connection.update", async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      if (PHONE_NUMBER && isValidPhoneNumber(PHONE_NUMBER)) {
+        // Baileys only allows requesting the pairing code after the first QR fires
+        try {
+          const code = await _socket.requestPairingCode(PHONE_NUMBER);
+          handlePairingCode(code);
+        } catch (err) {
+          logger.error("Failed to request pairing code:", err.message);
+        }
+      } else {
+        handleQR(qr);
+      }
+    }
+
+    if (connection === "close") {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+      logger.warn(`Connection closed (reason: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+
+      if (shouldReconnect) {
+        await connect(); // recurse — Baileys is stateless between sockets
+      } else {
+        logger.error("Logged out. Delete auth dir and restart to re-authenticate.");
+      }
+    }
+
+    if (connection === "open") {
+      logger.info(t("system.clientReady"));
+    }
+  });
+
+  return _socket;
 }
 
-// Saves phone number to auth state file
-function savePhoneNumber(phone) {
-  try {
-    fs.writeFileSync(AUTH_STATE_PATH, JSON.stringify({ phoneNumber: phone, savedAt: new Date().toISOString() }));
-  } catch {
-    return false;
-  }
-}
-
-// Check if phone number changed and force re-authentication if needed
-if (PHONE_NUMBER && hasPhoneNumberChanged(PHONE_NUMBER)) {
-  // Delete auth folder to force fresh authentication
-  const authPath = path.join(__dirname, `../../.wwebjs_auth/session-${CLIENT_ID}`);
-  if (fs.existsSync(authPath)) {
-    fs.rmSync(authPath, { recursive: true, force: true });
-  }
-} 
-
-// Add phone number pairing if PHONE_NUMBER is configured and valid
-if (PHONE_NUMBER) {
-  if (isValidPhoneNumber(PHONE_NUMBER)) {
-    clientOptions.pairWithPhoneNumber = {
-      phoneNumber: PHONE_NUMBER,
-      showNotification: true,
-    };
-  }
-  savePhoneNumber(PHONE_NUMBER);
-}
-
-export const client = new Client(clientOptions);
-
-
-export default client;
+export default { connect, getClient };
