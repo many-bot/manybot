@@ -2,6 +2,7 @@
 
 ## 4.2
 
+- [ ] Migration from pure JavaScript to TypeScript
 - [ ] New useful endpoints on API:
     - [ ] ctx.listen(event, fn)
     - [ ] ctx.store
