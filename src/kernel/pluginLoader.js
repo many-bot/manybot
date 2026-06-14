@@ -74,12 +74,32 @@ export async function setupPlugins(api) {
   }
 }
 
+async function findPluginPath(name) {
+  // key direto: synt-xerror/figurinha
+  const direct = path.join(PLUGINS_DIR, name, "index.js");
+  if (fs.existsSync(direct)) return direct;
+
+  // nome simples em subdir: plugins/synt-xerror/figurinha
+  if (!fs.existsSync(PLUGINS_DIR)) return null;
+  for (const entry of fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const nested = path.join(PLUGINS_DIR, entry.name, name, "index.js");
+    if (fs.existsSync(nested)) return nested;
+  }
+
+  return null;
+}
 /**
  * Carrega um único plugin pelo nome.
  * @param {string} name
  */
 async function loadPlugin(name) {
-  const pluginPath = path.join(PLUGINS_DIR, name, "index.js");
+  const pluginPath = await findPluginPath(name);
+  if (!pluginPath) {
+    logger.warn(t("system.pluginNotFound", { name, path: path.join(PLUGINS_DIR, name) }));
+    pluginRegistry.set(name, { name, status: "disabled", run: null, exports: null, error: null });
+    return;
+  }
 
   if (!fs.existsSync(pluginPath)) {
     logger.warn(t("system.pluginNotFound", { name, path: pluginPath }));
