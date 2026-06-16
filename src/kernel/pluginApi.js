@@ -267,7 +267,8 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
 
       /** Check if message starts with a command. */
       is(cmd) {
-        return msg.body?.trim().toLowerCase().startsWith(cmd.toLowerCase());
+        const command = msg.body?.trim().split(/\s+/)[0].toLowerCase();
+        return command === cmd.toLowerCase();
       },
 
       hasMedia:  msg.hasMedia,
