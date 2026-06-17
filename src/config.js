@@ -14,9 +14,9 @@ import path from "path";
 
 import { logger } from "#logger";
 
-const CONFIG_DIR = path.join(os.homedir(), ".manybot");
-const CONFIG_FILE = path.join(CONFIG_DIR, "manybot.conf");
-const PLUGIN_FILE = path.join(CONFIG_DIR, "manyplug.conf");
+export const CONFIG_DIR = path.join(os.homedir(), ".manybot");
+export const CONFIG_FILE = path.join(CONFIG_DIR, "manybot.conf");
+export const PLUGIN_FILE = path.join(CONFIG_DIR, "manyplug.conf");
 
 /**
  * Converts strings to native JS values.
