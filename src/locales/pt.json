@@ -59,6 +59,8 @@
   "errors": {
     "pluginLoad": "Falha ao carregar plugin",
     "messageProcess": "Falha ao processar mensagem",
-    "stack": "Stack"
+    "stack": "Stack",
+    "chromeNotFound": "Chrome não encontrado. Baixando...",
+    "couldNotDownloadChrome": "Não foi possível baixar o Chrome: "
   }
 }

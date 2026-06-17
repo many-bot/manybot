@@ -15,16 +15,79 @@ import { PHONE_NUMBER, CLIENT_ID } from "#config";
 import { logger }                  from "#logger";
 import qrcode                      from "qrcode-terminal";
 import { t }                       from "#i18n"
+import { CONFIG_DIR }              from "#config";
+import { extract }                 from "tar";
+import { pipeline }                from "node:stream/promises";
+import { Readable }                from "node:stream";
+import { Transform }               from "node:stream";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const chrome = path.join(CONFIG_DIR, "chrome/chrome")
+
+if (!fs.existsSync(chrome)) {
+  try {
+    logger.warn(t("errors.chromeNotFound"));
+    const tmpDir  = "/tmp/manybot-chrome";
+    const tmpPath = path.join(tmpDir, "chrome.tar.gz");
+    const url     = "https://api.manybot.stxerr.dev/download-chrome";
+
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const expected = Number(res.headers.get("content-length"));
+    let received   = 0;
+    const frames   = ["|","/","-","\\"];
+    let frame      = 0;
+    let spinner;
+
+    const file = fs.createWriteStream(tmpPath);
+
+    spinner = setInterval(() => {
+      const pct = expected
+        ? ` ${Math.floor((received / expected) * 100)}%`
+        : ` ${(received / 1024 / 1024).toFixed(1)}MB`;
+      process.stderr.write(`\r${frames[frame++ % frames.length]} Baixando Chrome...${pct}`);
+    }, 80);
+
+    const counter = new Transform({
+      transform(chunk, _enc, cb) {
+        received += chunk.length;
+        cb(null, chunk);
+      }
+    });
+
+    try {
+      await pipeline(
+        Readable.fromWeb(res.body),
+        counter,
+        file
+      );
+    } finally {
+      clearInterval(spinner);
+      process.stderr.write("\r\x1b[2K"); // limpa a linha
+    }
+
+    if (expected && received !== expected) {
+      throw new Error("Download incompleto");
+    }
+
+    await extract({ file: tmpPath, cwd: CONFIG_DIR, gzip: true });
+  } catch (err) {
+    throw new Error(t("errors.couldNotDownloadChrome") + err.message);
+  }
+
+}
 export const { Client, LocalAuth, MessageMedia } = pkg;
 
 // -- Instance --------------------------------------------------
 const clientOptions = {
   authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
   puppeteer: {
+    executablePath: chrome,
     headless: true,
     args: [
       '--no-sandbox',
