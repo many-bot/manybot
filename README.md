@@ -16,7 +16,7 @@ ManyBot is a free and open-source messaging automation ecosystem for online busi
 
 ## Requirements
 
-- Node.js >= 18
+- Node.js >= 20
 - npm
 
 ## Getting started
