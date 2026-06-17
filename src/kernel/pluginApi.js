@@ -151,8 +151,8 @@ function mediaFromSource(source, mimetype = "image/webp") {
  */
 function makeSender(target) {
   return {
-    async text(content) {
-      return target.sendMessage(content);
+    async text(content, opts = {}) {
+      return target.sendMessage(content, opts);
     },
     async image(filePath, caption = "") {
       const media = MessageMedia.fromFilePath(filePath);
@@ -185,7 +185,7 @@ function chatIdTarget(client, chatId) {
 /** Send to a specific chat by ID. Available in both setup and runtime. */
 function buildSendToApi(client) {
   return {
-    sendTo:        (chatId, text)              => client.sendMessage(chatId, text),
+    sendTo:        (chatId, text, opts)        => client.sendMessage(chatId, text, opts),
     sendImageTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).image(filePath, caption),
     sendVideoTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).video(filePath, caption),
     sendAudioTo:   (chatId, filePath)          => makeSender(chatIdTarget(client, chatId)).audio(filePath),
@@ -197,7 +197,7 @@ function buildSendToApi(client) {
 function buildSendApi(chat) {
   const sender = makeSender(chat);
   return {
-    send:        (text)              => sender.text(text),
+    send:        (text, opts)        => sender.text(text, opts),
     sendImage:   (filePath, caption) => sender.image(filePath, caption),
     sendVideo:   (filePath, caption) => sender.video(filePath, caption),
     sendAudio:   (filePath)          => sender.audio(filePath),
