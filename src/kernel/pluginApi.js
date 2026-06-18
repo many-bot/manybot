@@ -136,6 +136,70 @@ const log = {
   success: (...a) => logger.success(...a),
 };
 
+// -- Contact API --------------------------------------------------------------
+
+function buildContactsApi(client) {
+  return {
+    /**
+     * Get a normalized Contact object by ID.
+     * @param {string} contactId — serialized ID (e.g. "5511999999999@c.us")
+     * @returns {Promise<object|null>}
+     */
+    async get(contactId) {
+      try {
+        const c = await client.getContactById(contactId);
+        return {
+          id:           c.id._serialized,
+          number:       c.number,
+          pushname:     c.pushname   ?? null,
+          name:         c.name       ?? null,
+          shortName:    c.shortName  ?? null,
+          isBusiness:   c.isBusiness,
+          isEnterprise: c.isEnterprise,
+          isBlocked:    c.isBlocked,
+          isMe:         c.isMe,
+          isMyContact:  c.isMyContact,
+          isWAContact:  c.isWAContact,
+          isUser:       c.isUser,
+          isGroup:      c.isGroup,
+        };
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * Get the profile picture URL of a contact.
+     * Uses Contact#getProfilePicUrl() — respects privacy settings.
+     * @param {string} contactId
+     * @returns {Promise<string|null>}
+     */
+    async getProfilePicUrl(contactId) {
+      try {
+        const c = await client.getContactById(contactId);
+        return await c.getProfilePicUrl();
+      } catch {
+        return null;
+      }
+    },
+
+    /**
+     * Get the "about" text of a contact.
+     * Returns null if privacy settings block access.
+     * @param {string} contactId
+     * @returns {Promise<string|null>}
+     */
+    async getAbout(contactId) {
+      try {
+        const c = await client.getContactById(contactId);
+        return await c.getAbout();
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
 // ── Internal media helpers ───────────────────────────────────────────────────
 
 function mediaFromSource(source, mimetype = "image/webp") {
@@ -217,6 +281,7 @@ function buildBaseApi(client, pluginRegistry) {
     download: buildDownloadApi(),
     plugins:  buildPluginsApi(pluginRegistry),
     botId:    client.info?.wid?._serialized ?? null,
+    contacts: buildContactsApi(),
     ...buildSendToApi(client),
   };
 }
