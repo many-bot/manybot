@@ -359,6 +359,10 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       async react(emoji) {
         return msg.react(emoji);
       },
+
+      async getContact() {
+        return msg.getContact();
+      },
     },
 
     // ── chat ─────────────────────────────────────────────────
