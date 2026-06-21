@@ -226,9 +226,9 @@ function makeSender(target) {
       const media = MessageMedia.fromFilePath(filePath);
       return target.sendMessage(media, { caption });
     },
-    async audio(filePath) {
+    async audio(filePath, { asVoice = true } = {}) {
       const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { sendAudioAsVoice: true });
+      return target.sendMessage(media, { sendAudioAsVoice: asVoice });
     },
     async sticker(source) {
       const media = mediaFromSource(source);
