@@ -15,6 +15,7 @@ import { logger }        from "#logger";
 import { t }             from "#i18n";
 import { pathToFileURL } from "url";
 import { PATHS }         from "#config";
+import { buildStorageApi } from "#manyapi";
 
 const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
 
@@ -63,10 +64,11 @@ export async function loadPlugins(activePlugins) {
  *
  * @param {object} api — api without message context (only sendTo, log, schedule...)
  */
-export async function setupPlugins(api) {
+export async function setupPlugins(baseApi) {
   for (const plugin of pluginRegistry.values()) {
     if (plugin.status !== "active" || !plugin.setup) continue;
     try {
+      const api = { ...baseApi, storage: buildStorageApi(plugin.name) };
       await plugin.setup(api);
     } catch (err) {
       logger.error(t("system.pluginSetupFailed", { name: plugin.name, message: err.message }));

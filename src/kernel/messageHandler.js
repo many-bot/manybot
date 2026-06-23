@@ -26,14 +26,10 @@ export async function handleMessage(msg) {
 
   if (CHATS.length > 0 && !CHATS.includes(chatId)) return;
 
-  const ctx = buildApi({
-    msg,
-    chat,
-    client,
-    pluginRegistry
-  });
+  const baseCtx = buildApi({ msg, chat, client, pluginRegistry });
 
   for (const plugin of pluginRegistry.values()) {
+    const ctx = { ...baseCtx, storage: buildStorageApi(plugin.name) };
     await runPlugin(plugin, ctx);
   }
 }

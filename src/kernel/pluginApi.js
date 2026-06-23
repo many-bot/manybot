@@ -5,19 +5,43 @@
  * Plugins can only do what's here — never touch client directly.
  *
  * `chat` is already filtered by kernel (only allowed chats from .conf),
- * so plugins don't need and can't choose destination.
+ * so plugins don't need and can't choose destination, unless they use sendTo.
  */
 
 import { logger }                              from "#logger";
 import { t, createPluginT, reloadTranslations,
          getCurrentLang }                      from "#i18n";
-import { CONFIG }                              from "#config";
+import { CONFIG, CONFIG_DIR }                  from "#config";
 import { enqueue }                             from "#download";
 import { emptyFolder }                         from "#utils/file";
 import { getChatId }                           from "#utils/getChatId";
 import pkg                                     from "whatsapp-web.js";
+import { mkdirSync }                           from "fs";
 
 const { MessageMedia } = pkg;
+
+// ── Storage API ──────────────────────────────────────────────────────────────
+
+export function buildStorageApi(pluginName) {
+  const dir = path.join(CONFIG_DIR, "data", pluginName);
+  mkdirSync(dir, { recursive: true });
+  
+  return {
+    dir,
+
+    /**
+     * Resolves a path inside data directory.
+     * Make subdirectories automatically.
+     * @param {string} relativePath
+     * @returns {string}
+     */
+    path(relativePath) {
+      const resolved = path.join(dir, relativePath);
+      mkdirSync(path.dirname(resolved), { recursive: true });
+      return resolved;
+    },
+  };
+}
 
 // ── Config API ───────────────────────────────────────────────────────────────
 
@@ -136,7 +160,32 @@ const log = {
   success: (...a) => logger.success(...a),
 };
 
-// -- Contact API --------------------------------------------------------------
+// ── Contact API ──────────────────────────────────────────────────────────────
+
+/**
+ * Normalizes a raw whatsapp-web.js Contact into a plain object.
+ * Used internally so both ctx.contacts and ctx.msg.getContact()
+ * always return the same shape.
+ * @param {import("whatsapp-web.js").Contact} c
+ * @returns {object}
+ */
+function normalizeContact(c) {
+  return {
+    id:           c.id._serialized,
+    number:       c.number,
+    pushname:     c.pushname   ?? null,
+    name:         c.name       ?? null,
+    shortName:    c.shortName  ?? null,
+    isBusiness:   c.isBusiness,
+    isEnterprise: c.isEnterprise,
+    isBlocked:    c.isBlocked,
+    isMe:         c.isMe,
+    isMyContact:  c.isMyContact,
+    isWAContact:  c.isWAContact,
+    isUser:       c.isUser,
+    isGroup:      c.isGroup,
+  };
+}
 
 function buildContactsApi(client) {
   return {
@@ -148,21 +197,7 @@ function buildContactsApi(client) {
     async get(contactId) {
       try {
         const c = await client.getContactById(contactId);
-        return {
-          id:           c.id._serialized,
-          number:       c.number,
-          pushname:     c.pushname   ?? null,
-          name:         c.name       ?? null,
-          shortName:    c.shortName  ?? null,
-          isBusiness:   c.isBusiness,
-          isEnterprise: c.isEnterprise,
-          isBlocked:    c.isBlocked,
-          isMe:         c.isMe,
-          isMyContact:  c.isMyContact,
-          isWAContact:  c.isWAContact,
-          isUser:       c.isUser,
-          isGroup:      c.isGroup,
-        };
+        return normalizeContact(c);
       } catch {
         return null;
       }
@@ -170,7 +205,7 @@ function buildContactsApi(client) {
 
     /**
      * Get the profile picture URL of a contact.
-     * Uses Contact#getProfilePicUrl() — respects privacy settings.
+     * Respects privacy settings — may return null.
      * @param {string} contactId
      * @returns {Promise<string|null>}
      */
@@ -202,7 +237,11 @@ function buildContactsApi(client) {
 
 // ── Internal media helpers ───────────────────────────────────────────────────
 
-function mediaFromSource(source, mimetype = "image/webp") {
+/**
+ * @param {string|Buffer} source
+ * @param {string} mimetype — required, no ambiguous default
+ */
+function mediaFromSource(source, mimetype) {
   return typeof source === "string"
     ? MessageMedia.fromFilePath(source)
     : new MessageMedia(mimetype, source.toString("base64"));
@@ -210,7 +249,6 @@ function mediaFromSource(source, mimetype = "image/webp") {
 
 /**
  * Returns send methods bound to a target that exposes `.sendMessage()`.
- * Used for both current-chat and sendTo variants.
  * @param {{ sendMessage: Function }} target
  */
 function makeSender(target) {
@@ -231,7 +269,7 @@ function makeSender(target) {
       return target.sendMessage(media, { sendAudioAsVoice: asVoice });
     },
     async sticker(source) {
-      const media = mediaFromSource(source);
+      const media = mediaFromSource(source, "image/webp");
       return target.sendMessage(media, { sendMediaAsSticker: true });
     },
   };
@@ -244,34 +282,93 @@ function chatIdTarget(client, chatId) {
   };
 }
 
-// ── Send APIs ────────────────────────────────────────────────────────────────
+// ── Send API ─────────────────────────────────────────────────────────────────
 
-/** Send to a specific chat by ID. Available in both setup and runtime. */
-function buildSendToApi(client) {
+/**
+ * Runtime send API — current chat + .to() for other chats.
+ *
+ * ctx.send.text("oi")
+ * ctx.send.image("./foto.jpg", "legenda")
+ * ctx.send.to("5511@c.us").text("oi")
+ */
+function buildSendApi(chat, client) {
+  const current = makeSender(chat);
+
   return {
-    sendTo:        (chatId, text, opts)        => client.sendMessage(chatId, text, opts),
-    sendImageTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).image(filePath, caption),
-    sendVideoTo:   (chatId, filePath, caption) => makeSender(chatIdTarget(client, chatId)).video(filePath, caption),
-    sendAudioTo:   (chatId, filePath)          => makeSender(chatIdTarget(client, chatId)).audio(filePath),
-    sendStickerTo: (chatId, source)            => makeSender(chatIdTarget(client, chatId)).sticker(source),
+    send: {
+      text:    (text, opts)        => current.text(text, opts),
+      image:   (filePath, caption) => current.image(filePath, caption),
+      video:   (filePath, caption) => current.video(filePath, caption),
+      audio:   (filePath, opts)    => current.audio(filePath, opts),
+      sticker: (source)            => current.sticker(source),
+
+      /**
+       * Returns a sender bound to another chat.
+       * @param {string} chatId
+       * @returns {{ text, image, video, audio, sticker }}
+       */
+      to: (chatId) => makeSender(chatIdTarget(client, chatId)),
+    },
   };
 }
 
-/** Send to the current chat. Only available in runtime. */
-function buildSendApi(chat) {
-  const sender = makeSender(chat);
+/**
+ * Setup send API — no current chat, only .to().
+ *
+ * ctx.send.to(adminChatId).text("bot iniciado")
+ */
+function buildSetupSendApi(client) {
   return {
-    send:        (text, opts)        => sender.text(text, opts),
-    sendImage:   (filePath, caption) => sender.image(filePath, caption),
-    sendVideo:   (filePath, caption) => sender.video(filePath, caption),
-    sendAudio:   (filePath)          => sender.audio(filePath),
-    sendSticker: (source)            => sender.sticker(source),
+    send: {
+      to: (chatId) => makeSender(chatIdTarget(client, chatId)),
+    },
+  };
+}
+
+// ── Events API (setup only) ───────────────────────────────────────────────────
+
+function buildEventsApi(client) {
+  return {
+    /**
+     * Registers a persistent listener for a client event.
+     * Returns an 'off()' function to cancel the listener when the plugin wants.
+     *
+     * @param {string}   event
+     * @param {Function} handler
+     * @returns {Function} off
+     *
+     * @example
+     * const off = ctx.events.on("group_join", (notification) => { ... });
+     * // cancels when the plugin doesn't want anymore:
+     * off();
+     */
+    on(event, handler) {
+      client.on(event, handler);
+      return () => client.off(event, handler);
+    },
+
+    /**
+     * Returns a Promise that resolves on the next ocurrence of the event.
+     * Useful for waiting a specific event without having to manage listeners manually.
+     *
+     * @param {string} event
+     * @returns {Promise<any>}
+     *
+     * @example
+     * const notification = await ctx.events.once("group_join");
+     */
+    once(event) {
+      return new Promise((resolve) => client.once(event, resolve));
+    }
   };
 }
 
 // ── Base API (shared between setup and runtime) ───────────────────────────────
 
-function buildBaseApi(client, pluginRegistry) {
+function buildBaseApi(client, pluginRegistry, pluginName) {
+  const botId = client.info?.wid?._serialized ?? null;
+  if (!botId) logger.warn("[pluginApi] botId is null - client may not be ready yet.");
+
   return {
     log,
     t,
@@ -280,9 +377,9 @@ function buildBaseApi(client, pluginRegistry) {
     utils:    buildUtilsApi(),
     download: buildDownloadApi(),
     plugins:  buildPluginsApi(pluginRegistry),
-    botId:    client.info?.wid?._serialized ?? null,
-    contacts: buildContactsApi(),
-    ...buildSendToApi(client),
+    contacts: buildContactsApi(client),
+    storage:  buildStorageApi(pluginName),
+    botId,
   };
 }
 
@@ -296,9 +393,11 @@ function buildBaseApi(client, pluginRegistry) {
  * @param {Map<string, any>} pluginRegistry
  * @returns {object}
  */
-export function buildSetupApi(client, pluginRegistry) {
+export function buildSetupApi(client, pluginRegistry, pluginName) {
   return {
-    ...buildBaseApi(client, pluginRegistry),
+    ...buildBaseApi(client, pluginRegistry, pluginName),
+    ...buildSetupSendApi(client),
+    events: buildEventsApi(client),
   };
 }
 
@@ -316,9 +415,15 @@ export function buildSetupApi(client, pluginRegistry) {
  * @returns {object} ctx
  */
 export function buildApi({ msg, chat, client, pluginRegistry }) {
+  const prefix  = CONFIG.CMD_PREFIX ?? "!";
+  const rawArgs = msg.body?.trim().split(/\s+/) ?? [];
+  const command = rawArgs[0]?.toLowerCase().startsWith(prefix)
+    ? rawArgs[0].slice(prefix.length).toLowerCase()
+    : rawArgs[0]?.toLowerCase() ?? "";
+
   return {
     ...buildBaseApi(client, pluginRegistry),
-    ...buildSendApi(chat),
+    ...buildSendApi(chat, client),
 
     // ── msg ──────────────────────────────────────────────────
 
@@ -328,11 +433,18 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       fromMe:     msg.fromMe,
       sender:     msg.author || msg.from,
       senderName: msg._data?.notifyName || String(msg.from).replace(/(:\d+)?@.*$/, ""),
-      args:       msg.body?.trim().split(/\s+/) ?? [],
 
-      /** Check if message starts with a command. */
+      /** Command token without prefix (e.g. "play" for "!play foo"). */
+      command,
+
+      /** Arguments after the command token. */
+      args: rawArgs.slice(1),
+
+      /**
+       * Check if message is a given command.
+       * @param {string} cmd — without prefix
+       */
       is(cmd) {
-        const command = msg.body?.trim().split(/\s+/)[0].toLowerCase();
         return command === cmd.toLowerCase();
       },
 
@@ -360,8 +472,18 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
         return msg.react(emoji);
       },
 
+      /**
+       * Get the sender as a normalized Contact object.
+       * Same shape as ctx.contacts.get().
+       * @returns {Promise<object|null>}
+       */
       async getContact() {
-        return msg.getContact();
+        try {
+          const c = await msg.getContact();
+          return normalizeContact(c);
+        } catch {
+          return null;
+        }
       },
     },
 
@@ -371,6 +493,32 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       id:      chat.id._serialized,
       name:    chat.name || chat.id.user,
       isGroup: /@g\.us$/.test(chat.id._serialized),
+
+      /**
+       * List of group participants.
+       * Returns [] for non-group chats.
+       * @returns {Promise<Array<{ id: string, isAdmin: boolean, isSuperAdmin: boolean }>>}
+       */
+      async getParticipants() {
+        if (!chat.participants) return [];
+        return chat.participants.map((p) => ({
+          id:           p.id._serialized,
+          isAdmin:      p.isAdmin,
+          isSuperAdmin: p.isSuperAdmin,
+        }));
+      },
+
+      /**
+       * Check if a contact is an admin of this group.
+       * Always returns false for non-group chats.
+       * @param {string} contactId
+       * @returns {Promise<boolean>}
+       */
+      async isAdmin(contactId) {
+        return chat.participants?.some(
+          (p) => p.id._serialized === contactId && (p.isAdmin || p.isSuperAdmin)
+        ) ?? false;
+      },
     },
   };
 }
