@@ -61,6 +61,7 @@
     "messageProcess": "Failed to process message",
     "stack": "Stack",
     "chromeNotFound": "Chrome not found. Downloading...",
-    "couldNotDownloadChrome": "Could not download Chrome: "
+    "couldNotDownloadChrome": "Could not download Chrome: ",
+    "OSNotSupported": "Unsupported operating system: {{os}}. If you have any questions, please visit: https://manybot.stxerr.dev/docs/getting-started/"
   }
 }
