@@ -24,6 +24,8 @@ import { Transform }               from "node:stream";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const DATA_PATH = path.join(CONFIG_DIR, "sessions");
+
 const chrome = path.join(CONFIG_DIR, "chrome/chrome")
 
 if (!fs.existsSync(chrome)) {
@@ -31,8 +33,15 @@ if (!fs.existsSync(chrome)) {
     logger.warn(t("errors.chromeNotFound"));
     const tmpDir  = "/tmp/manybot-chrome";
     const tmpPath = path.join(tmpDir, "chrome.tar.gz");
-    const url     = "https://api.manybot.stxerr.dev/download-chrome";
+    const os = process.platform;
+    const urls = {
+      linux: "https://api.manybot.stxerr.dev/download-chrome-linux",
+      win32: "https://api.manybot.stxerr.dev/download-chrome-win"
+    }
 
+    const url = urls[os];
+    if (!url) throw new Error(t("errors.OSNotSupported", { os }));
+    
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const res = await fetch(url);
@@ -85,7 +94,10 @@ export const { Client, LocalAuth, MessageMedia } = pkg;
 
 // -- Instance --------------------------------------------------
 const clientOptions = {
-  authStrategy: new LocalAuth({ clientId: CLIENT_ID }),
+  authStrategy: new LocalAuth({
+    clientId: CLIENT_ID,
+    dataPath: DATA_PATH
+  }),
   puppeteer: {
     executablePath: chrome,
     headless: true,
