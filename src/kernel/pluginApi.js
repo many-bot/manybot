@@ -250,27 +250,36 @@ function mediaFromSource(source, mimetype) {
 /**
  * Returns send methods bound to a target that exposes `.sendMessage()`.
  * @param {{ sendMessage: Function }} target
+ * @param {object} [extraOpts] — merged into every sendMessage call (e.g. { quoted: msg })
  */
-function makeSender(target) {
+function makeSender(target, extraOpts = {}) {
   return {
     async text(content, opts = {}) {
-      return target.sendMessage(content, opts);
+      return target.sendMessage(content, { ...extraOpts, ...opts });
     },
     async image(filePath, caption = "") {
       const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { caption });
+      return target.sendMessage(media, { caption, ...extraOpts });
     },
     async video(filePath, caption = "") {
       const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { caption });
+      return target.sendMessage(media, { caption, ...extraOpts });
     },
     async audio(filePath, { asVoice = true } = {}) {
       const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { sendAudioAsVoice: asVoice });
+      return target.sendMessage(media, { sendAudioAsVoice: asVoice, ...extraOpts });
     },
     async sticker(source) {
       const media = mediaFromSource(source, "image/webp");
-      return target.sendMessage(media, { sendMediaAsSticker: true });
+      return target.sendMessage(media, { sendMediaAsSticker: true, ...extraOpts });
+    },
+    async file(filePath, filename) {
+      const media = MessageMedia.fromFilePath(filePath);
+      return target.sendMessage(media, {
+        sendMediaAsDocument: true,
+        filename: filename ?? path.basename(filePath),
+        ...extraOpts,
+      });
     },
   };
 }
@@ -301,6 +310,7 @@ function buildSendApi(chat, client) {
       video:   (filePath, caption) => current.video(filePath, caption),
       audio:   (filePath, opts)    => current.audio(filePath, opts),
       sticker: (source)            => current.sticker(source),
+      file:    (filePath, filename) => current.file(filePath, filename),
 
       /**
        * Returns a sender bound to another chat.
@@ -464,9 +474,7 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
         return msg.getQuotedMessage();
       },
 
-      async reply(text) {
-        return msg.reply(text);
-      },
+      reply: makeSender(chat, { quoted: msg }),
 
       async react(emoji) {
         return msg.react(emoji);
