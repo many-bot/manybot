@@ -12,7 +12,7 @@
 
 ---
 
-ManyBot is a free and open-source messaging automation ecosystem for online businesses and communities.
+Open-source framework for message automation, extensible via community plugins.
 
 ## Requirements
 
