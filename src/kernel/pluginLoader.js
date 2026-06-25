@@ -15,7 +15,7 @@ import { logger }        from "#logger";
 import { t }             from "#i18n";
 import { pathToFileURL } from "url";
 import { PATHS }         from "#config";
-import { buildStorageApi } from "#manyapi";
+import { buildSetupApi } from "#manyapi";
 
 const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
 
@@ -64,33 +64,59 @@ export async function loadPlugins(activePlugins) {
  *
  * @param {object} api — api without message context (only sendTo, log, schedule...)
  */
-export async function setupPlugins(baseApi) {
+export async function setupPlugins(client) {
   for (const plugin of pluginRegistry.values()) {
-    if (plugin.status !== "active" || !plugin.setup) continue;
+    if (plugin.status !== "active" || !plugin.setup)
+      continue;
+  
     try {
-      const api = { ...baseApi, storage: buildStorageApi(plugin.name) };
+      const api = buildSetupApi(
+        client,
+        pluginRegistry,
+        plugin.name
+      );
+  
       await plugin.setup(api);
+  
     } catch (err) {
-      logger.error(t("system.pluginSetupFailed", { name: plugin.name, message: err.message }));
+      logger.error(
+        t("system.pluginSetupFailed", {
+          name: plugin.name,
+          message: err.message
+        })
+      );
     }
   }
 }
 
 async function findPluginPath(name) {
-  // key direto: synt-xerror/figurinha
-  const direct = path.join(PLUGINS_DIR, name, "index.js");
-  if (fs.existsSync(direct)) return direct;
+  const dir = path.join(PLUGINS_DIR, name);
+  const manifest = path.join(dir, "manyplug.json");
 
-  // nome simples em subdir: plugins/synt-xerror/figurinha
-  if (!fs.existsSync(PLUGINS_DIR)) return null;
-  for (const entry of fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const nested = path.join(PLUGINS_DIR, entry.name, name, "index.js");
-    if (fs.existsSync(nested)) return nested;
-  }
+  if (!fs.existsSync(manifest))
+    return null;
 
-  return null;
+  const { main = "index.js" } =
+    JSON.parse(
+      await fs.promises.readFile(
+        manifest,
+        "utf8"
+      )
+    );
+
+  const entry =
+    path.join(
+      dir,
+      main
+    );
+
+  return (
+    fs.existsSync(entry)
+      ? entry
+      : null
+  );
 }
+
 /**
  * Carrega um único plugin pelo nome.
  * @param {string} name
@@ -121,14 +147,31 @@ async function loadPlugin(name) {
       name,
       status:  "active",
       run:     mod.default,
-      setup:   mod.setup ?? null,     // opcional — chamado uma vez na inicialização
+      setup:   mod.setup ?? null,
       exports: mod.api ?? null,
       error:   null,
+      guardOptions: mod.guardOptions ?? {},
     });
 
     logger.info(t("system.pluginLoaded", { name }));
   } catch (err) {
     logger.error(t("system.pluginLoadFailed", { name, message: err.message }));
     pluginRegistry.set(name, { name, status: "error", run: null, exports: null, error: err });
+  }
+}
+
+export async function cleanupPlugins() {
+  for (const plugin of pluginRegistry.values()) {
+    try {
+      await plugin.exports?.events?.cleanup?.();
+
+    } catch (err) {
+      logger.error(
+        t("system.pluginCleanupFailed", {
+          name: plugin.name,
+          message: err.message
+        })
+      );
+    }
   }
 }
