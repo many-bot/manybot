@@ -2,36 +2,77 @@
  * pluginGuard.js
  *
  * Runs a plugin safely.
- * If plugin throws an error:
- *   - Logs error with context
- *   - Marks plugin as "error" in registry
+ *
+ * Protections:
+ *   - Hard timeout per plugin run (prevents infinite hangs from locking the queue)
+ *   - Catches and logs all errors with structured context
+ *   - Marks errored plugins so they are silently skipped from then on
  *   - Never crashes the bot
  *
- * Disabled or errored plugins are silently ignored.
+ * Per-plugin overrides:
+ *   Plugins may export a `guardOptions` object to opt out of specific
+ *   protections. The pluginLoader is responsible for reading this export
+ *   and storing it as `plugin.guardOptions` in the registry entry.
+ *
+ *   Supported keys:
+ *     timeout {boolean}  — set to `false` to disable the hard timeout.
+ *                          Use only for plugins that intentionally block
+ *                          (e.g. heavy media processing, sticker generation).
  */
-
 import { logger }         from "#logger";
-import { t }              from "#i18n";
 import { pluginRegistry } from "#kernel/pluginLoader";
+
+/** Max ms a single plugin run is allowed to take before it's force-aborted. */
+const PLUGIN_TIMEOUT_MS = 120_000;
+
+/**
+ * Races `promise` against a timeout rejection.
+ * @param {Promise}  promise
+ * @param {number}   ms
+ * @param {string}   pluginName
+ */
+function withTimeout(promise, ms, pluginName) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`timed out after ${ms}ms`)),
+        ms
+      )
+    ),
+  ]);
+}
 
 /**
  * @param {object} plugin   — pluginRegistry entry
  * @param {object} context  — buildApi ctx
+ *
+ * plugin.guardOptions (optional, read from plugin's own export):
+ *   @param {boolean} [plugin.guardOptions.timeout=true]
  */
 export async function runPlugin(plugin, context) {
   if (plugin.status !== "active") return;
 
+  const useTimeout = plugin.guardOptions?.timeout !== false;
+
   try {
-    await plugin.run(context);
+    const run = plugin.run(context);
+    await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
   } catch (err) {
-    // Disable plugin to prevent further breakage
     plugin.status = "error";
     plugin.error  = err;
     pluginRegistry.set(plugin.name, plugin);
 
-    logger.error(
-      t("system.pluginDisabledAfterError", { name: plugin.name, message: err.message }),
-      `\n             ${t("errors.stack")}: ${err.stack?.split("\n")[1]?.trim() ?? ""}`
-    );
+    const isTimeout = useTimeout && err.message?.startsWith("timed out");
+    const headline  = isTimeout
+      ? `[pluginGuard] Plugin "${plugin.name}" forcibly stopped: ${err.message}`
+      : `[pluginGuard] Plugin "${plugin.name}" threw an unhandled error and was disabled`;
+
+    logger.error(headline);
+    logger.error(`  message : ${err.message}`);
+    if (!isTimeout) {
+      const frame = err.stack?.split("\n")[1]?.trim() ?? "(no stack)";
+      logger.error(`  at      : ${frame}`);
+    }
   }
 }
