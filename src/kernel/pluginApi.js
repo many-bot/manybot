@@ -18,6 +18,8 @@ import { getChatId }                           from "#utils/getChatId";
 import pkg                                     from "whatsapp-web.js";
 import { mkdirSync }                           from "fs";
 import path                                    from "path";
+import { waitForSendSlot, simulateState,
+         typingDuration, mediaDuration }       from "#sendguard";
 
 const { MessageMedia } = pkg;
 
@@ -269,31 +271,64 @@ function mediaFromSource(source, mimetype) {
 
 /**
  * Returns send methods bound to a target that exposes `.sendMessage()`.
+ *
  * @param {{ sendMessage: Function }} target
- * @param {object} [extraOpts] — merged into every sendMessage call (e.g. { quoted: msg })
+ * @param {object}      [extraOpts]  — merged into every sendMessage call (e.g. { quoted: msg })
+ * @param {string|null} [chatId]     — serialized chat ID; enables sendGuard when set
+ * @param {object|null} [chatObj]    — real Chat object; enables typing indicator when set
  */
-function makeSender(target, extraOpts = {}) {
+function makeSender(target, extraOpts = {}, chatId = null, chatObj = null, { cooldown = true, jitter = true } = {}) {
   return {
     async text(content, opts = {}) {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        await simulateState(chatObj, typingDuration(content), "typing");
+      }
       return target.sendMessage(content, { ...extraOpts, ...opts });
     },
+
     async image(filePath, caption = "") {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        await simulateState(chatObj, mediaDuration(), "typing");
+      }
       const media = MessageMedia.fromFilePath(filePath);
       return target.sendMessage(media, { caption, ...extraOpts });
     },
+
     async video(filePath, caption = "") {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        await simulateState(chatObj, mediaDuration(), "typing");
+      }
       const media = MessageMedia.fromFilePath(filePath);
       return target.sendMessage(media, { caption, ...extraOpts });
     },
+
     async audio(filePath, { asVoice = true } = {}) {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        // "gravando áudio…" é mais convincente que "digitando…" para áudio
+        await simulateState(chatObj, mediaDuration(), "recording");
+      }
       const media = MessageMedia.fromFilePath(filePath);
       return target.sendMessage(media, { sendAudioAsVoice: asVoice, ...extraOpts });
     },
+
     async sticker(source) {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        await simulateState(chatObj, mediaDuration(), "typing");
+      }
       const media = mediaFromSource(source, "image/webp");
       return target.sendMessage(media, { sendMediaAsSticker: true, ...extraOpts });
     },
+
     async file(filePath, filename) {
+      if (chatId) {
+        await waitForSendSlot(chatId, { cooldown, jitter });
+        await simulateState(chatObj, mediaDuration(), "typing");
+      }
       const media = MessageMedia.fromFilePath(filePath);
       return target.sendMessage(media, {
         sendMediaAsDocument: true,
@@ -320,28 +355,28 @@ function chatIdTarget(client, chatId) {
  * ctx.send.image("./foto.jpg", "legenda")
  * ctx.send.to("5511@c.us").text("oi")
  */
-function buildSendApi(chat, client) {
-  const current = makeSender(chat);
-
+function buildSendApi(chat, client, guardOptions = {}) {
+  const chatId  = chat.id._serialized;
+  const { cooldown = true, jitter = true } = guardOptions;
+  const current = makeSender(chat, {}, chatId, chat, { cooldown, jitter });
   return {
     send: {
-      text:    (text, opts)        => current.text(text, opts),
-      image:   (filePath, caption) => current.image(filePath, caption),
-      video:   (filePath, caption) => current.video(filePath, caption),
-      audio:   (filePath, opts)    => current.audio(filePath, opts),
-      sticker: (source)            => current.sticker(source),
+      text:    (text, opts)         => current.text(text, opts),
+      image:   (filePath, caption)  => current.image(filePath, caption),
+      video:   (filePath, caption)  => current.video(filePath, caption),
+      audio:   (filePath, opts)     => current.audio(filePath, opts),
+      sticker: (source)             => current.sticker(source),
       file:    (filePath, filename) => current.file(filePath, filename),
-
       /**
        * Returns a sender bound to another chat.
-       * @param {string} chatId
-       * @returns {{ text, image, video, audio, sticker }}
+       * Typing simulation is skipped (no Chat object available without a fetch).
+       * @param {string} targetChatId
        */
-      to: (chatId) => makeSender(chatIdTarget(client, chatId)),
+      to: (targetChatId) =>
+        makeSender(chatIdTarget(client, targetChatId), {}, targetChatId, null),
     },
   };
 }
-
 /**
  * Setup send API — no current chat, only .to().
  *
