@@ -45,6 +45,7 @@
     "#client/*": "./src/client/*.js",
     "#kernel/*": "./src/kernel/*.js",
     "#manyapi": "./src/kernel/pluginApi.js",
+    "#sendguard": "./src/kernel/sendGuard.js",
     "#logger": "./src/logger/logger.js",
     "#utils/*": "./src/utils/*.js",
     "#i18n": "./src/i18n/index.js",
