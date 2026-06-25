@@ -14,6 +14,7 @@ export const logger = {
   success: (...a) => console.log(`${c.green }OK    ${c.reset}`, ...a),
   warn:    (...a) => console.log(`${c.yellow}WARN  ${c.reset}`, ...a),
   error:   (...a) => console.log(`${c.red   }ERROR ${c.reset}`, ...a),
+  debug:   (...a) => console.log(`${c.blue  }DEBUG ${c.reset}`, ...a),
 
   cmd: (cmd, extra = "") =>
     console.log(
