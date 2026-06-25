@@ -385,46 +385,82 @@ function buildSendApi(chat, client, guardOptions = {}) {
 function buildSetupSendApi(client) {
   return {
     send: {
-      to: (chatId) => makeSender(chatIdTarget(client, chatId)),
+      to: (targetChatId) =>
+        makeSender(chatIdTarget(client, targetChatId), {}, targetChatId, null),
     },
   };
 }
 
 // ── Events API (setup only) ───────────────────────────────────────────────────
 
-function buildEventsApi(client) {
+/**
+ * @param {import("whatsapp-web.js").Client} client
+ * @param {string} pluginName
+ */
+const listenerRegistry = new Map();
+
+function buildEventsApi(client, pluginName) {
   return {
-    /**
-     * Registers a persistent listener for a client event.
-     * Returns an 'off()' function to cancel the listener when the plugin wants.
-     *
-     * @param {string}   event
-     * @param {Function} handler
-     * @returns {Function} off
-     *
-     * @example
-     * const off = ctx.events.on("group_join", (notification) => { ... });
-     * // cancels when the plugin doesn't want anymore:
-     * off();
-     */
     on(event, handler) {
       client.on(event, handler);
-      return () => client.off(event, handler);
+
+      if (!listenerRegistry.has(pluginName)) {
+        listenerRegistry.set(pluginName, new Set());
+      }
+
+      const ref = { event, handler };
+
+      listenerRegistry
+        .get(pluginName)
+        .add(ref);
+
+      return () => {
+        client.off(event, handler);
+
+        listenerRegistry
+          .get(pluginName)
+          ?.delete(ref);
+
+        if (
+          listenerRegistry
+            .get(pluginName)
+            ?.size === 0
+        ) {
+          listenerRegistry.delete(pluginName);
+        }
+      };
     },
 
-    /**
-     * Returns a Promise that resolves on the next ocurrence of the event.
-     * Useful for waiting a specific event without having to manage listeners manually.
-     *
-     * @param {string} event
-     * @returns {Promise<any>}
-     *
-     * @example
-     * const notification = await ctx.events.once("group_join");
-     */
-    once(event) {
-      return new Promise((resolve) => client.once(event, resolve));
-    }
+  once(event) {
+    return new Promise((resolve) => {
+      const off =
+        this.on(
+          event,
+          (data) => {
+            off();
+            resolve(data);
+          }
+        );
+    });
+  },
+
+    cleanup() {
+      const list =
+        listenerRegistry.get(pluginName);
+
+      if (!list) return;
+
+      for (const {
+        event,
+        handler
+      } of list) {
+        client.off(
+          event,
+          handler
+        );
+      }
+      listenerRegistry.delete(pluginName);
+    },
   };
 }
 
@@ -455,14 +491,15 @@ function buildBaseApi(client, pluginRegistry, pluginName) {
  * Passed to plugin.setup(ctx) during initialization.
  *
  * @param {import("whatsapp-web.js").Client} client
- * @param {Map<string, any>} pluginRegistry
+ * @param {Map<string, any>}                 pluginRegistry
+ * @param {string}                           pluginName
  * @returns {object}
  */
-export function buildSetupApi(client, pluginRegistry, pluginName) {
+export function buildSetupApi(client, pluginRegistry, pluginName ) {
   return {
     ...buildBaseApi(client, pluginRegistry, pluginName),
     ...buildSetupSendApi(client),
-    events: buildEventsApi(client),
+    events: buildEventsApi(client, pluginName),
   };
 }
 
