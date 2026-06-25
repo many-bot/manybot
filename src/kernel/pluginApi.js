@@ -17,26 +17,49 @@ import { emptyFolder }                         from "#utils/file";
 import { getChatId }                           from "#utils/getChatId";
 import pkg                                     from "whatsapp-web.js";
 import { mkdirSync }                           from "fs";
+import path                                    from "path";
 
 const { MessageMedia } = pkg;
 
 // ── Storage API ──────────────────────────────────────────────────────────────
 
 export function buildStorageApi(pluginName) {
+  if (typeof pluginName !== "string" || pluginName.trim() === "") {
+    throw new Error("[storage] buildStorageApi: pluginName must be a non-empty string");
+  }
+
   const dir = path.join(CONFIG_DIR, "data", pluginName);
   mkdirSync(dir, { recursive: true });
-  
+
   return {
     dir,
 
     /**
-     * Resolves a path inside data directory.
-     * Make subdirectories automatically.
+     * Resolves a path inside the plugin's data directory.
+     * Creates subdirectories automatically.
      * @param {string} relativePath
      * @returns {string}
      */
-    path(relativePath) {
+    resolve(relativePath) {
+      if (!relativePath || typeof relativePath !== "string") {
+        throw new Error(`[storage] resolve() requires a non-empty string, got: ${typeof relativePath}`);
+      }
+      if (relativePath.includes("..")) {
+        throw new Error(`[storage] path traversal detected in: "${relativePath}"`);
+      }
+      if (path.isAbsolute(relativePath)) {
+        throw new Error(`[storage] absolute paths are not allowed: "${relativePath}"`);
+      }
+      if (relativePath.includes("\\")) {
+        throw new Error(`[storage] Windows-style paths are not allowed: "${relativePath}"`);
+      }
+
       const resolved = path.join(dir, relativePath);
+
+      if (!resolved.startsWith(path.resolve(dir) + path.sep)) {
+        throw new Error(`[storage] resolved path escapes plugin data dir: "${resolved}"`);
+      }
+
       mkdirSync(path.dirname(resolved), { recursive: true });
       return resolved;
     },
@@ -55,9 +78,6 @@ function buildConfigApi() {
     get(key, defaultValue = null) {
       return CONFIG[key] ?? defaultValue;
     },
-
-    /** Full config object — read only. */
-    all: CONFIG,
   };
 }
 
