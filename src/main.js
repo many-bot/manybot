@@ -16,12 +16,10 @@ Module._initPaths();
 import client, { handleQR, handlePairingCode } from "#client/whatsappClient";
 import { handleMessage }                       from "#kernel/messageHandler";
 import { loadPlugins, setupPlugins }           from "#kernel/pluginLoader";
-import { buildSetupApi }                       from "#manyapi";
 import { logger }                              from "#logger";
-import { PLUGINS }                             from "#config";
+import { PLUGINS, CLIENT_ID }                  from "#config";
 import { t }                                   from "#i18n";
 import { printBanner }                         from "#client/banner";
-import { CLIENT_ID }                           from "#config";
 
 logger.info(t("bot.starting"));
 
@@ -37,10 +35,27 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // Clean shutdown
-process.on("SIGTERM", async () => {
-  logger.error(t("bot.signal.sigterm"));
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown)
+    return;
+
+  shuttingDown = true;
+  logger.warn(
+    t("bot.signal.sigterm", {
+      signal
+    })
+  );
+
+  try {
+    await client.destroy();
+  } catch {}
+
   process.exit(0);
-});
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT",  () => shutdown("SIGINT"));
 
 let state = "BOOT";
 // BOOT → AUTH → SYNC → READY
@@ -48,6 +63,10 @@ let state = "BOOT";
 function setState(next) {
   state = next;
 }
+
+client.on("authenticated", () => {
+  setState("AUTH");
+});
 
 client.on("loading_screen", (p, msg) => {
   setState("SYNC");
@@ -63,7 +82,7 @@ client.on("ready", async () => {
   printBanner();
 
   await loadPlugins(PLUGINS);
-  await setupPlugins(buildSetupApi(client));
+  await setupPlugins(client);
 
   // buffer anti-replay / sync ghost messages
   setTimeout(() => {
@@ -79,17 +98,29 @@ client.on("message_create", async (msg) => {
   try {
     await handleMessage(msg);
   } catch (err) {
-    logger.error(err);
+    logger.error(
+      `${err.message}\n${err.stack}`
+    );
   }
 });
 
 client.on("disconnected", (reason) => {
-  logger.warn(t("system.disconnected", { reason }));
-  logger.info(t("system.reconnecting", { seconds: 5 }));
+
+  logger.warn(
+    t("system.disconnected", { reason })
+  );
+
+  if (
+    String(reason)
+      .includes("LOGOUT")
+  ) {
+    return;
+  }
+
   setTimeout(() => {
-    logger.info(t("system.reinitializing"));
     client.initialize();
   }, 5000);
+
 });
 
 // -- Events ----------------------------------------------------
