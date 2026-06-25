@@ -157,7 +157,7 @@ function buildPluginsApi(pluginRegistry) {
     require(name) {
       const plugin = pluginRegistry.get(name);
       if (!plugin || plugin.status !== "active") {
-        throw new Error(`Plugin dependency "${name}" does not exist or is not active.`);
+        throw new Error(`[plugins] dependency "${name}" does not exist or is not active`);
       }
       return plugin.exports;
     },
@@ -468,7 +468,7 @@ function buildEventsApi(client, pluginName) {
 
 function buildBaseApi(client, pluginRegistry, pluginName) {
   const botId = client.info?.wid?._serialized ?? null;
-  if (!botId) logger.warn("[pluginApi] botId is null - client may not be ready yet.");
+  if (!botId) logger.warn("[pluginApi] botId is null — client may not be ready yet.");
 
   return {
     log,
@@ -514,17 +514,21 @@ export function buildSetupApi(client, pluginRegistry, pluginName ) {
  * @param {import("whatsapp-web.js").Chat}    params.chat
  * @param {import("whatsapp-web.js").Client}  params.client
  * @param {Map<string, any>}                  params.pluginRegistry
+ * @param {string}                            params.pluginName
  * @returns {object} ctx
  */
-export function buildApi({ msg, chat, client, pluginRegistry }) {
-  const prefix  = CONFIG.CMD_PREFIX ?? "!";
+export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardOptions = {} }) {
+  const prefix  = CONFIG.CMD_PREFIX;
   const rawArgs = msg.body?.trim().split(/\s+/) ?? [];
-  const command = rawArgs[0]?.toLowerCase().startsWith(prefix)
-    ? rawArgs[0].slice(prefix.length).toLowerCase()
-    : rawArgs[0]?.toLowerCase() ?? "";
+  const first = rawArgs[0]?.toLowerCase() ?? "";
+  const hasPrefix = first.startsWith(prefix)
+  const command = hasPrefix ? first.slice(prefix.length) : "";
+
+  const chatId = chat.id._serialized;
+  const { cooldown = true, jitter = true } = guardOptions;
 
   return {
-    ...buildBaseApi(client, pluginRegistry),
+    ...buildBaseApi(client, pluginRegistry, pluginName),
     ...buildSendApi(chat, client),
 
     // ── msg ──────────────────────────────────────────────────
@@ -543,11 +547,11 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
       args: rawArgs.slice(1),
 
       /**
-       * Check if message is a given command.
-       * @param {string} cmd — without prefix
+       * Check if message matches a given command.
+       * @param {string} cmd
        */
       is(cmd) {
-        return command === cmd.toLowerCase();
+        return this.hasPrefix && command === cmd.toLowerCase();
       },
 
       hasMedia:  msg.hasMedia,
@@ -566,11 +570,13 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
         return msg.getQuotedMessage();
       },
 
-      reply: makeSender(chat, { quoted: msg }),
+      reply: makeSender(chat, { quotedMessageId: msg.id._serialized }, chatId, chat, { cooldown, jitter }),
 
       async react(emoji) {
         return msg.react(emoji);
       },
+
+      hasPrefix,
 
       /**
        * Get the sender as a normalized Contact object.
@@ -590,9 +596,9 @@ export function buildApi({ msg, chat, client, pluginRegistry }) {
     // ── chat ─────────────────────────────────────────────────
 
     chat: {
-      id:      chat.id._serialized,
+      id:      chatId,
       name:    chat.name || chat.id.user,
-      isGroup: /@g\.us$/.test(chat.id._serialized),
+      isGroup: /@g\.us$/.test(chatId),
 
       /**
        * List of group participants.
