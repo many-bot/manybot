@@ -20,20 +20,27 @@ import { extract }                 from "tar";
 import { pipeline }                from "node:stream/promises";
 import { Readable }                from "node:stream";
 import { Transform }               from "node:stream";
+const os = process.platform;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DATA_PATH = path.join(CONFIG_DIR, "sessions");
 
-const chrome = path.join(CONFIG_DIR, "chrome/chrome")
+const chromeDir = path.join(CONFIG_DIR, "chrome");
+
+const bins = {
+  linux: "chrome",
+  win32: "chrome.exe"
+}
+
+const chrome = path.join(chromeDir, bins[os]);
 
 if (!fs.existsSync(chrome)) {
   try {
     logger.warn(t("errors.chromeNotFound"));
     const tmpDir  = "/tmp/manybot-chrome";
     const tmpPath = path.join(tmpDir, "chrome.tar.gz");
-    const os = process.platform;
     const urls = {
       linux: "https://api.manybot.stxerr.dev/download-chrome-linux",
       win32: "https://api.manybot.stxerr.dev/download-chrome-win"
@@ -41,7 +48,7 @@ if (!fs.existsSync(chrome)) {
 
     const url = urls[os];
     if (!url) throw new Error(t("errors.OSNotSupported", { os }));
-    
+
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const res = await fetch(url);
@@ -77,7 +84,7 @@ if (!fs.existsSync(chrome)) {
       );
     } finally {
       clearInterval(spinner);
-      process.stderr.write("\r\x1b[2K"); // limpa a linha
+      process.stderr.write("\r\x1b[2K");
     }
 
     if (expected && received !== expected) {
