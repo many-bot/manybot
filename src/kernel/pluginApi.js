@@ -485,6 +485,25 @@ function buildSendApi(chat, client, guardOptions = {}) {
       audio:   (filePath, opts)     => current.audio(filePath, opts),
       sticker: (source)             => current.sticker(source),
       file:    (filePath, filename) => current.file(filePath, filename),
+      poll:    (q, opts, cfg)       => current.poll(q, opts, cfg),
+
+      /**
+       * Sends media that disappears after the recipient views it once.
+       * Only image, video and audio are supported.
+       *
+       * @example
+       * await ctx.send.viewOnce.image("/tmp/secret.jpg");
+       * await ctx.send.viewOnce.video("/tmp/clip.mp4", "assiste uma vez só");
+       */
+      viewOnce: (() => {
+        const vo = makeSender(chat, { viewOnce: true }, chatId, chat, { cooldown, jitter });
+        return {
+          image: (filePath, caption) => vo.image(filePath, caption),
+          video: (filePath, caption) => vo.video(filePath, caption),
+          audio: (filePath, opts)    => vo.audio(filePath, opts),
+        };
+      })(),
+
       /**
        * Returns a sender bound to another chat.
        * Typing simulation is skipped (no Chat object available without a fetch).
