@@ -8,87 +8,60 @@
  *   2. Per-chat cooldown    — minimum gap between sends to the same chat
  *   3. Human jitter         — random delay to break robotic timing patterns
  *
- * Text sends also simulate the typing indicator so the chat shows
- * "typing…" for a realistic duration before the message arrives.
+ * Text sends simulate the typing/recording presence indicator before
+ * the message arrives, so the chat shows "typing..." realistically.
  */
 
-import type { Chat } from "#wwjs";
+import type { WASocket } from "#types";
 import { logger } from "#logger";
 
 // ── Tunables ──────────────────────────────────────────────────────────────────
-// Adjust conservatively — WhatsApp is more sensitive to burst than average rate.
 
-/** Hard cap: max messages per second, globally (across all chats). */
-const GLOBAL_MSG_PER_SEC = 3;
-
-/** Minimum ms between two sends to the same chat. */
-const CHAT_COOLDOWN_MS = 900;
-
-/** Random jitter window added before every send (ms). */
-const JITTER_MS = { min: 400, max: 1400 };
-
-/** Typing speed used to calculate indicator duration (chars/sec). */
-const TYPING_CPS = 55;
-
-/** Upper cap on typing simulation, regardless of message length. */
-const TYPING_MAX_MS = 4500;
-
-/** Fixed indicator duration for media sends (ms), before jitter. */
-const MEDIA_INDICATOR_MS = { min: 800, max: 2000 };
+const GLOBAL_MSG_PER_SEC  = 3;
+const CHAT_COOLDOWN_MS    = 900;
+const JITTER_MS           = { min: 400, max: 1400 };
+const TYPING_CPS          = 55;
+const TYPING_MAX_MS       = 4500;
+const MEDIA_INDICATOR_MS  = { min: 800, max: 2000 };
 
 // ── Global token bucket ───────────────────────────────────────────────────────
 
 const MS_PER_TOKEN = 1000 / GLOBAL_MSG_PER_SEC;
+let tokens         = GLOBAL_MSG_PER_SEC;
+let lastRefill     = Date.now();
 
-let tokens     = GLOBAL_MSG_PER_SEC;
-let lastRefill = Date.now();
-
-/**
- * Consume one send token.
- * Returns the number of ms to wait if no token is available (0 = proceed now).
- */
 function consumeGlobalToken(): number {
   const now     = Date.now();
   const elapsed = now - lastRefill;
-
-  tokens     = Math.min(GLOBAL_MSG_PER_SEC, tokens + elapsed / MS_PER_TOKEN);
-  lastRefill = now;
-
-  if (tokens >= 1) {
-    tokens -= 1;
-    return 0;
-  }
-
+  tokens        = Math.min(GLOBAL_MSG_PER_SEC, tokens + elapsed / MS_PER_TOKEN);
+  lastRefill    = now;
+  if (tokens >= 1) { tokens -= 1; return 0; }
   return Math.ceil((1 - tokens) * MS_PER_TOKEN);
 }
 
 // ── Per-chat cooldown ─────────────────────────────────────────────────────────
 
-/** chatId → timestamp of the last outbound send */
-const lastSentAt = new Map();
+const lastSentAt = new Map<string, number>();
 
-function chatCooldownMs(chatId: string): number {
-  const last = lastSentAt.get(chatId) ?? 0;
-  const wait = last + CHAT_COOLDOWN_MS - Date.now();
+function chatCooldownMs(jid: string): number {
+  const wait = (lastSentAt.get(jid) ?? 0) + CHAT_COOLDOWN_MS - Date.now();
   return wait > 0 ? wait : 0;
 }
 
-function recordSend(chatId: string): void {
-  lastSentAt.set(chatId, Date.now());
+function recordSend(jid: string): void {
+  lastSentAt.set(jid, Date.now());
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
 function randomJitter(): number {
   return JITTER_MS.min + Math.random() * (JITTER_MS.max - JITTER_MS.min);
 }
 
-
 /**
  * How long the typing indicator should appear before sending text.
- * Based on simulated typing speed, capped at TYPING_MAX_MS.
  * @param {string} text
  * @returns {number} ms
  */
@@ -99,7 +72,6 @@ export function typingDuration(text: string): number {
 
 /**
  * A human-feeling duration for media "processing" indicator.
- * Randomized so repeated sends don't have identical pauses.
  * @returns {number} ms
  */
 export function mediaDuration(): number {
@@ -113,15 +85,12 @@ export function mediaDuration(): number {
  * Wait for a safe send slot: global rate → per-chat cooldown → jitter.
  * Must be called before every outbound message.
  *
- * @param {string} chatId
- * @param {object} [opts]
- * @param {boolean} [opts.cooldown=true]  — set to `false` to skip per-chat cooldown.
- *                                          Use for plugins that reply instantly and
- *                                          don't benefit from anti-detection pacing
- *                                          (e.g. sticker). Global rate limit is kept.
- * @param {boolean} [opts.jitter=true]    — set to `false` to skip random jitter delay.
+ * @param {string}  jid
+ * @param {object}  [opts]
+ * @param {boolean} [opts.cooldown=true]
+ * @param {boolean} [opts.jitter=true]
  */
-export async function waitForSendSlot(chatId: string, { cooldown = true, jitter = true } = {}): Promise<void> {
+export async function waitForSendSlot(jid: string, { cooldown = true, jitter = true } = {}): Promise<void> {
   const tokenWait = consumeGlobalToken();
   if (tokenWait > 0) {
     logger.debug(`[sendGuard] global rate hit — queuing ${tokenWait}ms`);
@@ -129,39 +98,40 @@ export async function waitForSendSlot(chatId: string, { cooldown = true, jitter 
   }
 
   if (cooldown) {
-    const coolWait = chatCooldownMs(chatId);
+    const coolWait = chatCooldownMs(jid);
     if (coolWait > 0) {
-      logger.debug(`[sendGuard] chat cooldown (${chatId}) — waiting ${coolWait}ms`);
+      logger.debug(`[sendGuard] chat cooldown (${jid}) — waiting ${coolWait}ms`);
       await sleep(coolWait);
     }
   }
 
-  if (jitter) {
-    await sleep(randomJitter());
-  }
+  if (jitter) await sleep(randomJitter());
 
-  recordSend(chatId);
+  recordSend(jid);
 }
 
 /**
  * Show a WhatsApp presence indicator for `ms` milliseconds, then clear it.
- * Best-effort — errors are swallowed so they never break a send.
+ * Uses Baileys sendPresenceUpdate. Best-effort — errors are swallowed.
  *
- * @param {import("whatsapp-web.ts").Chat} chat
- * @param {number}                         ms
- * @param {"typing"|"recording"}           [state="typing"]
+ * @param {WASocket|null}          sock
+ * @param {string|null}            jid
+ * @param {number}                 ms
+ * @param {"typing"|"recording"}   [state="typing"]
  */
-export async function simulateState(chat: Chat | null, ms: number, state: "typing" | "recording" = "typing"): Promise<void> {
-  if (!chat || ms <= 0) return;
+export async function simulateState(
+  sock:  WASocket | null,
+  jid:   string | null,
+  ms:    number,
+  state: "typing" | "recording" = "typing"
+): Promise<void> {
+  if (!sock || !jid || ms <= 0) return;
   try {
-    if (state === "recording") {
-      await chat.sendStateRecording();
-    } else {
-      await chat.sendStateTyping();
-    }
+    const presence = state === "recording" ? "recording" : "composing";
+    await sock.sendPresenceUpdate(presence, jid);
     await sleep(ms);
-    await chat.clearState();
-  } catch (e) { const err = e instanceof Error ? e : new Error(String(e));
-    logger.debug(`[sendGuard] state simulation failed (non-fatal): ${err.message}`);
+    await sock.sendPresenceUpdate("paused", jid);
+  } catch (e) {
+    logger.debug(`[sendGuard] presence simulation failed (non-fatal): ${(e as Error).message}`);
   }
 }

@@ -4,85 +4,87 @@
  * Central pipeline for received messages.
  *
  * Order:
- *   1. Filter allowed chats (CHATS from .conf)
+ *   1. Filter allowed chats (CHATS from config)
  *      — if CHATS is empty, accepts all chats
  *   2. Per-chat incoming debounce (prevents command spam from
  *      saturating the outbound send queue)
- *   3. Log the message
- *   4. Pass context to all active plugins
+ *   3. Pass context to all active plugins
  *
  * Kernel knows no commands — only distributes.
  * Each plugin decides on its own whether to act or ignore.
  *
  * Per-plugin overrides (via plugin.guardOptions):
- *   typing {boolean}  — set to `false` to skip the typing indicator
- *                       and clearState for this plugin. Useful for
- *                       plugins that reply instantly (e.g. sticker)
- *                       where the typing state only adds latency.
+ *   typing {boolean}  — set to `false` to skip presence simulation
  */
-import type { Message }    from "#wwjs";
-import { CHATS }           from "#config";
-import { getChatId }       from "#utils/getChatId";
-import { buildApi }        from "#manyapi";
-import { pluginRegistry }  from "#kernel/pluginLoader";
-import { runPlugin }       from "#kernel/pluginGuard";
-import client              from "#client/whatsappClient";
-import { logger }          from "#logger";
+
+import type { WAProtoMsg, WASocket, WAStore, WAChat } from "#types";
+import { CHATS }              from "#config";
+import { buildApi }           from "#manyapi";
+import { pluginRegistry }     from "#kernel/pluginLoader";
+import { runPlugin }          from "#kernel/pluginGuard";
+import { logger }             from "#logger";
+import { normalizeJid }       from "#client/baileysSock";
+import { simulateState,
+         typingDuration }     from "#sendguard";
+import { buildChatFromMsg }   from "#manyapi";
+
+const INCOMING_DEBOUNCE_MS = 300;
+const lastProcessedAt = new Map<string, number>();
 
 /**
- * Minimum ms between processing two messages from the same chat.
- * Does NOT drop messages — debounces rapid bursts so plugins
- * aren't invoked faster than the send guard can pace their replies.
- * Set to 0 to disable.
+ * @param {WAProtoMsg} msg    — raw Baileys message
+ * @param {WASocket}   sock
+ * @param {WAStore}    store
  */
-const INCOMING_DEBOUNCE_MS = 300;
+export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WAStore): Promise<void> {
+  const rawJid = msg.key.remoteJid ?? "";
+  const jid    = normalizeJid(rawJid);
 
-/** chatId → timestamp of last processed message */
-const lastProcessedAt = new Map();
+  if (CHATS.length > 0 && !CHATS.includes(jid)) return;
 
-export async function handleMessage(msg: Message): Promise<void> {
-  const chat = await msg.getChat();
-  const chatId = getChatId(chat);
-
-  if (CHATS.length > 0 && !CHATS.includes(chatId))
-    return;
-
+  // Debounce rapid bursts per chat
   if (INCOMING_DEBOUNCE_MS > 0) {
-    const now = Date.now();
-    const last = lastProcessedAt.get(chatId) ?? 0;
-    const gap = now - last;
+    const now  = Date.now();
+    const last = lastProcessedAt.get(jid) ?? 0;
+    const gap  = now - last;
     if (gap < INCOMING_DEBOUNCE_MS) {
       const wait = INCOMING_DEBOUNCE_MS - gap;
-      logger.debug(`[messageHandler] ${chatId} delayed ${wait}ms`);
-      await new Promise(r => setTimeout(r, wait));
+      logger.debug(`[messageHandler] ${jid} delayed ${wait}ms`);
+      await new Promise<void>(r => setTimeout(r, wait));
     }
-    lastProcessedAt.set(chatId, Date.now());
+    lastProcessedAt.set(jid, Date.now());
   }
+
+  // Build a WAChat adapter from the message metadata
+  const chat: WAChat = buildChatFromMsg(msg, store);
 
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
       chat,
-      client,
+      sock,
+      store,
       pluginRegistry,
-      pluginName: plugin.name,
+      pluginName:   plugin.name,
+      guardOptions: plugin.guardOptions,
     });
 
     const useTyping = plugin.guardOptions?.typing !== false;
-    let typing;
+    let typingInterval: ReturnType<typeof setInterval> | undefined;
 
     if (useTyping) {
-      typing = setInterval(() => chat.sendStateTyping(), 4000);
+      // Refresh presence every 4s so WhatsApp doesn't auto-clear it
+      typingInterval = setInterval(() => {
+        sock.sendPresenceUpdate("composing", rawJid).catch(() => {});
+      }, 4000);
     }
 
     try {
       await runPlugin(plugin, ctx);
     } finally {
       if (useTyping) {
-        clearInterval(typing);
-        try {
-          await chat.clearState();
-        } catch {}
+        clearInterval(typingInterval);
+        sock.sendPresenceUpdate("paused", rawJid).catch(() => {});
       }
     }
   }

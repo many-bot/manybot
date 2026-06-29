@@ -1,34 +1,152 @@
-import type { PluginEntry } from "#kernel/pluginLoader";
 /**
  * pluginApi.ts
  *
  * Builds the `ctx` object each plugin receives.
- * Plugins can only do what's here — never touch client directly.
+ * Plugins can only do what's here — never touch sock directly.
  *
- * `chat` is already filtered by kernel (only allowed chats from .conf),
- * so plugins don't need and can't choose destination, unless they use sendTo.
+ * All wwjs types have been replaced with Baileys equivalents.
+ * The ctx surface area is preserved so existing plugins stay compatible.
  */
 
-import type { Client, Chat, Message, Contact, GroupChat } from "#wwjs";
-import { logger }                              from "#logger";
-import { t, createPluginT, reloadTranslations,
-         getCurrentLang }                      from "#i18n";
-import { CONFIG, CONFIG_DIR }                  from "#config";
-import { enqueue }                             from "#download";
-import { emptyFolder }                         from "#utils/file";
-import { getChatId }                           from "#utils/getChatId";
-import pkg                                     from "whatsapp-web.js";
-import { mkdirSync }                           from "fs";
-import { writeFile }                           from "fs/promises";
-import path                                    from "path";
+import type { PluginEntry }          from "#kernel/pluginLoader";
+import type { WASocket, WAStore, WAProtoMsg, WAChat, WAParticipant, WAStoreContact, proto } from "#types";
+import { logger }                    from "#logger";
+import { t, createPluginT,
+         reloadTranslations,
+         getCurrentLang }            from "#i18n";
+import { CONFIG, CONFIG_DIR }        from "#config";
+import { enqueue }                   from "#download";
+import { emptyFolder }               from "#utils/file";
+import { getChatId }                 from "#utils/getChatId";
+import { normalizeJid }              from "#client/baileysSock";
+import { mkdirSync }                 from "fs";
+import { readFile, writeFile }       from "fs/promises";
+import { readFileSync }              from "fs";
+import path                          from "path";
 import { waitForSendSlot, simulateState,
-         typingDuration, mediaDuration }       from "#sendguard";
-import { buildSettingsApi }                    from "#settingsdb";
+         typingDuration, mediaDuration } from "#sendguard";
+import { buildSettingsApi }          from "#settingsdb";
+import { downloadMediaMessage,
+         getAggregateVotesInPollMessage } from "@whiskeysockets/baileys";
 
-// @ts-ignore -- pkg is WAWebJS namespace; destructuring works at runtime via tsx/esModuleInterop
-const { MessageMedia, Poll } = pkg;
+// ── Message body / type helpers ───────────────────────────────────────────────
 
-// ── Storage API ──────────────────────────────────────────────────────────────
+function getMsgBody(msg: WAProtoMsg): string {
+  const m = msg.message;
+  if (!m) return "";
+  return (
+    m.conversation ??
+    m.extendedTextMessage?.text ??
+    m.imageMessage?.caption ??
+    m.videoMessage?.caption ??
+    m.documentMessage?.caption ??
+    m.buttonsResponseMessage?.selectedDisplayText ??
+    m.listResponseMessage?.title ??
+    ""
+  ) as string;
+}
+
+function getMsgType(msg: WAProtoMsg): string {
+  const m = msg.message;
+  if (!m) return "unknown";
+  if (m.conversation || m.extendedTextMessage)     return "chat";
+  if (m.imageMessage)                              return "image";
+  if (m.videoMessage)                              return "video";
+  if (m.audioMessage)                              return "audio";
+  if (m.stickerMessage)                            return "sticker";
+  if (m.documentMessage)                           return "document";
+  if (m.pollCreationMessage ||
+      m.pollCreationMessageV2 ||
+      m.pollCreationMessageV3)                     return "poll";
+  return "unknown";
+}
+
+function msgHasMedia(msg: WAProtoMsg): boolean {
+  const m = msg.message;
+  return !!(m?.imageMessage || m?.videoMessage || m?.audioMessage || m?.documentMessage || m?.stickerMessage);
+}
+
+function msgIsGif(msg: WAProtoMsg): boolean {
+  return !!(msg.message?.videoMessage?.gifPlayback);
+}
+
+/** Sender JID — group participant or DM remote JID, normalized. */
+function getMsgSender(msg: WAProtoMsg): string {
+  return normalizeJid(msg.key.participant || msg.key.remoteJid || "");
+}
+
+function getContextInfo(msg: WAProtoMsg): proto.IContextInfo | null {
+  const m = msg.message;
+  return (
+    m?.extendedTextMessage?.contextInfo ??
+    m?.imageMessage?.contextInfo ??
+    m?.videoMessage?.contextInfo ??
+    m?.audioMessage?.contextInfo ??
+    m?.documentMessage?.contextInfo ??
+    null
+  );
+}
+
+function getMsgMimetype(msg: WAProtoMsg): string {
+  const m = msg.message;
+  return (
+    m?.imageMessage?.mimetype ??
+    m?.videoMessage?.mimetype ??
+    m?.audioMessage?.mimetype ??
+    m?.documentMessage?.mimetype ??
+    m?.stickerMessage?.mimetype ??
+    "application/octet-stream"
+  ) as string;
+}
+
+// ── Chat adapter builder ──────────────────────────────────────────────────────
+
+/**
+ * Build a WAChat adapter from a Baileys message + store.
+ * Exposed for use in messageHandler.ts.
+ *
+ * @param {WAProtoMsg} msg
+ * @param {WAStore}    store
+ * @returns {WAChat}
+ */
+export function buildChatFromMsg(msg: WAProtoMsg, store: WAStore): WAChat {
+  const rawJid = msg.key.remoteJid ?? "";
+  const jid    = normalizeJid(rawJid);
+  const user   = jid.split("@")[0];
+  const isGroup = rawJid.endsWith("@g.us");
+
+  // Try to get name from store
+  const stored = store.chats.get(rawJid);
+  const name   = stored?.name ?? user;
+
+  return { id: { _serialized: jid, user }, name, isGroup };
+}
+
+// ── MIME map for file sends ───────────────────────────────────────────────────
+
+const MIME_MAP: Record<string, string> = {
+  ".pdf":  "application/pdf",
+  ".doc":  "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls":  "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".zip":  "application/zip",
+  ".mp3":  "audio/mpeg",
+  ".mp4":  "video/mp4",
+  ".jpg":  "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png":  "image/png",
+  ".gif":  "image/gif",
+  ".webp": "image/webp",
+  ".txt":  "text/plain",
+  ".csv":  "text/csv",
+};
+
+function mimeFromPath(filePath: string): string {
+  return MIME_MAP[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+// ── Storage API ───────────────────────────────────────────────────────────────
 
 export function buildStorageApi(pluginName: string) {
   if (typeof pluginName !== "string" || pluginName.trim() === "") {
@@ -48,24 +166,18 @@ export function buildStorageApi(pluginName: string) {
      * @returns {string}
      */
     resolve(relativePath: string) {
-      if (!relativePath || typeof relativePath !== "string") {
+      if (!relativePath || typeof relativePath !== "string")
         throw new Error(`[storage] resolve() requires a non-empty string, got: ${typeof relativePath}`);
-      }
-      if (relativePath.includes("..")) {
+      if (relativePath.includes(".."))
         throw new Error(`[storage] path traversal detected in: "${relativePath}"`);
-      }
-      if (path.isAbsolute(relativePath)) {
+      if (path.isAbsolute(relativePath))
         throw new Error(`[storage] absolute paths are not allowed: "${relativePath}"`);
-      }
-      if (relativePath.includes("\\")) {
+      if (relativePath.includes("\\"))
         throw new Error(`[storage] Windows-style paths are not allowed: "${relativePath}"`);
-      }
 
       const resolved = path.join(dir, relativePath);
-
-      if (!resolved.startsWith(path.resolve(dir) + path.sep)) {
+      if (!resolved.startsWith(path.resolve(dir) + path.sep))
         throw new Error(`[storage] resolved path escapes plugin data dir: "${resolved}"`);
-      }
 
       mkdirSync(path.dirname(resolved), { recursive: true });
       return resolved;
@@ -73,14 +185,14 @@ export function buildStorageApi(pluginName: string) {
   };
 }
 
-// ── Config API ───────────────────────────────────────────────────────────────
+// ── Config API ────────────────────────────────────────────────────────────────
 
 function buildConfigApi(): { get(key: string, defaultValue?: unknown): unknown } {
   return {
     /**
      * Get a config value with optional default.
      * @param {string} key
-     * @param {any} [defaultValue]
+     * @param {any}    [defaultValue]
      */
     get(key, defaultValue = null) {
       return CONFIG[key] ?? defaultValue;
@@ -88,46 +200,28 @@ function buildConfigApi(): { get(key: string, defaultValue?: unknown): unknown }
   };
 }
 
-// ── i18n API ─────────────────────────────────────────────────────────────────
+// ── i18n API ──────────────────────────────────────────────────────────────────
 
 function buildI18nApi(): Record<string, unknown> {
   return {
-    /** Translate a core key. */
     t,
-
     /**
      * Create a scoped t() for a plugin's own locale files.
      * @param {string} pluginMetaUrl — pass import.meta.url from the plugin
      */
     createT: createPluginT,
-
-    /** Reload all translations (e.g. after language change). */
-    reload: reloadTranslations,
-
-    /** Returns current language code. */
+    reload:  reloadTranslations,
     getCurrentLang,
   };
 }
 
-// ── Utils API ────────────────────────────────────────────────────────────────
+// ── Utils API ─────────────────────────────────────────────────────────────────
 
 function buildUtilsApi(): Record<string, unknown> {
-  return {
-    /**
-     * Empty a folder's contents without removing the folder itself.
-     * @param {string} folder
-     */
-    emptyFolder,
-
-    /**
-     * Get the serialized chat ID from a chat object.
-     * @param {import("whatsapp-web.ts").Chat} chat
-     */
-    getChatId,
-  };
+  return { emptyFolder, getChatId };
 }
 
-// ── Download API ─────────────────────────────────────────────────────────────
+// ── Download API ──────────────────────────────────────────────────────────────
 
 function buildDownloadApi(): Record<string, unknown> {
   return {
@@ -140,14 +234,13 @@ function buildDownloadApi(): Record<string, unknown> {
   };
 }
 
-// ── Plugin registry API ──────────────────────────────────────────────────────
+// ── Plugin registry API ───────────────────────────────────────────────────────
 
 function buildPluginsApi(pluginRegistry: Map<string, PluginEntry>) {
   return {
     /**
      * Return public API of another plugin, or null if not active.
      * @param {string} name
-     * @returns {any|null}
      */
     get(name: string) {
       return pluginRegistry.get(name)?.exports ?? null;
@@ -155,22 +248,18 @@ function buildPluginsApi(pluginRegistry: Map<string, PluginEntry>) {
 
     /**
      * Return public API of another plugin, or throw if not active.
-     * Analogous to require() — use when the dependency is mandatory.
      * @param {string} name
-     * @returns {any}
      */
     require(name: string) {
       const plugin = pluginRegistry.get(name);
-      if (!plugin || plugin.status !== "active") {
+      if (!plugin || plugin.status !== "active")
         throw new Error(`[plugins] dependency "${name}" does not exist or is not active`);
-      }
       return plugin.exports;
     },
 
     /**
      * Check if a plugin is active.
      * @param {string} name
-     * @returns {boolean}
      */
     exists(name: string) {
       return pluginRegistry.get(name)?.status === "active";
@@ -178,7 +267,7 @@ function buildPluginsApi(pluginRegistry: Map<string, PluginEntry>) {
   };
 }
 
-// ── Log API ──────────────────────────────────────────────────────────────────
+// ── Log API ───────────────────────────────────────────────────────────────────
 
 const log = {
   info:    (...a: unknown[]) => logger.info(...a),
@@ -187,93 +276,74 @@ const log = {
   success: (...a: unknown[]) => logger.success(...a),
 };
 
-// ── Contact API ──────────────────────────────────────────────────────────────
+// ── Contact normalization ─────────────────────────────────────────────────────
 
 /**
- * Normalizes a raw whatsapp-web.ts Contact into a plain object.
- * Used internally so both ctx.contacts and ctx.msg.getContact()
- * always return the same shape.
- * @param {import("whatsapp-web.ts").Contact} c
- * @returns {object}
+ * Build a normalized contact object from a JID and optional store metadata.
+ * @param {string}           jid
+ * @param {WAStoreContact}   [info]
+ * @param {string|null}      [botJid]
  */
-function normalizeContact(c: Contact) {
-  const id     = c.id._serialized;
-  const number = id.split("@")[0];
+function normalizeContact(jid: string, info?: WAStoreContact, botJid?: string | null) {
+  const number = jid.split("@")[0];
   return {
-    id,
-    /** Phone number digits only (e.g. "5511999999999"). */
+    id:           jid,
     number,
-    pushname:     c.pushname   ?? null,
-    name:         c.name       ?? null,
-    shortName:    c.shortName  ?? null,
-    isBusiness:   c.isBusiness,
-    isEnterprise: c.isEnterprise,
-    isBlocked:    c.isBlocked,
-    isMe:         c.isMe,
-    isMyContact:  c.isMyContact,
-    isWAContact:  c.isWAContact,
-    isUser:       c.isUser,
-    isGroup:      c.isGroup,
-    /**
-     * Spread into sendMessage opts to mention this contact inline.
-     * @example
-     * const c = await msg.getContact();
-     * msg.reply.text(`hi ${c.mention.text}`, c.mention);
-     */
-    mention: { text: `@${number}`, mentions: [id] },
+    pushname:     info?.notify ?? null,
+    name:         info?.name ?? info?.verifiedName ?? null,
+    shortName:    null,
+    isBusiness:   false,
+    isEnterprise: false,
+    isBlocked:    false,
+    isMe:         botJid ? jid === normalizeJid(botJid) : false,
+    isMyContact:  !!(info?.name),
+    isWAContact:  true,
+    isUser:       !jid.endsWith("@g.us"),
+    isGroup:      jid.endsWith("@g.us"),
+    mention:      { text: `@${number}`, mentions: [jid] },
   };
 }
 
-function buildContactsApi(client: Client) {
+// ── Contact API ───────────────────────────────────────────────────────────────
+
+function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null) {
   return {
     /**
-     * Get a normalized Contact object by ID.
-     * @param {string} contactId — serialized ID (e.g. "5511999999999@c.us")
+     * Get a normalized contact object by JID.
+     * @param {string} contactId
      * @returns {Promise<object|null>}
      */
     async get(contactId: string) {
-      try {
-        const c = await client.getContactById(contactId);
-        return normalizeContact(c);
-      } catch {
-        return null;
-      }
+      const info = (store.contacts as Record<string, WAStoreContact>)[contactId]
+                ?? (store.contacts as Record<string, WAStoreContact>)[normalizeJid(contactId)];
+      return normalizeContact(normalizeJid(contactId), info, botJid);
     },
 
     /**
      * Get the profile picture URL of a contact.
-     * Returns null if the contact has privacy settings blocking access.
      * @param {string} contactId
      * @returns {Promise<string|null>}
      */
     async getPfpUrl(contactId: string) {
       try {
-        const c = await client.getContactById(contactId);
-        return await c.getProfilePicUrl();
+        return await sock.profilePictureUrl(contactId, "image");
       } catch {
         return null;
       }
     },
 
-
     /**
-     * Download a contact's profile picture and save it to a local path.
-     * Caller is responsible for providing a valid path (e.g. via ctx.storage.resolve)
-     * and for cleaning up the file when done.
-     * Returns null if the contact has no picture or privacy blocks access.
+     * Download a contact's profile picture to a local path.
      * @param {string} contactId
-     * @param {string} destPath — absolute path to write the image to
+     * @param {string} destPath — absolute path (e.g. via ctx.storage.resolve)
      * @returns {Promise<string|null>}
      */
     async getPfpPath(contactId: string, destPath: string) {
       const url = await this.getPfpUrl(contactId);
-
       if (!url) return null;
-
       try {
         const res = await fetch(url);
         if (!res.ok) return null;
-
         await writeFile(destPath, Buffer.from(await res.arrayBuffer()));
         return destPath;
       } catch {
@@ -282,15 +352,16 @@ function buildContactsApi(client: Client) {
     },
 
     /**
-     * Get the "about" text of a contact.
-     * Returns null if privacy settings block access.
+     * Get the "about" / status text of a contact.
      * @param {string} contactId
      * @returns {Promise<string|null>}
      */
     async getAbout(contactId: string) {
       try {
-        const c = await client.getContactById(contactId);
-        return await c.getAbout();
+        const res = await (sock as unknown as {
+          fetchStatus(jid: string): Promise<{ status?: string }>
+        }).fetchStatus(contactId);
+        return res?.status ?? null;
       } catch {
         return null;
       }
@@ -301,8 +372,9 @@ function buildContactsApi(client: Client) {
      * @param {string} contactId
      */
     async block(contactId: string) {
-      const c = await client.getContactById(contactId);
-      return c.block();
+      return (sock as unknown as {
+        updateBlockStatus(jid: string, action: string): Promise<void>
+      }).updateBlockStatus(contactId, "block");
     },
 
     /**
@@ -310,564 +382,422 @@ function buildContactsApi(client: Client) {
      * @param {string} contactId
      */
     async unblock(contactId: string) {
-      const c = await client.getContactById(contactId);
-      return c.unblock();
+      return (sock as unknown as {
+        updateBlockStatus(jid: string, action: string): Promise<void>
+      }).updateBlockStatus(contactId, "unblock");
     },
   };
 }
 
-// ── Internal media helpers ───────────────────────────────────────────────────
+// ── MessageHandle ─────────────────────────────────────────────────────────────
 
 /**
- * @param {string|Buffer} source
- * @param {string} mimetype — required, no ambiguous default
- */
-function mediaFromSource(source: string | Buffer, mimetype: string) {
-  return typeof source === "string"
-    ? MessageMedia.fromFilePath(source)
-    : new MessageMedia(mimetype, source.toString("base64"));
-}
-
-// ── MessageHandle ────────────────────────────────────────────────────────────
-
-/**
- * Wraps a pending send Promise and exposes chainable post-send actions.
- * Thenable: `await ctx.send.text("oi")` resolves to the wwjs Message object.
- *
- * @example
- * await ctx.send.poll(q, opts).pin();
- * await ctx.send.text("hi").react("👍");
+ * Wraps a pending send and exposes chainable post-send actions.
+ * Thenable: `await ctx.send.text("hi")` resolves to the proto message.
  */
 class MessageHandle {
-  private _p: Promise<Message>;
+  private _p: Promise<WAProtoMsg | undefined>;
+  private _sock: WASocket;
 
-  constructor(promise: Promise<Message>) {
-    this._p = promise;
+  constructor(promise: Promise<WAProtoMsg | undefined>, sock: WASocket) {
+    this._p    = promise;
+    this._sock = sock;
   }
 
-  then<T>(res: (v: Message) => T, rej?: (e: unknown) => T) { return this._p.then(res, rej); }
-  catch<T>(rej: (e: unknown) => T)  { return this._p.catch(rej); }
-  finally(fn: () => void)            { return this._p.finally(fn); }
+  then<T>(res: (v: WAProtoMsg | undefined) => T, rej?: (e: unknown) => T) { return this._p.then(res, rej); }
+  catch<T>(rej: (e: unknown) => T) { return this._p.catch(rej); }
+  finally(fn: () => void)          { return this._p.finally(fn); }
 
   /** Pin the sent message. */
-  async pin(duration?: number) {
-    const msg = await this._p;
-    return duration !== undefined ? msg?.pin(duration) : msg?.pin();
+  async pin(_duration?: number) {
+    logger.warn("[pluginApi] pin() is not supported yet");
   }
 
   /** Delete the sent message. */
-  async delete(forEveryone = true): Promise<void> {
+  async delete(forEveryone = true) {
     const msg = await this._p;
-    return msg?.delete(forEveryone);
+    if (!msg?.key) return;
+    const jid = msg.key.remoteJid!;
+    if (forEveryone) {
+      return this._sock.sendMessage(jid, { delete: msg.key });
+    }
+    // delete for me only is not exposed in Baileys — silently skip
   }
 
   /** React to the sent message. */
   async react(emoji: string) {
     const msg = await this._p;
-    return msg?.react(emoji);
+    if (!msg?.key) return;
+    return this._sock.sendMessage(msg.key.remoteJid!, {
+      react: { text: emoji, key: msg.key },
+    });
   }
 }
 
+// ── Sender factory ────────────────────────────────────────────────────────────
+
 /**
- * Returns send methods bound to a target that exposes `.sendMessage()`.
+ * Returns send methods bound to a specific JID.
  *
- * @param {{ sendMessage: Function }} target
- * @param {object}      [extraOpts]  — merged into every sendMessage call (e.g. { quoted: msg })
- * @param {string|null} [chatId]     — serialized chat ID; enables sendGuard when set
- * @param {object|null} [chatObj]    — real Chat object; enables typing indicator when set
+ * @param {WASocket}       sock
+ * @param {string}         jid         — destination JID (raw, not normalized)
+ * @param {WAProtoMsg}     [quoted]    — message to quote
+ * @param {object}         [guard]
  */
-function makeSender(target: { sendMessage: (content: unknown, opts?: unknown) => Promise<Message> } | Chat, extraOpts: Record<string, unknown> = {}, chatId: string | null = null, chatObj: Chat | null = null, { cooldown = true, jitter = true } = {}) {
+function makeSender(
+  sock:   WASocket,
+  jid:    string,
+  quoted: WAProtoMsg | null = null,
+  { cooldown = true, jitter = true } = {}
+) {
+  const normJid = normalizeJid(jid);
+  const qOpts   = quoted ? { quoted } : undefined;
+
   return {
-    text(content: string, opts: Record<string, unknown> = {}) {
+    text(content: string, _opts: Record<string, unknown> = {}) {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, typingDuration(content), "typing");
-        }
-        return target.sendMessage(content, { ...extraOpts, ...opts });
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, typingDuration(content), "typing");
+        return sock.sendMessage(jid, { text: content }, qOpts);
+      })(), sock);
     },
 
     image(filePath: string, caption = "") {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, mediaDuration(), "typing");
-        }
-        const media = MessageMedia.fromFilePath(filePath);
-        return target.sendMessage(media, { caption, ...extraOpts });
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, mediaDuration(), "typing");
+        const buffer = await readFile(filePath);
+        return sock.sendMessage(jid, { image: buffer, caption }, qOpts);
+      })(), sock);
     },
 
     video(filePath: string, caption = "") {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, mediaDuration(), "typing");
-        }
-        const media = MessageMedia.fromFilePath(filePath);
-        return target.sendMessage(media, { caption, ...extraOpts });
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, mediaDuration(), "typing");
+        const buffer = await readFile(filePath);
+        return sock.sendMessage(jid, { video: buffer, caption }, qOpts);
+      })(), sock);
     },
 
     audio(filePath: string, { asVoice = true } = {}) {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, mediaDuration(), "recording");
-        }
-        const media = MessageMedia.fromFilePath(filePath);
-        return target.sendMessage(media, { sendAudioAsVoice: asVoice, ...extraOpts });
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, mediaDuration(), "recording");
+        const buffer = await readFile(filePath);
+        return sock.sendMessage(jid, { audio: buffer, mimetype: "audio/mp4", ptt: asVoice }, qOpts);
+      })(), sock);
     },
 
     sticker(source: string | Buffer) {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, mediaDuration(), "typing");
-        }
-        const media = mediaFromSource(source, "image/webp");
-        return target.sendMessage(media, { sendMediaAsSticker: true, ...extraOpts });
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, mediaDuration(), "typing");
+        const buffer = Buffer.isBuffer(source) ? source : await readFile(source);
+        return sock.sendMessage(jid, { sticker: buffer }, qOpts);
+      })(), sock);
     },
 
     file(filePath: string, filename?: string) {
       return new MessageHandle((async () => {
-        if (chatId) {
-          await waitForSendSlot(chatId, { cooldown, jitter });
-          await simulateState(chatObj, mediaDuration(), "typing");
-        }
-        const media = MessageMedia.fromFilePath(filePath);
-        return target.sendMessage(media, {
-          sendMediaAsDocument: true,
-          filename: filename ?? path.basename(filePath),
-          ...extraOpts,
-        } as Record<string, unknown>);
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(sock, jid, mediaDuration(), "typing");
+        const buffer   = await readFile(filePath);
+        const mimetype = mimeFromPath(filePath);
+        return sock.sendMessage(jid, {
+          document: buffer,
+          mimetype,
+          fileName: filename ?? path.basename(filePath),
+        }, qOpts);
+      })(), sock);
     },
 
     /**
      * Send a poll.
      * @param {string}   question
-     * @param {string[]} options             — poll choices
+     * @param {string[]} options
      * @param {object}   [opts]
      * @param {boolean}  [opts.allowMultipleAnswers=false]
      */
     poll(question: string, options: string[], { allowMultipleAnswers = false } = {}) {
       return new MessageHandle((async () => {
-        if (chatId) await waitForSendSlot(chatId, { cooldown, jitter });
-        const p = new Poll(question, options, { allowMultipleAnswers } as Record<string, unknown>);
-        return target.sendMessage(p, extraOpts);
-      })());
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        return sock.sendMessage(jid, {
+          poll: {
+            name:            question,
+            values:          options,
+            selectableCount: allowMultipleAnswers ? 0 : 1,
+          },
+        } as Parameters<typeof sock.sendMessage>[1], qOpts);
+      })(), sock);
     },
   };
 }
 
-/** Adapts client.sendMessage(chatId, ...) to the makeSender interface. */
-function chatIdTarget(client: Client, chatId: string) {
-  return {
-    sendMessage: (content: unknown, opts?: unknown) => client.sendMessage(chatId, content as string, opts as Record<string, unknown>),
-  };
-}
+// ── Send API ──────────────────────────────────────────────────────────────────
 
-// ── Send API ─────────────────────────────────────────────────────────────────
-
-/**
- * Runtime send API — current chat + .to() for other chats.
- *
- * ctx.send.text("oi")
- * ctx.send.image("./foto.jpg", "legenda")
- * ctx.send.to("5511@c.us").text("oi")
- */
-function buildSendApi(chat: Chat, client: Client, guardOptions: Record<string, unknown> = {}) {
-  const chatId  = chat.id._serialized;
+function buildSendApi(sock: WASocket, rawJid: string, guardOptions: Record<string, unknown> = {}) {
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
-  const jitter  = (guardOptions.jitter  ?? true) as boolean;
-  const current = makeSender(chat as unknown as Parameters<typeof makeSender>[0], {}, chatId, chat, { cooldown, jitter });
+  const jitter   = (guardOptions.jitter   ?? true) as boolean;
+  const current  = makeSender(sock, rawJid, null, { cooldown, jitter });
+
   return {
     send: {
-      text:    (text: string, opts?: Record<string, unknown>)         => current.text(text, opts),
-      image:   (filePath: string, caption?: string) => current.image(filePath, caption),
-      video:   (filePath: string, caption?: string) => current.video(filePath, caption),
-      audio:   (filePath: string, opts?: Record<string, unknown>) => current.audio(filePath, opts),
-      sticker: (source: string | Buffer)             => current.sticker(source),
-      file:    (filePath: string, filename?: string) => current.file(filePath, filename),
-      poll:    (q: string, opts: string[], cfg?: { allowMultipleAnswers?: boolean })       => current.poll(q, opts, cfg),
+      text:    (text: string, opts?: Record<string, unknown>)           => current.text(text, opts),
+      image:   (filePath: string, caption?: string)                     => current.image(filePath, caption),
+      video:   (filePath: string, caption?: string)                     => current.video(filePath, caption),
+      audio:   (filePath: string, opts?: Record<string, unknown>)       => current.audio(filePath, opts as never),
+      sticker: (source: string | Buffer)                                => current.sticker(source),
+      file:    (filePath: string, filename?: string)                    => current.file(filePath, filename),
+      poll:    (q: string, opts: string[], cfg?: { allowMultipleAnswers?: boolean }) => current.poll(q, opts, cfg),
 
-      /**
-       * Sends media that disappears after the recipient views it once.
-       * Only image, video and audio are supported.
-       *
-       * @example
-       * await ctx.send.viewOnce.image("/tmp/secret.jpg");
-       * await ctx.send.viewOnce.video("/tmp/clip.mp4", "assiste uma vez só");
-       */
       viewOnce: (() => {
-        const vo = makeSender(chat as unknown as Parameters<typeof makeSender>[0], { viewOnce: true }, chatId, chat, { cooldown, jitter });
+        // Baileys supports viewOnce on image/video/audio natively
+        const sender = makeSender(sock, rawJid, null, { cooldown, jitter });
         return {
-          image: (filePath: string, caption?: string) => vo.image(filePath, caption),
-          video: (filePath: string, caption?: string) => vo.video(filePath, caption),
-          audio: (filePath: string, opts?: Record<string, unknown>) => vo.audio(filePath, opts),
+          image(filePath: string, caption?: string) {
+            return new MessageHandle((async () => {
+              await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
+              await simulateState(sock, rawJid, mediaDuration(), "typing");
+              const buffer = await readFile(filePath);
+              return sock.sendMessage(rawJid, { image: buffer, caption, viewOnce: true });
+            })(), sock);
+          },
+          video(filePath: string, caption?: string) {
+            return new MessageHandle((async () => {
+              await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
+              await simulateState(sock, rawJid, mediaDuration(), "typing");
+              const buffer = await readFile(filePath);
+              return sock.sendMessage(rawJid, { video: buffer, caption, viewOnce: true });
+            })(), sock);
+          },
+          audio(filePath: string, opts?: { asVoice?: boolean }) {
+            const asVoice = opts?.asVoice ?? true;
+            return new MessageHandle((async () => {
+              await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
+              await simulateState(sock, rawJid, mediaDuration(), "recording");
+              const buffer = await readFile(filePath);
+              return sock.sendMessage(rawJid, { audio: buffer, mimetype: "audio/mp4", ptt: asVoice, viewOnce: true });
+            })(), sock);
+          },
         };
       })(),
 
       /**
        * Returns a sender bound to another chat.
-       * Typing simulation is skipped (no Chat object available without a fetch).
-       * @param {string} targetChatId
+       * @param {string} targetJid
        */
-      to: (targetChatId: string) =>
-        makeSender(chatIdTarget(client, targetChatId), {}, targetChatId, null),
+      to: (targetJid: string) => makeSender(sock, targetJid, null, { cooldown: false, jitter: false }),
     },
   };
 }
-/**
- * Setup send API — no current chat, only .to().
- *
- * ctx.send.to(adminChatId).text("bot iniciado")
- */
-function buildSetupSendApi(client: Client) {
+
+/** Setup send API — no current chat, only .to(). */
+function buildSetupSendApi(sock: WASocket) {
   return {
     send: {
-      to: (targetChatId: string) =>
-        makeSender(chatIdTarget(client, targetChatId), {}, targetChatId, null),
+      to: (targetJid: string) => makeSender(sock, targetJid),
     },
   };
 }
 
-// ── Events API (setup only) ───────────────────────────────────────────────────
+// ── Events API ────────────────────────────────────────────────────────────────
+
+const listenerRegistry = new Map<string, Set<{ event: string; handler: (...args: unknown[]) => void }>>();
 
 /**
- * @param {import("whatsapp-web.ts").Client} client
- * @param {string} pluginName
+ * @param {WASocket} sock
+ * @param {string}   pluginName
  */
-const listenerRegistry = new Map();
-
-// ── Poll state (module-level, plugin-scoped) ──────────────────────────────────
-// Survives across buildApi calls — each plugin gets its own Map<msgId, PollHandle>.
-const pollRegistry  = new Map(); // pluginName → Map<msgId, PollHandle>
-const pollListeners = new Set(); // plugins that already registered the vote_update listener
-
-function buildEventsApi(client: Client, pluginName: string) {
+function buildEventsApi(sock: WASocket, pluginName: string) {
   return {
     on(event: string, handler: (...args: unknown[]) => void) {
-      client.on(event, handler);
+      (sock.ev as unknown as NodeJS.EventEmitter).on(event, handler);
 
-      if (!listenerRegistry.has(pluginName)) {
-        listenerRegistry.set(pluginName, new Set());
-      }
-
+      if (!listenerRegistry.has(pluginName)) listenerRegistry.set(pluginName, new Set());
       const ref = { event, handler };
-      listenerRegistry.get(pluginName).add(ref);
+      listenerRegistry.get(pluginName)!.add(ref);
 
       return () => {
-        client.off(event, handler);
-        const set = listenerRegistry.get(pluginName);
-        set?.delete(ref);
-        if (set?.size === 0) listenerRegistry.delete(pluginName);
+        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
+        listenerRegistry.get(pluginName)?.delete(ref);
       };
     },
 
     once(event: string) {
-      return new Promise((resolve) => {
-        const off = this.on(event, (data) => {
-          off();
-          resolve(data);
-        });
+      return new Promise(resolve => {
+        const off = this.on(event, (data) => { off(); resolve(data); });
       });
     },
 
     cleanup() {
       const list = listenerRegistry.get(pluginName);
       if (!list) return;
-      for (const { event, handler } of list) client.off(event, handler);
+      for (const { event, handler } of list)
+        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
       listenerRegistry.delete(pluginName);
     },
   };
 }
 
-// ── Admin API ────────────────────────────────────────────────────────────────
+// ── Admin API ─────────────────────────────────────────────────────────────────
 
 /**
- * Group administration actions. Available in both runtime and setup contexts.
+ * Group administration actions.
  *
- * Runtime (current group):
- *   await ctx.admin.kick(userId)
- *
- * Cross-group (setup or runtime):
- *   await ctx.admin.add(userId).to(groupId)
- *
- * Methods that depend on the current chat throw when called from setup().
- *
- * @param {import("whatsapp-web.ts").Chat|null} chat
- * @param {import("whatsapp-web.ts").Client}    client
+ * @param {WASocket}     sock
+ * @param {string|null}  chatJid — raw JID of the current group (null in setup context)
  */
-function buildAdminApi(chat: Chat | null = null, client: Client) {
-  /**
-   * Normalize single or multiple IDs into array form.
-   *
-   * @param {string|string[]} value
-   * @returns {string[]}
-   */
-  const norm = (value: string | string[]): string[] => Array.isArray(value) ? value : [value];
+function buildAdminApi(sock: WASocket, chatJid: string | null) {
+  const norm = (v: string | string[]): string[] => Array.isArray(v) ? v : [v];
 
-  /**
-   * Ensures a runtime chat exists.
-   * Throws when called from setup().
-   */
   function requireChat() {
-    if (!chat)
-      throw new Error("This admin operation requires a runtime group context.");
+    if (!chatJid) throw new Error("This admin operation requires a runtime group context.");
   }
 
-  /**
-   * Resolve another group.
-   *
-   * @param {string} groupId
-   * @returns {Promise<import('whatsapp-web.ts').GroupChat>}
-   */
-  async function getGroup(groupId: string) {
-    const group = await client.getChatById(groupId);
-
-    if (!group)
-      throw new Error(`Group not found: ${groupId}`);
-
-    if (typeof (group as GroupChat).addParticipants !== "function")
-      throw new Error(`Target is not a group: ${groupId}`);
-
-    return group as GroupChat;
+  async function getGroup(jid: string) {
+    const meta = await sock.groupMetadata(jid);
+    if (!meta) throw new Error(`Group not found: ${jid}`);
+    return meta;
   }
 
-  /**
-   * Creates an operation object that supports:
-   *
-   * await admin.add(user)
-   * await admin.add(user).to(group)
-   *
-   * @param {(target:any, users:string[])=>Promise<any>} action
-   * @param {string|string[]} memberIds
-   */
-  function createTargetableAction(action: (target: GroupChat, users: string[]) => Promise<unknown>, memberIds: string | string[]) {
-    const users = norm(memberIds);
-
-    const executeCurrent = async () => {
-      requireChat();
-      return action(chat as GroupChat, users);
-    };
-
+  function createTargetableAction(
+    action: (jid: string, users: string[]) => Promise<unknown>,
+    memberIds: string | string[]
+  ) {
+    const users          = norm(memberIds);
+    const executeCurrent = async () => { requireChat(); return action(chatJid!, users); };
     return {
-      /**
-       * Execute in another group.
-       *
-       * @param {string} groupId
-       */
-      async to(groupId: string) {
-        const group = await getGroup(groupId);
-        return action(group, users);
-      },
-
-      then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
-        return executeCurrent().then(resolve, reject);
-      },
-
-      catch(reject: (e: unknown) => unknown) {
-        return executeCurrent().catch(reject);
-      },
-
-      finally(fn: () => void) {
-        return executeCurrent().finally(fn);
-      },
+      async to(targetJid: string) { await getGroup(targetJid); return action(targetJid, users); },
+      then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) { return executeCurrent().then(res, rej); },
+      catch(rej: (e: unknown) => unknown) { return executeCurrent().catch(rej); },
+      finally(fn: () => void) { return executeCurrent().finally(fn); },
     };
   }
 
   return {
-    /**
-     * Add member(s).
-     *
-     * Current group:
-     * await admin.add(id)
-     *
-     * Another group:
-     * await admin.add(id).to(groupId)
-     *
-     * @param {string|string[]} memberIds
-     */
+    /** @param {string|string[]} memberIds */
     add(memberIds: string | string[]) {
       return createTargetableAction(
-        (target, users) => target.addParticipants(users),
+        (jid, users) => sock.groupParticipantsUpdate(jid, users, "add"),
         memberIds
       );
     },
-
-    /**
-     * Remove member(s) from current group.
-     *
-     * @param {string|string[]} memberIds
-     */
+    /** @param {string|string[]} memberIds */
     async kick(memberIds: string | string[]) {
       requireChat();
-      return (chat as GroupChat).removeParticipants(norm(memberIds));
+      return sock.groupParticipantsUpdate(chatJid!, norm(memberIds), "remove");
     },
-
-    /**
-     * Promote member(s).
-     *
-     * @param {string|string[]} memberIds
-     */
+    /** @param {string|string[]} memberIds */
     async promote(memberIds: string | string[]) {
       requireChat();
-      return (chat as GroupChat).promoteParticipants(norm(memberIds));
+      return sock.groupParticipantsUpdate(chatJid!, norm(memberIds), "promote");
     },
-
-    /**
-     * Demote member(s).
-     *
-     * @param {string|string[]} memberIds
-     */
+    /** @param {string|string[]} memberIds */
     async demote(memberIds: string | string[]) {
       requireChat();
-      return (chat as GroupChat).demoteParticipants(norm(memberIds));
+      return sock.groupParticipantsUpdate(chatJid!, norm(memberIds), "demote");
     },
-
-    /**
-     * Rename current group.
-     *
-     * @param {string} name
-     */
+    /** @param {string} name */
     async setSubject(name: string) {
       requireChat();
-      return (chat as GroupChat).setSubject(name);
+      return sock.groupUpdateSubject(chatJid!, name);
     },
-
-    /**
-     * Update current group description.
-     *
-     * @param {string} text
-     */
+    /** @param {string} text */
     async setDescription(text: string) {
       requireChat();
-      return (chat as GroupChat).setDescription(text);
+      return sock.groupUpdateDescription(chatJid!, text);
     },
-
-    /**
-     * Update current group picture.
-     *
-     * @param {string|Buffer} source
-     */
+    /** @param {string|Buffer} source */
     async setProfilePic(source: string | Buffer) {
       requireChat();
-
-      const media = mediaFromSource(source, "image/jpeg");
-      return (chat as GroupChat).setPicture(media);
+      const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
+      return sock.updateProfilePicture(chatJid!, buffer);
     },
-
-    /**
-     * Get invite link.
-     */
     async getInviteLink() {
       requireChat();
-
-      const code = await (chat as GroupChat).getInviteCode();
+      const code = await sock.groupInviteCode(chatJid!);
       return `https://chat.whatsapp.com/${code}`;
     },
-
-    /**
-     * Revoke invite link.
-     */
     async revokeInvite() {
       requireChat();
-      return (chat as GroupChat).revokeInvite();
+      return sock.groupRevokeInvite(chatJid!);
     },
   };
 }
 
-// ── Me API ───────────────────────────────────────────────────────────────────
+// ── Me API ────────────────────────────────────────────────────────────────────
 
-/**
- * Bot self-profile management.
- * Useful for bots that update their own name/status to reflect state.
- *
- * @param {import("whatsapp-web.ts").Client} client
- */
-function buildMeApi(client: Client) {
+/** @param {WASocket} sock */
+function buildMeApi(sock: WASocket) {
   return {
-    /**
-     * Change the bot's display name.
-     * @param {string} name
-     */
+    /** @param {string} name */
     async setName(name: string) {
-      return client.setDisplayName(name);
+      return sock.updateProfileName(name);
     },
-
-    /**
-     * Change the bot's "About" / status text.
-     * @param {string} text
-     */
+    /** @param {string} text */
     async setAbout(text: string) {
-      return client.setStatus(text);
+      return sock.updateProfileStatus(text);
     },
-
-    /**
-     * Change the bot's profile picture.
-     * @param {string|Buffer} source — file path or raw buffer (JPEG)
-     */
+    /** @param {string|Buffer} source */
     async setProfilePic(source: string | Buffer) {
-      const media = mediaFromSource(source, "image/jpeg");
-      return client.setProfilePicture(media);
+      const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
+      const jid    = sock.user?.id ?? "";
+      return sock.updateProfilePicture(jid, buffer);
     },
   };
 }
 
-// ── Poll API ─────────────────────────────────────────────────────────────────
+// ── Poll API ──────────────────────────────────────────────────────────────────
+
+const pollRegistry  = new Map<string, Map<string, PollHandle>>();
+const pollListeners = new Set<string>();
 
 /**
- * Represents an active poll and tracks votes per option.
- * Obtained via ctx.poll.create() — do not instantiate directly.
+ * Tracks votes for an active poll.
+ * Obtained via ctx.poll.create().
  */
 class PollHandle {
-  msgId: string;
-  private _options: Map<string, Set<string>>;
-  private _callbacks: Array<(results: Record<string, number>, vote: unknown) => void>;
-  private _registry: Map<string, PollHandle>;
+  msgId:      string;
+  private _options:   Map<string, Set<string>>;
+  private _callbacks: Array<(results: Record<string, number>, raw: unknown) => void>;
+  private _registry:  Map<string, PollHandle>;
 
-  constructor(msg: Message, options: string[], registry: Map<string, PollHandle>) {
-    this.msgId      = msg.id._serialized;
-    this._options   = new Map(options.map((o) => [o, new Set<string>()]));
+  constructor(msg: WAProtoMsg, options: string[], registry: Map<string, PollHandle>) {
+    this.msgId      = msg.key.id ?? "";
+    this._options   = new Map(options.map(o => [o, new Set<string>()]));
     this._callbacks = [];
     this._registry  = registry;
   }
 
-  /** Called by the vote_update dispatcher. Not for plugin use. */
-  _update(vote: { voter: Contact & { id?: { _serialized: string } }; selectedOptions: Array<{ name: string }> }) {
-    const voterId = ((vote.voter as unknown as { _serialized?: string })._serialized) ?? vote.voter.id?._serialized;
-    if (!voterId) return;
-    for (const voters of this._options.values()) voters.delete(voterId);
-    for (const opt of vote.selectedOptions)       this._options.get(opt.name)?.add(voterId);
-    for (const cb of this._callbacks)             cb(this.results(), vote);
+  /** Update from Baileys aggregated vote result. */
+  _updateFromAggregated(aggregated: { name: string; voters: string[] }[]) {
+    // Reset all counts then rebuild from aggregate
+    for (const voters of this._options.values()) voters.clear();
+    for (const { name, voters } of aggregated) {
+      if (this._options.has(name))
+        this._options.set(name, new Set(voters));
+    }
+    for (const cb of this._callbacks) cb(this.results(), aggregated);
   }
 
   /**
    * Register a callback invoked on every vote change.
-   * Returns `this` for chaining.
-   * @param cb Receives (results, vote) — results is the current tally snapshot.
+   * @param cb Receives (results, raw)
    */
-  onVote(cb: (results: Record<string, number>, vote: unknown) => void): this {
+  onVote(cb: (results: Record<string, number>, raw: unknown) => void): this {
     this._callbacks.push(cb);
     return this;
   }
 
-  /** Current tally as a plain object. e.g. `{ "Futebol": 3, "Tech": 1 }` */
+  /** Current tally as a plain object. */
   results(): Record<string, number> {
     const out: Record<string, number> = {};
     for (const [name, voters] of this._options) out[name] = voters.size;
     return out;
   }
 
-  /**
-   * Returns the name(s) of the leading option(s).
-   * Returns multiple on a tie, [] if no votes yet.
-   */
+  /** Name(s) of the leading option(s). Returns [] if no votes yet. */
   winner(): string[] {
     const res    = this.results();
     const counts = Object.values(res);
@@ -877,44 +807,61 @@ class PollHandle {
     return Object.entries(res).filter(([, v]) => v === max).map(([k]) => k);
   }
 
-  /** Remove this poll from tracking. Call when done to free memory. */
+  /** Remove this poll from tracking. */
   close(): void {
     this._registry.delete(this.msgId);
   }
 }
 
 /**
- * Builds the poll API for a given runtime context.
- * The vote_update listener is registered once per plugin (lazy).
- *
- * @param {import("whatsapp-web.ts").Client} client
- * @param {import("whatsapp-web.ts").Chat}   chat
- * @param {string}  chatId
- * @param {object}  guardOptions
- * @param {string}  pluginName
+ * @param {WASocket} sock
+ * @param {WAStore}  store
+ * @param {string}   rawJid       — destination JID (not normalized)
+ * @param {object}   guardOptions
+ * @param {string}   pluginName
  */
-function buildPollApi(client: Client, chat: Chat, chatId: string, guardOptions: Record<string, unknown>, pluginName: string) {
-  if (!pollRegistry.has(pluginName)) {
-    pollRegistry.set(pluginName, new Map());
-  }
-  const registry = pollRegistry.get(pluginName);
+function buildPollApi(
+  sock:         WASocket,
+  store:        WAStore,
+  rawJid:       string,
+  guardOptions: Record<string, unknown>,
+  pluginName:   string
+) {
+  if (!pollRegistry.has(pluginName)) pollRegistry.set(pluginName, new Map());
+  const registry = pollRegistry.get(pluginName)!;
 
-  // Register the client-level listener once per plugin.
   if (!pollListeners.has(pluginName)) {
     pollListeners.add(pluginName);
-    client.on("vote_update", (vote: unknown) => {
-      registry.get((vote as unknown as { msgId: { _serialized: string } }).msgId._serialized)?._update(vote);
+
+    // Baileys delivers poll votes via messages.update with pollUpdates field
+    sock.ev.on("messages.update", async (updates) => {
+      for (const { key, update } of updates) {
+        if (!update.pollUpdates?.length) continue;
+
+        const handle = registry.get(key.id ?? "");
+        if (!handle) continue;
+
+        // Retrieve the original poll message from store for decryption
+        const storeMsg = store.messages.get(key.remoteJid ?? "")?.get(key.id ?? "");
+        if (!storeMsg) continue;
+
+        try {
+          const aggregated = getAggregateVotesInPollMessage({
+            message:     storeMsg.message,
+            pollUpdates: storeMsg.pollUpdates ?? [],
+          });
+          handle._updateFromAggregated(aggregated);
+        } catch {}
+      }
     });
   }
 
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
-  const jitter  = (guardOptions.jitter  ?? true) as boolean;
+  const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
   return {
     /**
      * Send a poll and start tracking votes.
-     * Returns a PollHandle — use .onVote(), .results(), .winner(), .close().
-     *
      * @param {string}   question
      * @param {string[]} options
      * @param {object}   [opts]
@@ -922,18 +869,17 @@ function buildPollApi(client: Client, chat: Chat, chatId: string, guardOptions: 
      * @returns {Promise<PollHandle>}
      */
     async create(question: string, options: string[], opts: { allowMultipleAnswers?: boolean } = {}) {
-      const sender  = makeSender(chat as unknown as Parameters<typeof makeSender>[0], {}, chatId, chat, { cooldown, jitter });
+      const sender  = makeSender(sock, rawJid, null, { cooldown, jitter });
       const sentMsg = await sender.poll(question, options, opts);
-      const handle  = new PollHandle(sentMsg, options, registry);
+      if (!sentMsg) throw new Error("[poll] failed to send poll message");
+      const handle = new PollHandle(sentMsg, options, registry);
       registry.set(handle.msgId, handle);
       return handle;
     },
 
     /**
      * Retrieve an active PollHandle by its message ID.
-     * Useful when a different plugin invocation needs to check an earlier poll.
-     * @param {string} msgId — serialized message ID
-     * @returns {PollHandle|null}
+     * @param {string} msgId
      */
     get(msgId: string) {
       return registry.get(msgId) ?? null;
@@ -943,9 +889,14 @@ function buildPollApi(client: Client, chat: Chat, chatId: string, guardOptions: 
 
 // ── Base API (shared between setup and runtime) ───────────────────────────────
 
-function buildBaseApi(client: Client, pluginRegistry: Map<string, PluginEntry>, pluginName: string) {
-  const botId = client.info?.wid?._serialized ?? null;
-  if (!botId) logger.warn("[pluginApi] botId is null — client may not be ready yet.");
+function buildBaseApi(
+  sock:           WASocket,
+  store:          WAStore,
+  pluginRegistry: Map<string, PluginEntry>,
+  pluginName:     string
+) {
+  const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+  if (!botJid) logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
 
   return {
     log,
@@ -955,71 +906,111 @@ function buildBaseApi(client: Client, pluginRegistry: Map<string, PluginEntry>, 
     utils:    buildUtilsApi(),
     download: buildDownloadApi(),
     plugins:  buildPluginsApi(pluginRegistry),
-    contacts: buildContactsApi(client),
+    contacts: buildContactsApi(sock, store, botJid),
     storage:  buildStorageApi(pluginName),
-    botId,
+    botId:    botJid,
   };
 }
 
-// ── Setup API ────────────────────────────────────────────────────────────────
+// ── Setup API ─────────────────────────────────────────────────────────────────
 
 /**
  * Setup API — without message context.
  * Passed to plugin.setup(ctx) during initialization.
  *
- * @param {import("whatsapp-web.ts").Client} client
- * @param {Map<string, any>}                 pluginRegistry
- * @param {string}                           pluginName
- * @returns {object}
+ * @param {WASocket}              sock
+ * @param {WAStore}               store
+ * @param {Map<string, any>}      pluginRegistry
+ * @param {string}                pluginName
  */
-export function buildSetupApi(client: Client, pluginRegistry: Map<string, PluginEntry>, pluginName: string) {
+export function buildSetupApi(
+  sock:           WASocket,
+  store:          WAStore,
+  pluginRegistry: Map<string, PluginEntry>,
+  pluginName:     string
+) {
   return {
-    ...buildBaseApi(client, pluginRegistry, pluginName),
-    ...buildSetupSendApi(client),
-    admin: buildAdminApi(null, client),
-    events:   buildEventsApi(client, pluginName),
-    me:       buildMeApi(client),
+    ...buildBaseApi(sock, store, pluginRegistry, pluginName),
+    ...buildSetupSendApi(sock),
+    admin:    buildAdminApi(sock, null),
+    events:   buildEventsApi(sock, pluginName),
+    me:       buildMeApi(sock),
     settings: { global: buildSettingsApi(pluginName, "_global").global },
   };
 }
 
-// ── Runtime API ──────────────────────────────────────────────────────────────
+// ── Runtime API ───────────────────────────────────────────────────────────────
 
 /**
  * Runtime API — full context with message and chat.
  * Passed to plugin.default(ctx) on every message.
  *
- * @param {object}                            params
- * @param {import("whatsapp-web.ts").Message} params.msg
- * @param {import("whatsapp-web.ts").Chat}    params.chat
- * @param {import("whatsapp-web.ts").Client}  params.client
- * @param {Map<string, any>}                  params.pluginRegistry
- * @param {string}                            params.pluginName
- * @returns {object} ctx
+ * @param {object}          params
+ * @param {WAProtoMsg}      params.msg
+ * @param {WAChat}          params.chat
+ * @param {WASocket}        params.sock
+ * @param {WAStore}         params.store
+ * @param {Map}             params.pluginRegistry
+ * @param {string}          params.pluginName
+ * @param {object}          [params.guardOptions]
  */
-export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardOptions = {} }: { msg: Message; chat: Chat; client: Client; pluginRegistry: Map<string, PluginEntry>; pluginName: string; guardOptions?: Record<string, unknown> }) {
-  const prefix  = CONFIG.CMD_PREFIX;
-  const rawArgs = msg.body?.trim().split(/\s+/) ?? [];
-  const first = rawArgs[0]?.toLowerCase() ?? "";
+export function buildApi({
+  msg,
+  chat,
+  sock,
+  store,
+  pluginRegistry,
+  pluginName,
+  guardOptions = {},
+}: {
+  msg:            WAProtoMsg;
+  chat:           WAChat;
+  sock:           WASocket;
+  store:          WAStore;
+  pluginRegistry: Map<string, PluginEntry>;
+  pluginName:     string;
+  guardOptions?:  Record<string, unknown>;
+}) {
+  const prefix  = CONFIG.CMD_PREFIX as string;
+  const body    = getMsgBody(msg);
+  const rawArgs = body.trim().split(/\s+/);
+  const first   = rawArgs[0]?.toLowerCase() ?? "";
   const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
-  const chatId = chat.id._serialized;
+  const rawJid   = msg.key.remoteJid ?? "";
+  const normJid  = normalizeJid(rawJid);
+  const sender   = getMsgSender(msg);
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
-  const jitter  = (guardOptions.jitter  ?? true) as boolean;
+  const jitter   = (guardOptions.jitter   ?? true) as boolean;
+
+  // Sender for quoted messages
+  const contextInfo = getContextInfo(msg);
+  const quotedRaw: WAProtoMsg | null = contextInfo?.quotedMessage
+    ? {
+        key: {
+          remoteJid:   rawJid,
+          fromMe:      false,
+          id:          contextInfo.stanzaId ?? undefined,
+          participant: contextInfo.participant ?? undefined,
+        },
+        message:  contextInfo.quotedMessage,
+        pushName: null,
+      }
+    : null;
 
   return {
-    ...buildBaseApi(client, pluginRegistry, pluginName),
-    ...buildSendApi(chat, client, guardOptions),
+    ...buildBaseApi(sock, store, pluginRegistry, pluginName),
+    ...buildSendApi(sock, rawJid, guardOptions),
 
-    // ── msg ──────────────────────────────────────────────────
+    // ── msg ──────────────────────────────────────────────────────────────────
 
     msg: {
-      body:       msg.body ?? "",
-      type:       msg.type,
-      fromMe:     msg.fromMe,
-      sender:     msg.author || msg.from,
-      senderName: (msg as unknown as { _data: Record<string, unknown> })._data?.notifyName || String(msg.from).replace(/(:\d+)?@.*$/, ""),
+      body,
+      type:       getMsgType(msg),
+      fromMe:     !!(msg.key.fromMe),
+      sender,
+      senderName: msg.pushName ?? sender.replace(/(:\d+)?@.*$/, ""),
 
       /** Command token without prefix (e.g. "play" for "!play foo"). */
       command,
@@ -1032,135 +1023,156 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
        * @param {string} cmd
        */
       is(cmd: string) {
-        return this.hasPrefix && command === cmd.toLowerCase();
+        return hasPrefix && command === cmd.toLowerCase();
       },
 
-      hasMedia:  msg.hasMedia,
-      isGif:     (msg as unknown as { _data: Record<string, unknown> })._data?.isGif ?? false,
+      hasMedia: msgHasMedia(msg),
+      isGif:    msgIsGif(msg),
 
-      async downloadMedia() {
-        const media = await msg.downloadMedia();
-        if (!media) return null;
-        return { mimetype: media.mimetype, data: media.data };
+      async downloadMedia(): Promise<{ mimetype: string; data: string } | null> {
+        try {
+          const buffer = await downloadMediaMessage(msg, "buffer", {});
+          if (!buffer || !Buffer.isBuffer(buffer)) return null;
+          return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
+        } catch {
+          return null;
+        }
       },
 
-      hasReply: msg.hasQuotedMsg,
+      hasReply: !!(contextInfo?.quotedMessage),
 
-      async getReply() {
-        if (!msg.hasQuotedMsg) return null;
-        return msg.getQuotedMessage();
+      async getReply(): Promise<WAProtoMsg | null> {
+        return quotedRaw;
       },
 
-      reply: makeSender(chat as unknown as Parameters<typeof makeSender>[0], { quotedMessageId: msg.id._serialized }, chatId, chat, { cooldown, jitter }),
+      reply: makeSender(sock, rawJid, msg, { cooldown, jitter }),
 
       async react(emoji: string) {
-        return msg.react(emoji);
+        return sock.sendMessage(rawJid, { react: { text: emoji, key: msg.key } });
       },
 
-      /** Delete this message. */
-      async delete(forEveryone = true): Promise<void> {
-        return msg.delete(forEveryone);
+      async delete(forEveryone = true) {
+        if (forEveryone) {
+          return sock.sendMessage(rawJid, { delete: msg.key });
+        }
       },
 
-      /** Pin this message in the chat (requires bot to be admin in groups). */
-      async pin(duration?: number) {
-        return duration !== undefined ? msg.pin(duration) : msg.pin();
+      /** Pin this message — not supported in Baileys. */
+      async pin(_duration?: number) {
+        logger.warn("[pluginApi] pin() is not supported with Baileys");
       },
 
       hasPrefix,
 
       /**
-       * Get the sender as a normalized Contact object.
-       * Same shape as ctx.contacts.get().
+       * Get the sender as a normalized contact object.
        * @returns {Promise<object|null>}
        */
       async getContact() {
-        try {
-          const c = await msg.getContact();
-          return normalizeContact(c);
-        } catch {
-          return null;
-        }
+        const info = (store.contacts as Record<string, WAStoreContact>)[sender]
+                  ?? (store.contacts as Record<string, WAStoreContact>)[msg.key.participant ?? ""];
+        const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+        return normalizeContact(sender, info, botJid);
       },
     },
 
-    // ── chat ─────────────────────────────────────────────────
+    // ── chat ─────────────────────────────────────────────────────────────────
 
     chat: {
-      id:      chatId,
-      name:    chat.name || chat.id.user,
-      isGroup: /@g\.us$/.test(chatId),
+      id:      normJid,
+      name:    chat.name,
+      isGroup: chat.isGroup,
 
       /**
        * List of group participants.
        * Returns [] for non-group chats.
        * @returns {Promise<Array<{ id: string, isAdmin: boolean, isSuperAdmin: boolean }>>}
        */
-      async getParticipants() {
-        if (!(chat as GroupChat).participants) return [];
-        return (chat as GroupChat).participants.map((p: { id: { _serialized: string }; isAdmin: boolean; isSuperAdmin: boolean }) => ({
-          id:           p.id._serialized,
-          isAdmin:      p.isAdmin,
-          isSuperAdmin: p.isSuperAdmin,
-        }));
+      async getParticipants(): Promise<Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }>> {
+        if (!chat.isGroup) return [];
+        try {
+          const meta = await sock.groupMetadata(rawJid);
+          return meta.participants.map(p => ({
+            id:           normalizeJid(p.id),
+            isAdmin:      p.admin === "admin" || p.admin === "superadmin",
+            isSuperAdmin: p.admin === "superadmin",
+          }));
+        } catch {
+          return [];
+        }
       },
 
       /**
        * Check if a contact is an admin of this group.
-       * Always returns false for non-group chats.
        * @param {string} contactId
        * @returns {Promise<boolean>}
        */
-      async isAdmin(contactId: string) {
-        return (chat as GroupChat).participants?.some(
-          (p: { id: { _serialized: string }; isAdmin: boolean; isSuperAdmin: boolean }) => p.id._serialized === contactId && (p.isAdmin || p.isSuperAdmin)
-        ) ?? false;
+      async isAdmin(contactId: string): Promise<boolean> {
+        if (!chat.isGroup) return false;
+        try {
+          const meta = await sock.groupMetadata(rawJid);
+          return meta.participants.some(
+            p => normalizeJid(p.id) === contactId && (p.admin === "admin" || p.admin === "superadmin")
+          );
+        } catch {
+          return false;
+        }
       },
 
       /**
        * Check if the message sender is an admin of this group.
-       * Shorthand for isAdmin(ctx.msg.sender).
        * @returns {Promise<boolean>}
        */
-      async isSenderAdmin() {
-        const senderId = msg.author || msg.from;
-        return (chat as GroupChat).participants?.some(
-          (p: { id: { _serialized: string }; isAdmin: boolean; isSuperAdmin: boolean }) => p.id._serialized === senderId && (p.isAdmin || p.isSuperAdmin)
-        ) ?? false;
+      async isSenderAdmin(): Promise<boolean> {
+        if (!chat.isGroup) return false;
+        try {
+          const meta = await sock.groupMetadata(rawJid);
+          return meta.participants.some(
+            p => normalizeJid(p.id) === sender && (p.admin === "admin" || p.admin === "superadmin")
+          );
+        } catch {
+          return false;
+        }
       },
 
       /**
-       * Check if the bot itself is an admin of this group.
+       * Check if the bot is an admin of this group.
        * @returns {Promise<boolean>}
        */
-      async isBotAdmin() {
-        const botId = client.info?.wid?._serialized;
-        if (!botId) return false;
-        return (chat as GroupChat).participants?.some(
-          (p: { id: { _serialized: string }; isAdmin: boolean; isSuperAdmin: boolean }) => p.id._serialized === botId && (p.isAdmin || p.isSuperAdmin)
-        ) ?? false;
+      async isBotAdmin(): Promise<boolean> {
+        if (!chat.isGroup) return false;
+        const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+        if (!botJid) return false;
+        try {
+          const meta = await sock.groupMetadata(rawJid);
+          return meta.participants.some(
+            p => normalizeJid(p.id) === botJid && (p.admin === "admin" || p.admin === "superadmin")
+          );
+        } catch {
+          return false;
+        }
       },
 
-      /** Clear all messages in this chat. */
+      /** Clear all messages in this chat — not supported in Baileys. */
       async clearMessages() {
-        return chat.clearMessages();
+        logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
       },
     },
 
-    // ── admin ─────────────────────────────────────────────────
+    // ── admin ─────────────────────────────────────────────────────────────────
 
-    admin: buildAdminApi(chat, client),
+    admin: buildAdminApi(sock, rawJid),
 
-    // ── me ───────────────────────────────────────────────────
+    // ── me ────────────────────────────────────────────────────────────────────
 
-    me: buildMeApi(client),
+    me: buildMeApi(sock),
 
-    // ── poll ─────────────────────────────────────────────────
+    // ── poll ──────────────────────────────────────────────────────────────────
 
-    poll: buildPollApi(client, chat, chatId, guardOptions, pluginName),
+    poll: buildPollApi(sock, store, rawJid, guardOptions, pluginName),
 
-    // ── settings ──────────────────────────────────────────────
+    // ── settings ──────────────────────────────────────────────────────────────
 
-    settings: buildSettingsApi(pluginName, chatId),
+    settings: buildSettingsApi(pluginName, normJid),
   };
 }

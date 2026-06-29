@@ -16,7 +16,7 @@ import { t }             from "#i18n";
 import { pathToFileURL } from "url";
 import { PATHS }         from "#config";
 import { buildSetupApi } from "#manyapi";
-import type { Client }   from "#wwjs";
+import type { WASocket, WAStore } from "#types";
 
 export interface PluginEntry {
   name: string;
@@ -74,14 +74,15 @@ export async function loadPlugins(activePlugins: string[]): Promise<void> {
  *
  * @param {object} api — api without message context (only sendTo, log, schedule...)
  */
-export async function setupPlugins(client: Client): Promise<void> {
+export async function setupPlugins(sock: WASocket, store: WAStore): Promise<void> {
   for (const plugin of pluginRegistry.values()) {
     if (plugin.status !== "active" || !plugin.setup)
       continue;
   
     try {
       const api = buildSetupApi(
-        client,
+        sock,
+        store,
         pluginRegistry,
         plugin.name
       );
