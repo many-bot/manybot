@@ -17,11 +17,13 @@ import { emptyFolder }                         from "#utils/file";
 import { getChatId }                           from "#utils/getChatId";
 import pkg                                     from "whatsapp-web.js";
 import { mkdirSync }                           from "fs";
+import { writeFile }                           from "fs/promises";
 import path                                    from "path";
 import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration }       from "#sendguard";
+import { buildSettingsApi }                    from "#settingsdb";
 
-const { MessageMedia } = pkg;
+const { MessageMedia, Poll } = pkg;
 
 // ── Storage API ──────────────────────────────────────────────────────────────
 
@@ -909,9 +911,7 @@ function buildPollApi(client, chat, chatId, guardOptions, pluginName) {
     });
   }
 
-    cleanup() {
-      const list =
-        listenerRegistry.get(pluginName);
+  const { cooldown = true, jitter = true } = guardOptions;
 
   return {
     /**
@@ -1145,5 +1145,21 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
         return chat.clearMessages();
       },
     },
+
+    // ── admin ─────────────────────────────────────────────────
+
+    admin: buildAdminApi(chat, client),
+
+    // ── me ───────────────────────────────────────────────────
+
+    me: buildMeApi(client),
+
+    // ── poll ─────────────────────────────────────────────────
+
+    poll: buildPollApi(client, chat, chatId, guardOptions, pluginName),
+
+    // ── settings ──────────────────────────────────────────────
+
+    settings: buildSettingsApi(pluginName, chatId),
   };
 }
