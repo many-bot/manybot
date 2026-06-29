@@ -1001,7 +1001,7 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
   const prefix  = CONFIG.CMD_PREFIX;
   const rawArgs = msg.body?.trim().split(/\s+/) ?? [];
   const first = rawArgs[0]?.toLowerCase() ?? "";
-  const hasPrefix = first.startsWith(prefix)
+  const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
   const chatId = chat.id._serialized;
@@ -1009,7 +1009,7 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
 
   return {
     ...buildBaseApi(client, pluginRegistry, pluginName),
-    ...buildSendApi(chat, client),
+    ...buildSendApi(chat, client, guardOptions),
 
     // ── msg ──────────────────────────────────────────────────
 
