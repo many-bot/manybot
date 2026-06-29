@@ -35,6 +35,7 @@
     "LICENSE"
   ],
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "node-webpmux": "^3.2.1",
     "qrcode-terminal": "^0.12.0",
     "smol-toml": "^1.7.0",
@@ -45,6 +46,7 @@
     "#client/*": "./src/client/*.js",
     "#kernel/*": "./src/kernel/*.js",
     "#manyapi": "./src/kernel/pluginApi.js",
+    "#settingsdb": "./src/kernel/settingsDb.js",
     "#sendguard": "./src/kernel/sendGuard.js",
     "#logger": "./src/logger/logger.js",
     "#utils/*": "./src/utils/*.js",
