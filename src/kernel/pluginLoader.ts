@@ -106,25 +106,34 @@ async function findPluginPath(name: string): Promise<string | null> {
   if (!fs.existsSync(manifest))
     return null;
 
-  const { main = "index.ts" } =
-    JSON.parse(
-      await fs.promises.readFile(
-        manifest,
-        "utf8"
-      )
+  const data = JSON.parse(
+    await fs.promises.readFile(
+      manifest,
+      "utf8"
+    )
+  ) as {
+    main?: string;
+  };
+
+  const candidates = [
+    data.main,
+    "index.js",
+    "index.ts"
+  ]
+    .filter(
+      (v): v is string =>
+        typeof v === "string" &&
+        v.trim().length > 0
     );
 
-  const entry =
-    path.join(
-      dir,
-      main
-    );
+  for (const file of candidates) {
+    const entry = path.join(dir, file);
 
-  return (
-    fs.existsSync(entry)
-      ? entry
-      : null
-  );
+    if (fs.existsSync(entry))
+      return entry;
+  }
+
+  return null;
 }
 
 /**
