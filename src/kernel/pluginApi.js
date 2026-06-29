@@ -237,14 +237,40 @@ function buildContactsApi(client) {
 
     /**
      * Get the profile picture URL of a contact.
-     * Respects privacy settings — may return null.
+     * Returns null if the contact has privacy settings blocking access.
      * @param {string} contactId
      * @returns {Promise<string|null>}
      */
-    async getProfilePicUrl(contactId) {
+    async getPfpUrl(contactId) {
       try {
         const c = await client.getContactById(contactId);
         return await c.getProfilePicUrl();
+      } catch {
+        return null;
+      }
+    },
+
+
+    /**
+     * Download a contact's profile picture and save it to a local path.
+     * Caller is responsible for providing a valid path (e.g. via ctx.storage.resolve)
+     * and for cleaning up the file when done.
+     * Returns null if the contact has no picture or privacy blocks access.
+     * @param {string} contactId
+     * @param {string} destPath — absolute path to write the image to
+     * @returns {Promise<string|null>}
+     */
+    async getPfpPath(contactId, destPath) {
+      const url = await this.getPfpUrl(contactId);
+
+      if (!url) return null;
+
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+
+        await writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+        return destPath;
       } catch {
         return null;
       }
@@ -263,6 +289,24 @@ function buildContactsApi(client) {
       } catch {
         return null;
       }
+    },
+
+    /**
+     * Block a contact.
+     * @param {string} contactId
+     */
+    async block(contactId) {
+      const c = await client.getContactById(contactId);
+      return c.block();
+    },
+
+    /**
+     * Unblock a contact.
+     * @param {string} contactId
+     */
+    async unblock(contactId) {
+      const c = await client.getContactById(contactId);
+      return c.unblock();
     },
   };
 }
