@@ -1056,6 +1056,16 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
         return msg.react(emoji);
       },
 
+      /** Delete this message. */
+      async delete(forEveryone = true) {
+        return msg.delete(forEveryone);
+      },
+
+      /** Pin this message in the chat (requires bot to be admin in groups). */
+      async pin(duration) {
+        return msg.pin(duration);
+      },
+
       hasPrefix,
 
       /**
@@ -1104,6 +1114,11 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
         return chat.participants?.some(
           (p) => p.id._serialized === contactId && (p.isAdmin || p.isSuperAdmin)
         ) ?? false;
+      },
+
+      /** Clear all messages in this chat. */
+      async clearMessages() {
+        return chat.clearMessages();
       },
     },
   };
