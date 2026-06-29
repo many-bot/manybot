@@ -192,9 +192,12 @@ const log = {
  * @returns {object}
  */
 function normalizeContact(c) {
+  const id     = c.id._serialized;
+  const number = id.split("@")[0];
   return {
-    id:           c.id._serialized,
-    number:       c.number,
+    id,
+    /** Phone number digits only (e.g. "5511999999999"). */
+    number,
     pushname:     c.pushname   ?? null,
     name:         c.name       ?? null,
     shortName:    c.shortName  ?? null,
@@ -206,6 +209,13 @@ function normalizeContact(c) {
     isWAContact:  c.isWAContact,
     isUser:       c.isUser,
     isGroup:      c.isGroup,
+    /**
+     * Spread into sendMessage opts to mention this contact inline.
+     * @example
+     * const c = await msg.getContact();
+     * msg.reply.text(`hi ${c.mention.text}`, c.mention);
+     */
+    mention: { text: `@${number}`, mentions: [id] },
   };
 }
 
