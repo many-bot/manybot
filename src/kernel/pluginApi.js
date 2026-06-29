@@ -1116,6 +1116,30 @@ export function buildApi({ msg, chat, client, pluginRegistry, pluginName, guardO
         ) ?? false;
       },
 
+      /**
+       * Check if the message sender is an admin of this group.
+       * Shorthand for isAdmin(ctx.msg.sender).
+       * @returns {Promise<boolean>}
+       */
+      async isSenderAdmin() {
+        const senderId = msg.author || msg.from;
+        return chat.participants?.some(
+          (p) => p.id._serialized === senderId && (p.isAdmin || p.isSuperAdmin)
+        ) ?? false;
+      },
+
+      /**
+       * Check if the bot itself is an admin of this group.
+       * @returns {Promise<boolean>}
+       */
+      async isBotAdmin() {
+        const botId = client.info?.wid?._serialized;
+        if (!botId) return false;
+        return chat.participants?.some(
+          (p) => p.id._serialized === botId && (p.isAdmin || p.isSuperAdmin)
+        ) ?? false;
+      },
+
       /** Clear all messages in this chat. */
       async clearMessages() {
         return chat.clearMessages();
