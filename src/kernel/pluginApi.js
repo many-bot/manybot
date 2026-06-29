@@ -578,6 +578,39 @@ function buildEventsApi(client, pluginName) {
     },
   };
 }
+// ── Me API ───────────────────────────────────────────────────────────────────
+
+/**
+ * Bot self-profile management.
+ * Useful for bots that update their own name/status to reflect state.
+ *
+ * @param {import("whatsapp-web.js").Client} client
+ */
+function buildMeApi(client) {
+  return {
+    /**
+     * Change the bot's display name.
+     * @param {string} name
+     */
+    async setName(name) {
+      return client.setDisplayName(name);
+    },
+
+    /**
+     * Change the bot's "About" / status text.
+     * @param {string} text
+     */
+    async setAbout(text) {
+      return client.setStatus(text);
+    },
+
+    /**
+     * Change the bot's profile picture.
+     * @param {string|Buffer} source — file path or raw buffer (JPEG)
+     */
+    async setProfilePic(source) {
+      const media = mediaFromSource(source, "image/jpeg");
+      return client.setProfilePicture(media);
     },
   };
 }
