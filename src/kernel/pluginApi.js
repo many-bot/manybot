@@ -975,11 +975,14 @@ function buildBaseApi(client, pluginRegistry, pluginName) {
  * @param {string}                           pluginName
  * @returns {object}
  */
-export function buildSetupApi(client, pluginRegistry, pluginName ) {
+export function buildSetupApi(client, pluginRegistry, pluginName) {
   return {
     ...buildBaseApi(client, pluginRegistry, pluginName),
     ...buildSetupSendApi(client),
-    events: buildEventsApi(client, pluginName),
+    admin: buildAdminApi(null, client),
+    events:   buildEventsApi(client, pluginName),
+    me:       buildMeApi(client),
+    settings: { global: buildSettingsApi(pluginName, "_global").global },
   };
 }
 
