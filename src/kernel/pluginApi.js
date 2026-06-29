@@ -323,6 +323,44 @@ function mediaFromSource(source, mimetype) {
     : new MessageMedia(mimetype, source.toString("base64"));
 }
 
+// ── MessageHandle ────────────────────────────────────────────────────────────
+
+/**
+ * Wraps a pending send Promise and exposes chainable post-send actions.
+ * Thenable: `await ctx.send.text("oi")` resolves to the wwjs Message object.
+ *
+ * @example
+ * await ctx.send.poll(q, opts).pin();
+ * await ctx.send.text("hi").react("👍");
+ */
+class MessageHandle {
+  constructor(promise) {
+    this._p = promise;
+  }
+
+  then(res, rej) { return this._p.then(res, rej); }
+  catch(rej)     { return this._p.catch(rej); }
+  finally(fn)    { return this._p.finally(fn); }
+
+  /** Pin the sent message. */
+  async pin(duration) {
+    const msg = await this._p;
+    return msg?.pin(duration);
+  }
+
+  /** Delete the sent message. */
+  async delete(forEveryone = true) {
+    const msg = await this._p;
+    return msg?.delete(forEveryone);
+  }
+
+  /** React to the sent message. */
+  async react(emoji) {
+    const msg = await this._p;
+    return msg?.react(emoji);
+  }
+}
+
 /**
  * Returns send methods bound to a target that exposes `.sendMessage()`.
  *
@@ -333,62 +371,88 @@ function mediaFromSource(source, mimetype) {
  */
 function makeSender(target, extraOpts = {}, chatId = null, chatObj = null, { cooldown = true, jitter = true } = {}) {
   return {
-    async text(content, opts = {}) {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        await simulateState(chatObj, typingDuration(content), "typing");
-      }
-      return target.sendMessage(content, { ...extraOpts, ...opts });
+    text(content, opts = {}) {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, typingDuration(content), "typing");
+        }
+        return target.sendMessage(content, { ...extraOpts, ...opts });
+      })());
     },
 
-    async image(filePath, caption = "") {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        await simulateState(chatObj, mediaDuration(), "typing");
-      }
-      const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { caption, ...extraOpts });
+    image(filePath, caption = "") {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, mediaDuration(), "typing");
+        }
+        const media = MessageMedia.fromFilePath(filePath);
+        return target.sendMessage(media, { caption, ...extraOpts });
+      })());
     },
 
-    async video(filePath, caption = "") {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        await simulateState(chatObj, mediaDuration(), "typing");
-      }
-      const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { caption, ...extraOpts });
+    video(filePath, caption = "") {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, mediaDuration(), "typing");
+        }
+        const media = MessageMedia.fromFilePath(filePath);
+        return target.sendMessage(media, { caption, ...extraOpts });
+      })());
     },
 
-    async audio(filePath, { asVoice = true } = {}) {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        // "gravando áudio…" é mais convincente que "digitando…" para áudio
-        await simulateState(chatObj, mediaDuration(), "recording");
-      }
-      const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, { sendAudioAsVoice: asVoice, ...extraOpts });
+    audio(filePath, { asVoice = true } = {}) {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, mediaDuration(), "recording");
+        }
+        const media = MessageMedia.fromFilePath(filePath);
+        return target.sendMessage(media, { sendAudioAsVoice: asVoice, ...extraOpts });
+      })());
     },
 
-    async sticker(source) {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        await simulateState(chatObj, mediaDuration(), "typing");
-      }
-      const media = mediaFromSource(source, "image/webp");
-      return target.sendMessage(media, { sendMediaAsSticker: true, ...extraOpts });
+    sticker(source) {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, mediaDuration(), "typing");
+        }
+        const media = mediaFromSource(source, "image/webp");
+        return target.sendMessage(media, { sendMediaAsSticker: true, ...extraOpts });
+      })());
     },
 
-    async file(filePath, filename) {
-      if (chatId) {
-        await waitForSendSlot(chatId, { cooldown, jitter });
-        await simulateState(chatObj, mediaDuration(), "typing");
-      }
-      const media = MessageMedia.fromFilePath(filePath);
-      return target.sendMessage(media, {
-        sendMediaAsDocument: true,
-        filename: filename ?? path.basename(filePath),
-        ...extraOpts,
-      });
+    file(filePath, filename) {
+      return new MessageHandle((async () => {
+        if (chatId) {
+          await waitForSendSlot(chatId, { cooldown, jitter });
+          await simulateState(chatObj, mediaDuration(), "typing");
+        }
+        const media = MessageMedia.fromFilePath(filePath);
+        return target.sendMessage(media, {
+          sendMediaAsDocument: true,
+          filename: filename ?? path.basename(filePath),
+          ...extraOpts,
+        });
+      })());
+    },
+
+    /**
+     * Send a poll.
+     * @param {string}   question
+     * @param {string[]} options             — poll choices
+     * @param {object}   [opts]
+     * @param {boolean}  [opts.allowMultipleAnswers=false]
+     */
+    poll(question, options, { allowMultipleAnswers = false } = {}) {
+      return new MessageHandle((async () => {
+        if (chatId) await waitForSendSlot(chatId, { cooldown, jitter });
+        const p = new Poll(question, options, { allowMultipleAnswers });
+        return target.sendMessage(p, extraOpts);
+      })());
     },
   };
 }
