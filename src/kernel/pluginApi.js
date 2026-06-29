@@ -546,26 +546,33 @@ function buildEventsApi(client, pluginName) {
       }
 
       const ref = { event, handler };
-
-      listenerRegistry
-        .get(pluginName)
-        .add(ref);
+      listenerRegistry.get(pluginName).add(ref);
 
       return () => {
         client.off(event, handler);
-
-        listenerRegistry
-          .get(pluginName)
-          ?.delete(ref);
-
-        if (
-          listenerRegistry
-            .get(pluginName)
-            ?.size === 0
-        ) {
-          listenerRegistry.delete(pluginName);
-        }
+        const set = listenerRegistry.get(pluginName);
+        set?.delete(ref);
+        if (set?.size === 0) listenerRegistry.delete(pluginName);
       };
+    },
+
+    once(event) {
+      return new Promise((resolve) => {
+        const off = this.on(event, (data) => {
+          off();
+          resolve(data);
+        });
+      });
+    },
+
+    cleanup() {
+      const list = listenerRegistry.get(pluginName);
+      if (!list) return;
+      for (const { event, handler } of list) client.off(event, handler);
+      listenerRegistry.delete(pluginName);
+    },
+  };
+}
     },
 
   once(event) {
