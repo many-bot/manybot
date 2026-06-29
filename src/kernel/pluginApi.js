@@ -578,6 +578,202 @@ function buildEventsApi(client, pluginName) {
     },
   };
 }
+
+// ── Admin API ────────────────────────────────────────────────────────────────
+
+/**
+ * Group administration actions. Available in both runtime and setup contexts.
+ *
+ * Runtime (current group):
+ *   await ctx.admin.kick(userId)
+ *
+ * Cross-group (setup or runtime):
+ *   await ctx.admin.add(userId).to(groupId)
+ *
+ * Methods that depend on the current chat throw when called from setup().
+ *
+ * @param {import("whatsapp-web.js").Chat|null} chat
+ * @param {import("whatsapp-web.js").Client}    client
+ */
+function buildAdminApi(chat = null, client) {
+  /**
+   * Normalize single or multiple IDs into array form.
+   *
+   * @param {string|string[]} value
+   * @returns {string[]}
+   */
+  const norm = (value) => Array.isArray(value) ? value : [value];
+
+  /**
+   * Ensures a runtime chat exists.
+   * Throws when called from setup().
+   */
+  function requireChat() {
+    if (!chat)
+      throw new Error("This admin operation requires a runtime group context.");
+  }
+
+  /**
+   * Resolve another group.
+   *
+   * @param {string} groupId
+   * @returns {Promise<import('whatsapp-web.js').GroupChat>}
+   */
+  async function getGroup(groupId) {
+    const group = await client.getChatById(groupId);
+
+    if (!group)
+      throw new Error(`Group not found: ${groupId}`);
+
+    if (typeof group.addParticipants !== "function")
+      throw new Error(`Target is not a group: ${groupId}`);
+
+    return group;
+  }
+
+  /**
+   * Creates an operation object that supports:
+   *
+   * await admin.add(user)
+   * await admin.add(user).to(group)
+   *
+   * @param {(target:any, users:string[])=>Promise<any>} action
+   * @param {string|string[]} memberIds
+   */
+  function createTargetableAction(action, memberIds) {
+    const users = norm(memberIds);
+
+    const executeCurrent = async () => {
+      requireChat();
+      return action(chat, users);
+    };
+
+    return {
+      /**
+       * Execute in another group.
+       *
+       * @param {string} groupId
+       */
+      async to(groupId) {
+        const group = await getGroup(groupId);
+        return action(group, users);
+      },
+
+      then(resolve, reject) {
+        return executeCurrent().then(resolve, reject);
+      },
+
+      catch(reject) {
+        return executeCurrent().catch(reject);
+      },
+
+      finally(fn) {
+        return executeCurrent().finally(fn);
+      },
+    };
+  }
+
+  return {
+    /**
+     * Add member(s).
+     *
+     * Current group:
+     * await admin.add(id)
+     *
+     * Another group:
+     * await admin.add(id).to(groupId)
+     *
+     * @param {string|string[]} memberIds
+     */
+    add(memberIds) {
+      return createTargetableAction(
+        (target, users) => target.addParticipants(users),
+        memberIds
+      );
+    },
+
+    /**
+     * Remove member(s) from current group.
+     *
+     * @param {string|string[]} memberIds
+     */
+    async kick(memberIds) {
+      requireChat();
+      return chat.removeParticipants(norm(memberIds));
+    },
+
+    /**
+     * Promote member(s).
+     *
+     * @param {string|string[]} memberIds
+     */
+    async promote(memberIds) {
+      requireChat();
+      return chat.promoteParticipants(norm(memberIds));
+    },
+
+    /**
+     * Demote member(s).
+     *
+     * @param {string|string[]} memberIds
+     */
+    async demote(memberIds) {
+      requireChat();
+      return chat.demoteParticipants(norm(memberIds));
+    },
+
+    /**
+     * Rename current group.
+     *
+     * @param {string} name
+     */
+    async setSubject(name) {
+      requireChat();
+      return chat.setSubject(name);
+    },
+
+    /**
+     * Update current group description.
+     *
+     * @param {string} text
+     */
+    async setDescription(text) {
+      requireChat();
+      return chat.setDescription(text);
+    },
+
+    /**
+     * Update current group picture.
+     *
+     * @param {string|Buffer} source
+     */
+    async setProfilePic(source) {
+      requireChat();
+
+      const media = mediaFromSource(source, "image/jpeg");
+      return chat.setPicture(media);
+    },
+
+    /**
+     * Get invite link.
+     */
+    async getInviteLink() {
+      requireChat();
+
+      const code = await chat.getInviteCode();
+      return `https://chat.whatsapp.com/${code}`;
+    },
+
+    /**
+     * Revoke invite link.
+     */
+    async revokeInvite() {
+      requireChat();
+      return chat.revokeInvite();
+    },
+  };
+}
+
 // ── Me API ───────────────────────────────────────────────────────────────────
 
 /**
