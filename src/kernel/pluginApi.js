@@ -536,6 +536,11 @@ function buildSetupSendApi(client) {
  */
 const listenerRegistry = new Map();
 
+// ── Poll state (module-level, plugin-scoped) ──────────────────────────────────
+// Survives across buildApi calls — each plugin gets its own Map<msgId, PollHandle>.
+const pollRegistry  = new Map(); // pluginName → Map<msgId, PollHandle>
+const pollListeners = new Set(); // plugins that already registered the vote_update listener
+
 function buildEventsApi(client, pluginName) {
   return {
     on(event, handler) {
@@ -574,36 +579,138 @@ function buildEventsApi(client, pluginName) {
   };
 }
     },
+  };
+}
 
-  once(event) {
-    return new Promise((resolve) => {
-      const off =
-        this.on(
-          event,
-          (data) => {
-            off();
-            resolve(data);
-          }
-        );
+// ── Poll API ─────────────────────────────────────────────────────────────────
+
+/**
+ * Represents an active poll and tracks votes per option.
+ * Obtained via ctx.poll.create() — do not instantiate directly.
+ */
+class PollHandle {
+  /**
+   * @param {import("whatsapp-web.js").Message} msg
+   * @param {string[]} options
+   * @param {Map<string, PollHandle>} registry — the plugin's own registry
+   */
+  constructor(msg, options, registry) {
+    /** Serialized message ID. */
+    this.msgId     = msg.id._serialized;
+    this._options  = new Map(options.map((o) => [o, new Set()]));
+    this._callbacks = [];
+    this._registry = registry;
+  }
+
+  /** Called by the vote_update dispatcher. Not for plugin use. */
+  _update(vote) {
+    // vote.voter is a Contact — use ._serialized for the ID.
+    // vote.selectedOptions is the full current state (not a delta).
+    const voterId = vote.voter._serialized ?? vote.voter.id?._serialized;
+    if (!voterId) return;
+    for (const voters of this._options.values()) voters.delete(voterId);
+    for (const opt of vote.selectedOptions)       this._options.get(opt.name)?.add(voterId);
+    for (const cb of this._callbacks)             cb(this.results(), vote);
+  }
+
+  /**
+   * Register a callback invoked on every vote change.
+   * Callback receives (results, vote) — results is the current tally snapshot.
+   * Returns `this` for chaining.
+   * @param {(results: Record<string,number>, vote: object) => void} cb
+   */
+  onVote(cb) {
+    this._callbacks.push(cb);
+    return this;
+  }
+
+  /**
+   * Current tally as a plain object.
+   * @returns {Record<string, number>}  e.g. { "Futebol": 3, "Tech": 1 }
+   */
+  results() {
+    const out = {};
+    for (const [name, voters] of this._options) out[name] = voters.size;
+    return out;
+  }
+
+  /**
+   * Returns the name(s) of the leading option(s).
+   * Returns multiple if there's a tie. Returns [] if no votes yet.
+   * @returns {string[]}
+   */
+  winner() {
+    const res    = this.results();
+    const counts = Object.values(res);
+    if (!counts.length) return [];
+    const max = Math.max(...counts);
+    if (max === 0) return [];
+    return Object.entries(res).filter(([, v]) => v === max).map(([k]) => k);
+  }
+
+  /**
+   * Remove this poll from tracking. Call when you're done to free memory.
+   */
+  close() {
+    this._registry.delete(this.msgId);
+  }
+}
+
+/**
+ * Builds the poll API for a given runtime context.
+ * The vote_update listener is registered once per plugin (lazy).
+ *
+ * @param {import("whatsapp-web.js").Client} client
+ * @param {import("whatsapp-web.js").Chat}   chat
+ * @param {string}  chatId
+ * @param {object}  guardOptions
+ * @param {string}  pluginName
+ */
+function buildPollApi(client, chat, chatId, guardOptions, pluginName) {
+  if (!pollRegistry.has(pluginName)) {
+    pollRegistry.set(pluginName, new Map());
+  }
+  const registry = pollRegistry.get(pluginName);
+
+  // Register the client-level listener once per plugin.
+  if (!pollListeners.has(pluginName)) {
+    pollListeners.add(pluginName);
+    client.on("vote_update", (vote) => {
+      registry.get(vote.msgId._serialized)?._update(vote);
     });
-  },
+  }
 
     cleanup() {
       const list =
         listenerRegistry.get(pluginName);
 
-      if (!list) return;
+  return {
+    /**
+     * Send a poll and start tracking votes.
+     * Returns a PollHandle — use .onVote(), .results(), .winner(), .close().
+     *
+     * @param {string}   question
+     * @param {string[]} options
+     * @param {object}   [opts]
+     * @param {boolean}  [opts.allowMultipleAnswers=false]
+     * @returns {Promise<PollHandle>}
+     */
+    async create(question, options, opts = {}) {
+      const sender  = makeSender(chat, {}, chatId, chat, { cooldown, jitter });
+      const sentMsg = await sender.poll(question, options, opts);
+      const handle  = new PollHandle(sentMsg, options, registry);
+      registry.set(handle.msgId, handle);
+      return handle;
+    },
 
-      for (const {
-        event,
-        handler
-      } of list) {
-        client.off(
-          event,
-          handler
-        );
-      }
-      listenerRegistry.delete(pluginName);
+    /**
+     * Retrieve an active PollHandle by its message ID.
+     * Useful when a different plugin invocation needs to check an earlier poll.
+     * @param {string} msgId — serialized message ID
+     * @returns {PollHandle|null}
+     */
+    get(msgId) {
+      return registry.get(msgId) ?? null;
     },
   };
 }
