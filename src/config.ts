@@ -37,9 +37,6 @@ export const PLUGIN_FILE      = path.join(CONFIG_DIR, "manyplug.conf");
 export const TOML_CONFIG_FILE = path.join(CONFIG_DIR, "manybot.toml");
 export const TOML_PLUGIN_FILE = path.join(CONFIG_DIR, "manyplug.toml");
 
-console.log("PLUGIN RAW:", await readFileSafe(TOML_PLUGIN_FILE));
-console.log("PLUGIN PARSED:", await loadToml(TOML_PLUGIN_FILE, "manyplug.toml"));
-
 // ---------------------------------------------------------------------------
 // Legacy .conf parser (frozen — do not extend)
 // ---------------------------------------------------------------------------
