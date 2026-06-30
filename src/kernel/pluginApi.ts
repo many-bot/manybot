@@ -552,8 +552,6 @@ function buildSendApi(sock: WASocket, rawJid: string, guardOptions: Record<strin
       poll:    (q: string, opts: string[], cfg?: { allowMultipleAnswers?: boolean }) => current.poll(q, opts, cfg),
 
       viewOnce: (() => {
-        // Baileys supports viewOnce on image/video/audio natively
-        const sender = makeSender(sock, rawJid, null, { cooldown, jitter });
         return {
           image(filePath: string, caption?: string) {
             return new MessageHandle((async () => {
