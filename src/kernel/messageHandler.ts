@@ -19,14 +19,14 @@
 
 import type { WAProtoMsg, WASocket, WAStore, WAChat } from "#types";
 import { CHATS }              from "#config";
-import { buildApi }           from "#manyapi";
+import { buildApi,
+         buildChatFromMsg }  from "#manyapi";
 import { pluginRegistry }     from "#kernel/pluginLoader";
 import { runPlugin }          from "#kernel/pluginGuard";
 import { logger }             from "#logger";
 import { normalizeJid }       from "#client/baileysSock";
 import { simulateState,
          typingDuration }     from "#sendguard";
-import { buildChatFromMsg }   from "#manyapi";
 
 const INCOMING_DEBOUNCE_MS = 300;
 const lastProcessedAt = new Map<string, number>();
