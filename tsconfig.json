@@ -12,6 +12,8 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "paths": {
+      "#core/*":   ["./src/core/*.ts"],
+      "#drivers/*": ["./src/drivers/*"],
       "#client/*": ["./src/client/*.ts"],
       "#kernel/*": ["./src/kernel/*.ts"],
       "#manyapi":  ["./src/kernel/pluginApi.ts"],
