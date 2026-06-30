@@ -54,6 +54,8 @@
     "smol-toml": "^1.7.0"
   },
   "imports": {
+    "#core/*": "./src/core/*.ts",
+    "#drivers/*": "./src/drivers/*",
     "#client/*": "./src/client/*.ts",
     "#kernel/*": "./src/kernel/*.ts",
     "#manyapi": "./src/kernel/pluginApi.ts",
