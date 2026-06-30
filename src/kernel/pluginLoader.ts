@@ -59,12 +59,12 @@ export async function loadPlugins(activePlugins: string[]): Promise<void> {
   }
 
   const total   = pluginRegistry.size;
-  const ativos  = [...pluginRegistry.values()].filter(p => p.status === "active").length;
-  const erros   = total - ativos;
+  const active  = [...pluginRegistry.values()].filter(p => p.status === "active").length;
+  const errors  = total - active;
 
   logger.success(t("system.pluginsLoaded", {
-    count: ativos,
-    errors: erros ? t("system.pluginsLoadedWithErrors", { count: erros }) : ""
+    count: active,
+    errors: errors ? t("system.pluginsLoadedWithErrors", { count: errors }) : ""
   }));
 }
 
@@ -138,7 +138,7 @@ async function findPluginPath(name: string): Promise<string | null> {
 }
 
 /**
- * Carrega um único plugin pelo nome.
+ * Load a single plugin by name.
  * @param {string} name
  */
 async function loadPlugin(name: string): Promise<void> {
