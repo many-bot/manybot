@@ -36,7 +36,7 @@ function withTimeout(promise: Promise<unknown>, ms: number, pluginName: string):
     promise,
     new Promise((_, reject) =>
       setTimeout(
-        () => reject(new Error(`timed out after ${ms}ms`)),
+        () => reject(new Error(`[${pluginName}] timed out after ${ms}ms`)),
         ms
       )
     ),
