@@ -17,3 +17,7 @@ logs/audio-error.log
 logs/video-error.log
 registry.json
 manybot-*.tgz
+*.tar.gz
+*.tar
+*.zip
+
