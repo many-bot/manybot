@@ -21,17 +21,18 @@
   },
   "files": [
     "src/client",
-    "src/config.js",
+    "src/config.ts",
     "src/download",
     "src/i18n",
     "src/kernel",
     "src/locales",
     "src/logger",
-    "src/main.js",
+    "src/main.ts",
     "src/utils",
+    "src/types.ts",
+    "src/ambient.d.ts",
     "README.md",
     "README_EN.md",
-    "latest",
     "LICENSE"
   ],
   "scripts": {
