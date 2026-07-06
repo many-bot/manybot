@@ -18,7 +18,7 @@ import { CONFIG, CONFIG_DIR }        from "#config";
 import { enqueue }                   from "#download";
 import { emptyFolder }               from "#utils/file";
 import { getChatId }                 from "#utils/getChatId";
-import { normalizeJid }              from "#client/baileysSock";
+import { normalizeJid, toPresenceCapable } from "#client/baileysSock";
 import { mkdirSync }                 from "fs";
 import { readFile, writeFile }       from "fs/promises";
 import { readFileSync }              from "fs";
@@ -457,7 +457,7 @@ function makeSender(
     text(content: string, _opts: Record<string, unknown> = {}) {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, typingDuration(content), "typing");
+        await simulateState(toPresenceCapable(sock), jid, typingDuration(content), "typing");
         return sock.sendMessage(jid, { text: content }, qOpts);
       })(), sock);
     },
@@ -465,7 +465,7 @@ function makeSender(
     image(filePath: string, caption = "") {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
         const buffer = await readFile(filePath);
         return sock.sendMessage(jid, { image: buffer, caption }, qOpts);
       })(), sock);
@@ -474,7 +474,7 @@ function makeSender(
     video(filePath: string, caption = "") {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
         const buffer = await readFile(filePath);
         return sock.sendMessage(jid, { video: buffer, caption }, qOpts);
       })(), sock);
@@ -483,7 +483,7 @@ function makeSender(
     audio(filePath: string, { asVoice = true } = {}) {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, mediaDuration(), "recording");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "recording");
         const buffer = await readFile(filePath);
         return sock.sendMessage(jid, { audio: buffer, mimetype: "audio/mp4", ptt: asVoice }, qOpts);
       })(), sock);
@@ -492,7 +492,7 @@ function makeSender(
     sticker(source: string | Buffer) {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
         const buffer = Buffer.isBuffer(source) ? source : await readFile(source);
         return sock.sendMessage(jid, { sticker: buffer }, qOpts);
       })(), sock);
@@ -501,7 +501,7 @@ function makeSender(
     file(filePath: string, filename?: string) {
       return new MessageHandle((async () => {
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(sock, jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
         const buffer   = await readFile(filePath);
         const mimetype = mimeFromPath(filePath);
         return sock.sendMessage(jid, {
@@ -556,7 +556,7 @@ function buildSendApi(sock: WASocket, rawJid: string, guardOptions: Record<strin
           image(filePath: string, caption?: string) {
             return new MessageHandle((async () => {
               await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
-              await simulateState(sock, rawJid, mediaDuration(), "typing");
+              await simulateState(toPresenceCapable(sock), rawJid, mediaDuration(), "typing");
               const buffer = await readFile(filePath);
               return sock.sendMessage(rawJid, { image: buffer, caption, viewOnce: true });
             })(), sock);
@@ -564,7 +564,7 @@ function buildSendApi(sock: WASocket, rawJid: string, guardOptions: Record<strin
           video(filePath: string, caption?: string) {
             return new MessageHandle((async () => {
               await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
-              await simulateState(sock, rawJid, mediaDuration(), "typing");
+              await simulateState(toPresenceCapable(sock), rawJid, mediaDuration(), "typing");
               const buffer = await readFile(filePath);
               return sock.sendMessage(rawJid, { video: buffer, caption, viewOnce: true });
             })(), sock);
@@ -573,7 +573,7 @@ function buildSendApi(sock: WASocket, rawJid: string, guardOptions: Record<strin
             const asVoice = opts?.asVoice ?? true;
             return new MessageHandle((async () => {
               await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
-              await simulateState(sock, rawJid, mediaDuration(), "recording");
+              await simulateState(toPresenceCapable(sock), rawJid, mediaDuration(), "recording");
               const buffer = await readFile(filePath);
               return sock.sendMessage(rawJid, { audio: buffer, mimetype: "audio/mp4", ptt: asVoice, viewOnce: true });
             })(), sock);

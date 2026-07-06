@@ -24,7 +24,7 @@ import { buildApi,
 import { pluginRegistry }     from "#kernel/pluginLoader";
 import { runPlugin }          from "#kernel/pluginGuard";
 import { logger }             from "#logger";
-import { normalizeJid }       from "#client/baileysSock";
+import { normalizeJid, toPresenceCapable } from "#client/baileysSock";
 import { simulateState,
          typingDuration }     from "#sendguard";
 
@@ -75,7 +75,7 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
     if (useTyping) {
       // Refresh presence every 4s so WhatsApp doesn't auto-clear it
       typingInterval = setInterval(() => {
-        sock.sendPresenceUpdate("composing", rawJid).catch(() => {});
+        toPresenceCapable(sock).setPresence!(rawJid, "composing").catch(() => {});
       }, 4000);
     }
 
@@ -84,7 +84,7 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
     } finally {
       if (useTyping) {
         clearInterval(typingInterval);
-        sock.sendPresenceUpdate("paused", rawJid).catch(() => {});
+        toPresenceCapable(sock).setPresence!(rawJid, "paused").catch(() => {});
       }
     }
   }

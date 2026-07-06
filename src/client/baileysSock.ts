@@ -18,6 +18,8 @@ import { CONFIG_DIR, PHONE_NUMBER, CLIENT_ID } from "#config";
 import { logger }           from "#logger";
 import { t }                from "#i18n";
 import { createStore }      from "#client/store";
+import { CapabilitySet }    from "#core/capabilities";
+import type { PresenceCapable } from "#core/adapter";
 import type { WASocket, WAStore } from "#types";
 
 // ── Auth path ─────────────────────────────────────────────────────────────────
@@ -107,4 +109,19 @@ export function normalizeJid(jid: string): string {
   return jid
     .replace(/@s\.whatsapp\.net$/, "@c.us")
     .replace(/:\d+@/, "@");
+}
+
+/**
+ * Minimal PresenceCapable view over a raw socket. Transitional shim used
+ * by kernel code that still works with a raw sock instead of a full
+ * PlatformAdapter — goes away once that code is migrated.
+ *
+ * @param {WASocket} sock
+ * @returns {PresenceCapable}
+ */
+export function toPresenceCapable(sock: WASocket): PresenceCapable {
+  return {
+    capabilities: new CapabilitySet(["presence"]),
+    setPresence:  (chatId, state) => sock.sendPresenceUpdate(state, chatId),
+  };
 }
