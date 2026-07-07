@@ -21,19 +21,11 @@ import { createStore }      from "#client/store";
 import { CapabilitySet }    from "#core/capabilities";
 import type { PresenceCapable } from "#core/adapter";
 import type { WASocket, WAStore } from "#types";
+import pino from "pino";
 
 // ── Auth path ─────────────────────────────────────────────────────────────────
 
 const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
-
-// ── Silent logger for Baileys internals ───────────────────────────────────────
-
-const silentLogger = {
-  level: "silent",
-  trace: () => {}, debug: () => {}, info: () => {},
-  warn:  () => {}, error: () => {}, fatal: () => {},
-  child() { return silentLogger; },
-} as unknown as Parameters<typeof makeWASocket>[0]["logger"];
 
 // ── Shared store (survives socket reconnects) ─────────────────────────────────
 
@@ -45,6 +37,8 @@ export interface SocketBundle {
   sock:  WASocket;
   store: WAStore;
 }
+
+const silentLogger = pino({ level: "silent" }) as unknown as Parameters<typeof makeWASocket>[0]["logger"];
 
 /**
  * Create a new Baileys socket with persistent auth and store binding.
