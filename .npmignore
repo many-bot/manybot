@@ -20,4 +20,8 @@ manybot-*.tgz
 *.tar.gz
 *.tar
 *.zip
-dist
+src/
+tsconfig.json
+.eslintrc.*
+.prettierrc*
+.github/
