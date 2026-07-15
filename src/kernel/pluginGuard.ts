@@ -20,7 +20,7 @@
  *                          (e.g. heavy media processing, sticker generation).
  */
 import { logger }         from "#logger";
-import { pluginRegistry, type PluginEntry } from "#kernel/pluginLoader";
+import { pluginRegistry, type PluginEntry } from "#kernel/pluginLoader.js";
 
 /** Max ms a single plugin run is allowed to take before it's force-aborted. */
 const PLUGIN_TIMEOUT_MS = 120_000;
@@ -32,15 +32,15 @@ const PLUGIN_TIMEOUT_MS = 120_000;
  * @param {string}   pluginName
  */
 function withTimeout(promise: Promise<unknown>, ms: number, pluginName: string): Promise<unknown> {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`[${pluginName}] timed out after ${ms}ms`)),
-        ms
-      )
-    ),
-  ]);
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`[${pluginName}] timed out after ${ms}ms`)),
+      ms
+    );
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -60,21 +60,38 @@ export async function runPlugin(plugin: PluginEntry, context: unknown): Promise<
     const run = plugin.run(context);
     await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
   } catch (e) {
-    plugin.status = "error";
-    plugin.error  = e instanceof Error ? e : new Error(String(e));
-    pluginRegistry.set(plugin.name, plugin);
+    const error = e instanceof Error ? e : new Error(String(e));
+    const errorCount = (plugin.errorCount ?? 0) + 1;
+    plugin.errorCount = errorCount;
+    plugin.error = error;
 
-    const err = plugin.error!;
-    const isTimeout = useTimeout && err.message?.startsWith("timed out");
-    const headline  = isTimeout
-      ? `[pluginGuard] Plugin "${plugin.name}" forcibly stopped: ${err.message}`
-      : `[pluginGuard] Plugin "${plugin.name}" threw an unhandled error and was disabled`;
+    const isTimeout = useTimeout && error.message?.startsWith("timed out");
 
-    logger.error(headline);
-    logger.error(`  message : ${err.message}`);
-    if (!isTimeout) {
-      const frame = err.stack?.split("\n")[1]?.trim() ?? "(no stack)";
-      logger.error(`  at      : ${frame}`);
+    if (errorCount >= 3) {
+      plugin.status = "error";
+      pluginRegistry.set(plugin.name, plugin);
+      logger.error(`[pluginGuard] Plugin "${plugin.name}" threw an error and has failed 3 times. Disabling plugin.`);
+      logger.error(`  message : ${error.message}`);
+      if (!isTimeout) {
+        const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
+        logger.error(`  at      : ${frame}`);
+      }
+    } else {
+      pluginRegistry.set(plugin.name, plugin);
+      logger.warn(`[pluginGuard] Plugin "${plugin.name}" threw an error (attempt ${errorCount}/3). Reloading...`);
+      logger.warn(`  message : ${error.message}`);
+      if (!isTimeout) {
+        const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
+        logger.warn(`  at      : ${frame}`);
+      }
+
+      // Reload the plugin dynamically to avoid circular dependency
+      import("#kernel/pluginLoader.js").then(({ reloadPlugin }) => {
+        reloadPlugin(plugin.name).catch(err => {
+          logger.error(`[pluginGuard] Failed to reload plugin "${plugin.name}": ${err.message}`);
+        });
+      });
     }
   }
 }
+

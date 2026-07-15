@@ -46,7 +46,7 @@ export function printBanner(): void {
   console.log();
 
   console.log(
-    `  ${C.gray}website${C.reset} : ${C.yellow}https://manybot.stxerr.dev${C.reset}`
+    `  ${C.gray}website${C.reset} : ${C.yellow}https://manybot.org${C.reset}`
   );
 
   console.log(

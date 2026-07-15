@@ -10,9 +10,9 @@
  * support a capability simply omits the method.
  */
 
-import type { CapabilitySet }                                   from "#core/capabilities";
+import type { CapabilitySet }                                   from "#core/capabilities.js";
 import type { Chat, Contact, Participant, IncomingMessage,
-              SendOptions, MediaSendOptions, MediaType }         from "#core/types";
+              SendOptions, MediaSendOptions, MediaType }         from "#core/types.js";
 
 export interface PlatformAdapter {
   readonly id: string; // "whatsapp" | "discord" | "telegram" | ...

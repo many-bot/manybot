@@ -7,7 +7,7 @@
 export interface Chat {
   id: string;
   name: string;
-  isGroup: boolean; // Obrigatório
+  isGroup: boolean;
   kind?: "group" | "direct";
   raw?: any;
 }
@@ -38,7 +38,12 @@ export interface IncomingMessage {
   quotedMessageId?: string;
   mentions?: string[];
   type?: string; 
-  hasMedia?: boolean; // Adicionado para corrigir o erro da linha 24
+  hasMedia?: boolean;
+  hasImage?: boolean;
+  hasVideo?: boolean;
+  hasSticker?: boolean;
+  hasDocument?: boolean;
+  hasAudio?: boolean;
   raw?: any;
 }
 

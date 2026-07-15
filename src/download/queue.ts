@@ -8,7 +8,7 @@
  * Queue only handles sequence and error handling.
  *
  * Usage:
- *   import { enqueue } from "../../src/download/queue.ts";
+ *   import { enqueue } from "#download";
  *   enqueue(async () => { ... all plugin logic ... }, onError);
  */
 

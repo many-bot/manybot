@@ -14,12 +14,13 @@ import makeWASocket, {
 import { Boom }             from "@hapi/boom";
 import path                 from "path";
 import qrcode               from "qrcode-terminal";
-import { CONFIG_DIR, PHONE_NUMBER, CLIENT_ID } from "#config";
+import { CONFIG_DIR, CLIENT_ID } from "#config";
+import { resolveLoginMethod } from "../loginPrompt.js";
 import { logger }           from "#logger";
 import { t }                from "#i18n";
-import { createStore }      from "#client/store";
-import { CapabilitySet }    from "#core/capabilities";
-import type { PresenceCapable } from "#core/adapter";
+import { createStore }      from "#client/store.js";
+import { CapabilitySet }    from "#core/capabilities.js";
+import type { PresenceCapable } from "#core/adapter.js";
 import type { WASocket, WAStore } from "#types";
 import pino from "pino";
 
@@ -38,8 +39,6 @@ export interface SocketBundle {
   store: WAStore;
 }
 
-const silentLogger = pino({ level: "silent" }) as unknown as Parameters<typeof makeWASocket>[0]["logger"];
-
 /**
  * Create a new Baileys socket with persistent auth and store binding.
  * Reconnection is the caller's responsibility — call createSocket() again
@@ -49,12 +48,27 @@ export async function createSocket(): Promise<SocketBundle> {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version }          = await fetchLatestBaileysVersion();
 
+  // Already-valid session (creds registered in .manybot/sessions) → skips
+  // LOGIN_METHOD/PHONE_NUMBER and the interactive login flow entirely, and
+  // connects directly. This also avoids reopening QR/pairing on normal
+  // reconnects (network drop, etc), since only the FIRST run ever gets
+  // here without `registered`.
+  const alreadyRegistered = !!(state.creds as { registered?: boolean }).registered;
+
+  const { method, phone } = alreadyRegistered
+    ? { method: null as null, phone: null as string | null }
+    : await resolveLoginMethod();
+
   const sock = makeWASocket({
     version,
     auth:                           state,
     printQRInTerminal:              false,
-    browser:                        Browsers.ubuntu("ManyBot"),
-    logger:                         silentLogger,
+    // Recognized browser signature. A custom name (e.g. "ManyBot") works
+    // fine for QR, but WhatsApp rejects phone-number pairing when the
+    // browser doesn't match one of the known signatures — resulting in
+    // "Couldn't link device" on the phone even with the correct code.
+    browser:                        Browsers.ubuntu("Chrome"),
+    logger:                         pino({ level: "silent" }),
     generateHighQualityLinkPreview: false,
     syncFullHistory:                false,
   }) as WASocket;
@@ -62,23 +76,29 @@ export async function createSocket(): Promise<SocketBundle> {
   store.bind(sock.ev);
   sock.ev.on("creds.update", saveCreds);
 
-  // QR code — shown when no phone pairing is configured
+  // QR code — only if the chosen method was "qr" (intentionally ignores
+  // PHONE_NUMBER even if one was saved from a previous choice).
   sock.ev.on("connection.update", (update) => {
     const { qr } = update;
-    if (qr && !PHONE_NUMBER) {
+    if (qr && method === "qr") {
       logger.info(t("system.qrScan"));
       qrcode.generate(qr, { small: true });
     }
   });
 
-  // Phone number pairing (if PHONE_NUMBER is set and not yet registered)
-  if (PHONE_NUMBER && !(state.creds as { registered?: boolean }).registered) {
+  // Number pairing — only if the chosen method was "phone".
+  if (method === "phone" && phone) {
+    if (!/^\d{8,15}$/.test(phone)) {
+      logger.error(t("system.phoneNumberInvalid", { number: phone }));
+      return { sock, store };
+    }
+
     // Allow the socket to handshake before requesting the pairing code
     setTimeout(async () => {
       try {
         const code = await (sock as unknown as {
           requestPairingCode(phone: string): Promise<string>
-        }).requestPairingCode(PHONE_NUMBER!);
+        }).requestPairingCode(phone);
         logger.info(t("system.pairingCodeTitle"));
         logger.info(t("system.pairingCodeValue", { code }));
         logger.info(t("system.pairingCodeInstructions"));

@@ -1,10 +1,15 @@
-// ── Untyped packages ──────────────────────────────────────────────────────────
+/*
+* src/ambient.d.ts
+* 
+* This file basically describes types for untyped packages
+*
+* */
 
 declare module "qrcode-terminal" {
   interface QRCode {
     generate(text: string, opts?: { small?: boolean }): void;
     setErrorLevel(level: "L" | "M" | "Q" | "H"): void;
-    error(err: string): void;
+    error: string;
   }
   const qrcode: QRCode;
   export = qrcode;

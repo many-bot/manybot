@@ -1,6 +1,5 @@
 {
   "bot": {
-    "starting": "Iniciando ManyBot...",
     "initialized": "Cliente inicializado. Esperando conexión con WhatsApp...",
     "ready": "¡Bot está listo!",
     "error": {
@@ -11,52 +10,29 @@
       "sigterm": "Proceso interrumpida. Apagando..."
     }
   },
-  "log": {
-    "info": "INFO",
-    "success": "OK",
-    "warn": "WARN",
-    "error": "ERROR",
-    "msg": "MSG",
-    "cmd": "CMD",
-    "done": "DONE",
-    "context": {
-      "group": "grupo",
-      "from": "De",
-      "type": "Tipo",
-      "replyTo": "Responde a"
-    }
-  },
   "system": {
-    "environment": "Entorno: {{platform}} — usando {{puppeteer}}",
-    "environmentTermux": "Entorno: Termux — usando Chromium del sistema",
     "connected": "¡WhatsApp conectado y listo!",
     "disconnected": "Desconectado — motivo: {{reason}}",
-    "reconnecting": "Reconectando en {{seconds}}s...",
-    "reinitializing": "Reinicializando cliente...",
-    "qrSaved": "Código QR guardado en: {{path}}",
-    "qrOpen": "Abrir con: termux-open qr.png",
-    "qrSaveFailed": "Error al guardar el Código QR:",
     "qrScan": "Escanea el Código QR abajo:",
+    "pairingCodeTitle": "Código de emparejamiento:",
+    "pairingCodeValue": "→ {{code}} ←",
+    "pairingCodeInstructions": "Ingresa este código en WhatsApp: Menú → Dispositivos vinculados → Vincular con número de teléfono",
+    "phoneNumberInvalid": "Número de teléfono inválido: {{number}}. Formato esperado: 5511999999999 (código de país + área + número, sin espacios ni caracteres especiales)",
     "clientId": "Client ID: {{id}}",
-    "pluginsFolderNotFound": "Carpeta de plugins no encontrada. Ningún plugin cargado.",
     "pluginsLoaded": "Plugins cargados: {{count}} activos{{errors}}",
     "pluginsLoadedWithErrors": ", {{count}} con error",
     "pluginSetupFailed": "Error en la configuración del plugin \"{{name}}\": {{message}}",
     "pluginNotFound": "Plugin \"{{name}}\" no encontrado en {{path}}",
     "pluginLoaded": "Plugin cargado: {{name}}",
+    "pluginReloaded": "Plugin recargado: {{name}}",
     "pluginLoadFailed": "Error al cargar el plugin \"{{name}}\": {{message}}",
-    "pluginDisabledAfterError": "Plugin \"{{name}}\" desactivado después del error: {{message}}",
     "schedulerInvalidCron": "Plugin \"{{name}}\" registró expresión cron inválida: \"{{expression}}\"",
     "schedulerError": "Error en la programación del plugin \"{{name}}\": {{message}}",
     "schedulerRegistered": "Programación registrada — plugin \"{{name}}\" → \"{{expression}}\"",
-    "downloadJobFailed": "Error en el trabajo de descarga — {{message}}"
+    "downloadJobFailed": "Error en el trabajo de descarga — {{message}}",
+    "reconnecting": "Reconectando en {{secs}}s..."
   },
   "errors": {
-    "pluginLoad": "Error al cargar el plugin",
-    "messageProcess": "Error al procesar el mensaje",
-    "stack": "Stack",
-    "chromeNotFound": "No se ha encontrado Chrome. Descargando...",
-    "couldNotDownloadChrome": "No se ha podido descargar Chrome: ",
-    "OSNotSupported": "Sistema operativo no compatible: {{os}}. Si tienes alguna duda, consulta: https://manybot.stxerr.dev/docs/getting-started/"
+    "stack": "Stack"
   }
 }

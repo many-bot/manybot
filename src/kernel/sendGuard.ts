@@ -12,14 +12,14 @@
  * the message arrives, so the chat shows "typing..." realistically.
  */
 
-import type { PresenceCapable } from "#core/adapter";
+import type { PresenceCapable } from "#core/adapter.js";
 import { logger } from "#logger";
 
 // ── Tunables ──────────────────────────────────────────────────────────────────
 
-const GLOBAL_MSG_PER_SEC  = 3;
-const CHAT_COOLDOWN_MS    = 900;
-const JITTER_MS           = { min: 400, max: 1400 };
+const GLOBAL_MSG_PER_SEC = 5;
+const CHAT_COOLDOWN_MS   = 300;
+const JITTER_MS          = { min: 100, max: 400 };
 const TYPING_CPS          = 55;
 const TYPING_MAX_MS       = 4500;
 const MEDIA_INDICATOR_MS  = { min: 800, max: 2000 };

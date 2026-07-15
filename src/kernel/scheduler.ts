@@ -3,11 +3,14 @@
  *
  * Allows plugins to register scheduled tasks via cron.
  * Uses node-cron underneath, but plugins never import node-cron directly —
- * they only call api.schedule(cron, fn).
+ * they only call ctx.scheduler.schedule(cron, fn).
  *
  * Usage in plugin:
- *   import { schedule } from "many";
- *   schedule("0 9 * * 1", async () => { await api.send("Good morning!"); });
+ *   export default async function (ctx) {
+ *     ctx.scheduler.schedule("0 9 * * 1", async () => {
+ *       await ctx.send.text("Good morning!");
+ *     });
+ *   }
  */
 
 import cron   from "node-cron";
