@@ -3,27 +3,23 @@ on:
   push:
     tags:
       - 'v*'
-
 permissions:
   contents: write
-
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
-
       - run: npm ci
-
+      - run: npm run build
+      - run: npm run test --if-present
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        id: gh_release
         continue-on-error: true
         with:
           name: >-
@@ -34,20 +30,6 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Retry Create GitHub Release
-        if: steps.gh_release.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
-        with:
-          name: >-
-            ${{ contains(github.ref_name, '-rc.') 
-              && format('[RC] {0}', github.ref_name)
-              || format('Release {0}', github.ref_name) }}
-          prerelease: ${{ contains(github.ref_name, '-rc.') }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Publish to npm
         if: ${{ !contains(github.ref_name, '-rc.') }}
         run: npm publish --access=public
