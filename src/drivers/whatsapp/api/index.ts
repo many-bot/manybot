@@ -72,8 +72,9 @@ function msgIsGif(msg: WAProtoMsg): boolean {
 }
 
 /** Sender JID — group participant or DM remote JID, normalized. */
-function getMsgSender(msg: WAProtoMsg): string {
-  return normalizeJid(msg.key.participant || msg.key.remoteJid || "");
+function getMsgSender(msg: WAProtoMsg, store: WAStore): string {
+  const raw = normalizeJid(msg.key.participant || msg.key.remoteJid || "");
+  return normalizeJid(store.resolveJid(raw));
 }
 
 function getContextInfo(msg: WAProtoMsg): proto.IContextInfo | null {
@@ -420,7 +421,7 @@ export function buildMessageContext(
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
   const rawJid   = msg.key.remoteJid ?? "";
-  const sender   = getMsgSender(msg);
+  const sender   = getMsgSender(msg, store);
   const cooldown = guardOptions.cooldown ?? true;
   const jitter   = guardOptions.jitter ?? true;
 
@@ -1175,7 +1176,7 @@ export function buildApi({
 
   const rawJid   = msg.key.remoteJid ?? "";
   const normJid  = normalizeJid(rawJid);
-  const sender   = getMsgSender(msg);
+  const sender   = getMsgSender(msg, store);
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
