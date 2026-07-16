@@ -17,7 +17,6 @@ export interface Contact {
   name: string;
   pushName?: string;
   isBot?: boolean;
-  isMyContact?: boolean;
   raw?: any;
 }
 
