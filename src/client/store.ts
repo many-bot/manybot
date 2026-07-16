@@ -34,6 +34,12 @@ export interface BotStore {
    */
   readonly messages: Map<string, Map<string, WAProtoMsg>>;
   /**
+   * Resolve a `@lid` JID to the traditional `@s.whatsapp.net` JID when a
+   * mapping has been learned (from contacts or message keys). Returns the
+   * input unchanged if it's not a `@lid` JID or no mapping is known yet.
+   */
+  resolveJid(jid: string): string;
+  /**
    * Bind the store to a socket event emitter.
    * Must be called immediately after socket creation.
    */
@@ -50,6 +56,18 @@ export function createStore(): BotStore {
   const chatsMap    = new Map<string, StoreChat>();
   const contacts: Record<string, WAStoreContact> = {};
   const messages    = new Map<string, Map<string, WAProtoMsg>>();
+  // @lid JID → traditional @s.whatsapp.net JID, learned from contact and
+  // message-key pairs (Baileys exposes both forms during the LID rollout).
+  const lidMap      = new Map<string, string>();
+
+  function learnLid(lid?: string | null, pn?: string | null) {
+    if (lid && pn && lid.endsWith("@lid") && !pn.endsWith("@lid")) lidMap.set(lid, pn);
+  }
+
+  function resolveJid(jid: string): string {
+    if (!jid || !jid.endsWith("@lid")) return jid;
+    return lidMap.get(jid) ?? jid;
+  }
 
   // Max messages kept per chat (prevents unbounded memory growth)
   const MAX_MSGS_PER_CHAT = 200;
@@ -66,6 +84,11 @@ export function createStore(): BotStore {
       notify:       contact.notify,
       verifiedName: contact.verifiedName,
     };
+    // Baileys' Contact carries both the traditional JID (id) and the LID
+    // (lid) once known — learn the mapping either direction.
+    const lidField = (contact as unknown as { lid?: string }).lid;
+    learnLid(lidField, contact.id);
+    learnLid(contact.id, lidField);
   }
 
   function storeMessage(msg: WAProtoMsg) {
@@ -107,20 +130,38 @@ export function createStore(): BotStore {
       for (const update of updates) {
         if (!update.id) continue;
         contacts[update.id] = { ...contacts[update.id], ...update };
+        const lidField = (update as unknown as { lid?: string }).lid;
+        learnLid(lidField, update.id);
+        learnLid(update.id, lidField);
       }
     });
 
     ev.on("messages.upsert", ({ messages: msgs }) => {
-      for (const msg of msgs) storeMessage(msg);
+      for (const msg of msgs) {
+        storeMessage(msg);
+        const key = msg.key as unknown as { participant?: string; participantAlt?: string; remoteJid?: string; remoteJidAlt?: string };
+        learnLid(key.participantAlt, key.participant);
+        learnLid(key.remoteJidAlt, key.remoteJid);
+      }
     });
 
     ev.on("messages.update", (updates) => {
       for (const { key, update } of updates) {
         if (!key.remoteJid || !key.id) continue;
         const existing = messages.get(key.remoteJid)?.get(key.id);
-        if (existing) {
-          messages.get(key.remoteJid)!.set(key.id, { ...existing, ...update });
+        if (!existing) continue;
+
+        // Poll votes: pollUpdates on this event are only the NEW entries,
+        // not the full history — must be accumulated, never overwritten,
+        // or getAggregateVotesInPollMessage() only ever sees the latest vote.
+        const incoming = (update as unknown as { pollUpdates?: unknown[] }).pollUpdates;
+        const merged = { ...existing, ...update } as unknown as { pollUpdates?: unknown[] };
+        if (incoming?.length) {
+          const prior = (existing as unknown as { pollUpdates?: unknown[] }).pollUpdates ?? [];
+          merged.pollUpdates = [...prior, ...incoming];
         }
+
+        messages.get(key.remoteJid)!.set(key.id, merged as unknown as WAProtoMsg);
       }
     });
   }
@@ -132,6 +173,7 @@ export function createStore(): BotStore {
     },
     contacts,
     messages,
+    resolveJid,
     bind,
   };
 }
