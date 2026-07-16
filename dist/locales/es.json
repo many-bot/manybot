@@ -1,0 +1,52 @@
+{
+  "bot": {
+    "initialized": "Cliente inicializado. Esperando conexión con WhatsApp...",
+    "ready": "¡Bot está listo!",
+    "error": {
+      "uncaught": "Excepción no capturada",
+      "unhandled": "Rechazo no manejado"
+    },
+    "signal": {
+      "sigterm": "Proceso interrumpida. Apagando..."
+    }
+  },
+  "system": {
+    "connected": "¡WhatsApp conectado y listo!",
+    "disconnected": "Desconectado — motivo: {{reason}}",
+    "qrScan": "Escanea el Código QR abajo:",
+    "pairingCodeTitle": "Código de emparejamiento:",
+    "pairingCodeValue": "→ {{code}} ←",
+    "pairingCodeInstructions": "Ingresa este código en WhatsApp: Menú → Dispositivos vinculados → Vincular con número de teléfono",
+    "phoneNumberInvalid": "Número de teléfono inválido: {{number}}. Formato esperado: 5511999999999 (código de país + área + número, sin espacios ni caracteres especiales)",
+    "clientId": "Client ID: {{id}}",
+    "pluginsLoaded": "Plugins cargados: {{count}} activos{{errors}}",
+    "pluginsLoadedWithErrors": ", {{count}} con error",
+    "pluginSetupFailed": "Error en la configuración del plugin \"{{name}}\": {{message}}",
+    "pluginNotFound": "Plugin \"{{name}}\" no encontrado en {{path}}",
+    "pluginLoaded": "Plugin cargado: {{name}}",
+    "pluginReloaded": "Plugin recargado: {{name}}",
+    "pluginLoadFailed": "Error al cargar el plugin \"{{name}}\": {{message}}",
+    "schedulerInvalidCron": "Plugin \"{{name}}\" registró expresión cron inválida: \"{{expression}}\"",
+    "schedulerError": "Error en la programación del plugin \"{{name}}\": {{message}}",
+    "schedulerRegistered": "Programación registrada — plugin \"{{name}}\" → \"{{expression}}\"",
+    "downloadJobFailed": "Error en el trabajo de descarga — {{message}}",
+    "reconnecting": "Reconectando en {{secs}}s...",
+    "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando..."
+  },
+  "errors": {
+    "stack": "Stack"
+  },
+  "onboarding": {
+    "intro": "ManyBot — primer inicio de sesión",
+    "methodPrompt": "¿Cómo quieres conectar tu cuenta de WhatsApp?",
+    "methodPhone": "Ingresar número de teléfono",
+    "methodPhoneHint": "código de emparejamiento",
+    "methodQr": "Mostrar código QR",
+    "methodQrHint": "escanea con tu teléfono",
+    "phonePrompt": "Número de teléfono (con código de país, solo dígitos)",
+    "phoneValidation": "Solo dígitos, con código de país. Ej.: 5511999999999",
+    "outroQr": "Escanea el código QR que aparecerá a continuación.",
+    "outroPhone": "Espera el código de emparejamiento que aparecerá a continuación.",
+    "cancelled": "Inicio de sesión cancelado."
+  }
+}

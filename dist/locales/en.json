@@ -1,0 +1,52 @@
+{
+  "bot": {
+    "initialized": "Client initialized. Waiting for WhatsApp connection...",
+    "ready": "Bot is ready!",
+    "error": {
+      "uncaught": "Uncaught exception",
+      "unhandled": "Unhandled rejection"
+    },
+    "signal": {
+      "sigterm": "Process interrupted. Shutting down..."
+    }
+  },
+  "system": {
+    "connected": "WhatsApp connected and ready!",
+    "disconnected": "Disconnected — reason: {{reason}}",
+    "qrScan": "Scan the QR Code below:",
+    "pairingCodeTitle": "Pairing code:",
+    "pairingCodeValue": "→ {{code}} ←",
+    "pairingCodeInstructions": "Enter this code in WhatsApp: Menu → Linked devices → Link with phone number",
+    "phoneNumberInvalid": "Invalid phone number: {{number}}. Expected format: 5511999999999 (country code + area code + number, no spaces or special characters)",
+    "clientId": "Client ID: {{id}}",
+    "pluginsLoaded": "Plugins loaded: {{count}} active{{errors}}",
+    "pluginsLoadedWithErrors": ", {{count}} with error",
+    "pluginSetupFailed": "Plugin \"{{name}}\" setup failed: {{message}}",
+    "pluginNotFound": "Plugin \"{{name}}\" not found at {{path}}",
+    "pluginLoaded": "Plugin loaded: {{name}}",
+    "pluginReloaded": "Plugin reloaded: {{name}}",
+    "pluginLoadFailed": "Failed to load plugin \"{{name}}\": {{message}}",
+    "schedulerInvalidCron": "Plugin \"{{name}}\" registered invalid cron expression: \"{{expression}}\"",
+    "schedulerError": "Plugin \"{{name}}\" scheduling error: {{message}}",
+    "schedulerRegistered": "Schedule registered — plugin \"{{name}}\" → \"{{expression}}\"",
+    "downloadJobFailed": "Download job failed — {{message}}",
+    "reconnecting": "Reconnecting in {{secs}}s...",
+    "sessionExpired": "Session expired or logged out — removing local session and restarting..."
+  },
+  "errors": {
+    "stack": "Stack"
+  },
+  "onboarding": {
+    "intro": "ManyBot — first login",
+    "methodPrompt": "How do you want to connect your WhatsApp account?",
+    "methodPhone": "Enter phone number",
+    "methodPhoneHint": "pairing code",
+    "methodQr": "Show QR code",
+    "methodQrHint": "scan with your phone",
+    "phonePrompt": "Phone number (with country code, digits only)",
+    "phoneValidation": "Digits only, with country code. E.g.: 5511999999999",
+    "outroQr": "Scan the QR code that will appear next.",
+    "outroPhone": "Wait for the pairing code that will appear next.",
+    "cancelled": "Login cancelled."
+  }
+}
