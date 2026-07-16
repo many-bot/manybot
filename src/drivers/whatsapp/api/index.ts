@@ -53,6 +53,7 @@ function getMsgType(msg: WAProtoMsg): string {
   const m = msg.message;
   if (!m) return "unknown";
   if (m.conversation || m.extendedTextMessage)     return "chat";
+  if (m.buttonsResponseMessage || m.listResponseMessage) return "chat";
   if (m.imageMessage)                              return "image";
   if (m.videoMessage)                              return "video";
   if (m.audioMessage)                              return "audio";
@@ -61,6 +62,10 @@ function getMsgType(msg: WAProtoMsg): string {
   if (m.pollCreationMessage ||
       m.pollCreationMessageV2 ||
       m.pollCreationMessageV3)                     return "poll";
+  if (m.locationMessage || m.liveLocationMessage)  return "location";
+  if (m.contactMessage)                            return "vcard";
+  if (m.contactsArrayMessage)                      return "multi_vcard";
+  if (m.protocolMessage?.type === 0)               return "revoked"; // REVOKE
   return "unknown";
 }
 
@@ -115,6 +120,35 @@ function getMsgMimetype(msg: WAProtoMsg): string {
 const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupNameCache = new Map<string, { name: string; at: number }>();
 
+// chat.getParticipants()/isAdmin()/isSenderAdmin()/isBotAdmin() used to hit
+// sock.groupMetadata() on every single call — a network round trip per
+// message in busy groups. wwjs read this from an in-memory Chat object
+// instead. Cache full metadata with the same TTL pattern as groupNameCache
+// above, and drop the entry as soon as membership/admin state actually
+// changes so a promote/kick/join is visible well before the TTL expires.
+type WAGroupMetadata = Awaited<ReturnType<WASocket["groupMetadata"]>>;
+const GROUP_META_CACHE_TTL_MS = 5 * 60 * 1000;
+const groupMetaCache = new Map<string, { meta: WAGroupMetadata; at: number }>();
+
+async function getGroupMetadataCached(sock: WASocket, jid: string): Promise<WAGroupMetadata> {
+  const cached = groupMetaCache.get(jid);
+  if (cached && Date.now() - cached.at < GROUP_META_CACHE_TTL_MS) return cached.meta;
+  const meta = await sock.groupMetadata(jid);
+  groupMetaCache.set(jid, { meta, at: Date.now() });
+  return meta;
+}
+
+let groupMetaInvalidationBound = false;
+function bindGroupMetaInvalidation(sock: WASocket) {
+  if (groupMetaInvalidationBound) return;
+  groupMetaInvalidationBound = true;
+  const ev = sock.ev as unknown as NodeJS.EventEmitter;
+  ev.on("group-participants.update", (u: { id: string }) => groupMetaCache.delete(u.id));
+  ev.on("groups.update", (updates: { id?: string }[]) => {
+    for (const u of updates) if (u.id) groupMetaCache.delete(u.id);
+  });
+}
+
 /**
  * Build a WAChat adapter from a Baileys message + store.
  * Exposed for use in messageHandler.ts.
@@ -140,7 +174,7 @@ export async function buildChatFromMsg(msg: WAProtoMsg, store: WAStore, sock: WA
       name = cached.name;
     } else {
       try {
-        const meta = await sock.groupMetadata(rawJid);
+        const meta = await getGroupMetadataCached(sock, rawJid);
         if (meta?.subject) {
           name = meta.subject;
           groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
@@ -356,6 +390,11 @@ async function normalizeContact(jid: string, info: WAStoreContact | undefined, b
       isWAAccount = false;
     }
   }
+  // No store record and no confirmed WhatsApp account (and not a group,
+  // which we can't verify this way) — nothing backs this contact.
+  // Matches the old whatsapp-web.js contract: getContactById() threw /
+  // resolved to null for an unknown ID instead of returning a hollow object.
+  if (!jid.endsWith("@g.us") && !isWAAccount) return null;
   if (sock && !jid.endsWith("@g.us")) {
     try {
       isBusiness = Boolean(await sock.getBusinessProfile(jid));
@@ -492,12 +531,35 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
   };
 }
 
+/** Shape of the `ctx.msg` object passed to plugins on every message. */
+export interface WAMessageContext {
+  body:       string;
+  type:       string;
+  fromMe:     boolean;
+  sender:     string;
+  senderName: string;
+  command:    string;
+  args:       string[];
+  is(cmd: string): boolean;
+  hasMedia: boolean;
+  isGif:    boolean;
+  downloadMedia(): Promise<{ mimetype: string; data: string } | null>;
+  hasReply: boolean;
+  getReply(): Promise<WAMessageContext | null>;
+  reply: WAMessageSender;
+  react(emoji: string): Promise<unknown>;
+  delete(forEveryone?: boolean): Promise<unknown>;
+  pin(duration?: number): Promise<void>;
+  hasPrefix: boolean;
+  getContact(): ReturnType<typeof normalizeContact>;
+}
+
 export function buildMessageContext(
   msg: WAProtoMsg,
   sock: WASocket,
   store: WAStore,
   guardOptions: { cooldown?: boolean; jitter?: boolean } = {}
-) {
+): WAMessageContext {
   const body    = getMsgBody(msg);
   const prefix  = CONFIG.CMD_PREFIX as string;
   const rawArgs = body.trim().split(/\s+/);
@@ -550,8 +612,9 @@ export function buildMessageContext(
 
     hasReply: !!(contextInfo?.quotedMessage),
 
-    async getReply(): Promise<WAProtoMsg | null> {
-      return quotedRaw;
+    async getReply(): Promise<WAMessageContext | null> {
+      if (!quotedRaw) return null;
+      return buildMessageContext(quotedRaw, sock, store, { cooldown: false, jitter: false });
     },
 
     reply: makeSender(sock, store, rawJid, msg, { cooldown, jitter }),
@@ -572,6 +635,10 @@ export function buildMessageContext(
 
     hasPrefix,
 
+    /**
+     * Normalized contact of the message sender.
+     * @returns {Promise<object|null>} null if the sender can't be confirmed as a real WhatsApp account.
+     */
     async getContact() {
       const info = (store.contacts as Record<string, WAStoreContact>)[sender]
                 ?? (store.contacts as Record<string, WAStoreContact>)[store.resolveJid(msg.key.participant ?? "")];
@@ -581,8 +648,6 @@ export function buildMessageContext(
   };
 }
 
-/** Inferred shape of the `ctx.msg` object passed to plugins on every message. */
-export type WAMessageContext = ReturnType<typeof buildMessageContext>;
 
 // ── MessageHandle ─────────────────────────────────────────────────────────────
 
@@ -1301,6 +1366,7 @@ export function buildSetupApi(
   pluginRegistry: Map<string, PluginEntry>,
   pluginName:     string
 ) {
+  bindGroupMetaInvalidation(sock);
   return {
     ...buildBaseApi(sock, store, pluginRegistry, pluginName),
     ...buildSetupSendApi(sock, store),
@@ -1359,6 +1425,8 @@ export function buildApi({
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
+  bindGroupMetaInvalidation(sock);
+
   // Sender for quoted messages
   const contextInfo = getContextInfo(msg);
   const quotedRaw: WAProtoMsg | null = contextInfo?.quotedMessage
@@ -1415,7 +1483,7 @@ export function buildApi({
       async getParticipants(): Promise<Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }>> {
         if (!chat.isGroup) return [];
         try {
-          const meta = await sock.groupMetadata(rawJid);
+          const meta = await getGroupMetadataCached(sock, rawJid);
           return meta.participants.map(p => ({
             id:           normalizeJid(p.id),
             isAdmin:      p.admin === "admin" || p.admin === "superadmin",
@@ -1434,7 +1502,7 @@ export function buildApi({
       async isAdmin(contactId: string): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await sock.groupMetadata(rawJid);
+          const meta = await getGroupMetadataCached(sock, rawJid);
           return meta.participants.some(
             p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
@@ -1450,7 +1518,7 @@ export function buildApi({
       async isSenderAdmin(): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await sock.groupMetadata(rawJid);
+          const meta = await getGroupMetadataCached(sock, rawJid);
           const rawSenderParticipant = msg.key.participant ?? msg.key.remoteJid ?? "";
           return meta.participants.some(
             p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin")
@@ -1470,7 +1538,7 @@ export function buildApi({
         const botCandidates = [sock.user?.id, botLid];
         if (!botCandidates.some(Boolean)) return false;
         try {
-          const meta = await sock.groupMetadata(rawJid);
+          const meta = await getGroupMetadataCached(sock, rawJid);
           return meta.participants.some(
             p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );

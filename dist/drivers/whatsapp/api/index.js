@@ -42,6 +42,8 @@ function getMsgType(msg) {
         return "unknown";
     if (m.conversation || m.extendedTextMessage)
         return "chat";
+    if (m.buttonsResponseMessage || m.listResponseMessage)
+        return "chat";
     if (m.imageMessage)
         return "image";
     if (m.videoMessage)
@@ -56,6 +58,14 @@ function getMsgType(msg) {
         m.pollCreationMessageV2 ||
         m.pollCreationMessageV3)
         return "poll";
+    if (m.locationMessage || m.liveLocationMessage)
+        return "location";
+    if (m.contactMessage)
+        return "vcard";
+    if (m.contactsArrayMessage)
+        return "multi_vcard";
+    if (m.protocolMessage?.type === 0)
+        return "revoked"; // REVOKE
     return "unknown";
 }
 function msgHasMedia(msg) {
@@ -98,6 +108,29 @@ function getMsgMimetype(msg) {
 // on every single incoming message from the same group.
 const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupNameCache = new Map();
+const GROUP_META_CACHE_TTL_MS = 5 * 60 * 1000;
+const groupMetaCache = new Map();
+async function getGroupMetadataCached(sock, jid) {
+    const cached = groupMetaCache.get(jid);
+    if (cached && Date.now() - cached.at < GROUP_META_CACHE_TTL_MS)
+        return cached.meta;
+    const meta = await sock.groupMetadata(jid);
+    groupMetaCache.set(jid, { meta, at: Date.now() });
+    return meta;
+}
+let groupMetaInvalidationBound = false;
+function bindGroupMetaInvalidation(sock) {
+    if (groupMetaInvalidationBound)
+        return;
+    groupMetaInvalidationBound = true;
+    const ev = sock.ev;
+    ev.on("group-participants.update", (u) => groupMetaCache.delete(u.id));
+    ev.on("groups.update", (updates) => {
+        for (const u of updates)
+            if (u.id)
+                groupMetaCache.delete(u.id);
+    });
+}
 /**
  * Build a WAChat adapter from a Baileys message + store.
  * Exposed for use in messageHandler.ts.
@@ -122,7 +155,7 @@ export async function buildChatFromMsg(msg, store, sock) {
         }
         else {
             try {
-                const meta = await sock.groupMetadata(rawJid);
+                const meta = await getGroupMetadataCached(sock, rawJid);
                 if (meta?.subject) {
                     name = meta.subject;
                     groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
@@ -311,6 +344,12 @@ async function normalizeContact(jid, info, botJid, sock) {
             isWAAccount = false;
         }
     }
+    // No store record and no confirmed WhatsApp account (and not a group,
+    // which we can't verify this way) — nothing backs this contact.
+    // Matches the old whatsapp-web.js contract: getContactById() threw /
+    // resolved to null for an unknown ID instead of returning a hollow object.
+    if (!jid.endsWith("@g.us") && !isWAAccount)
+        return null;
     if (sock && !jid.endsWith("@g.us")) {
         try {
             isBusiness = Boolean(await sock.getBusinessProfile(jid));
@@ -485,7 +524,9 @@ export function buildMessageContext(msg, sock, store, guardOptions = {}) {
         },
         hasReply: !!(contextInfo?.quotedMessage),
         async getReply() {
-            return quotedRaw;
+            if (!quotedRaw)
+                return null;
+            return buildMessageContext(quotedRaw, sock, store, { cooldown: false, jitter: false });
         },
         reply: makeSender(sock, store, rawJid, msg, { cooldown, jitter }),
         async react(emoji) {
@@ -500,6 +541,10 @@ export function buildMessageContext(msg, sock, store, guardOptions = {}) {
             logger.warn("[pluginApi] pin() is not supported with Baileys");
         },
         hasPrefix,
+        /**
+         * Normalized contact of the message sender.
+         * @returns {Promise<object|null>} null if the sender can't be confirmed as a real WhatsApp account.
+         */
         async getContact() {
             const info = store.contacts[sender]
                 ?? store.contacts[store.resolveJid(msg.key.participant ?? "")];
@@ -1126,6 +1171,7 @@ function buildBaseApi(sock, store, pluginRegistry, pluginName) {
  * @param {string}                pluginName
  */
 export function buildSetupApi(sock, store, pluginRegistry, pluginName) {
+    bindGroupMetaInvalidation(sock);
     return {
         ...buildBaseApi(sock, store, pluginRegistry, pluginName),
         ...buildSetupSendApi(sock, store),
@@ -1161,6 +1207,7 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
     const sender = getMsgSender(msg, store);
     const cooldown = (guardOptions.cooldown ?? true);
     const jitter = (guardOptions.jitter ?? true);
+    bindGroupMetaInvalidation(sock);
     // Sender for quoted messages
     const contextInfo = getContextInfo(msg);
     const quotedRaw = contextInfo?.quotedMessage
@@ -1213,7 +1260,7 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
                 if (!chat.isGroup)
                     return [];
                 try {
-                    const meta = await sock.groupMetadata(rawJid);
+                    const meta = await getGroupMetadataCached(sock, rawJid);
                     return meta.participants.map(p => ({
                         id: normalizeJid(p.id),
                         isAdmin: p.admin === "admin" || p.admin === "superadmin",
@@ -1233,7 +1280,7 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
                 if (!chat.isGroup)
                     return false;
                 try {
-                    const meta = await sock.groupMetadata(rawJid);
+                    const meta = await getGroupMetadataCached(sock, rawJid);
                     return meta.participants.some(p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin"));
                 }
                 catch {
@@ -1248,7 +1295,7 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
                 if (!chat.isGroup)
                     return false;
                 try {
-                    const meta = await sock.groupMetadata(rawJid);
+                    const meta = await getGroupMetadataCached(sock, rawJid);
                     const rawSenderParticipant = msg.key.participant ?? msg.key.remoteJid ?? "";
                     return meta.participants.some(p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin"));
                 }
@@ -1268,7 +1315,7 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
                 if (!botCandidates.some(Boolean))
                     return false;
                 try {
-                    const meta = await sock.groupMetadata(rawJid);
+                    const meta = await getGroupMetadataCached(sock, rawJid);
                     return meta.participants.some(p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin"));
                 }
                 catch {
