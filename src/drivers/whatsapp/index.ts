@@ -11,7 +11,7 @@
  * - Event handling and plugin execution
  */
 
-import { createSocket, normalizeJid } from "./sdk/baileysSock.js";
+import { createSocket, normalizeJid, AUTH_DIR } from "./sdk/baileysSock.js";
 import { handleMessage } from "./messageHandler.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
 import { logger } from "#logger";
@@ -22,6 +22,7 @@ import type { WASocket, WAStore, WAProtoMsg } from "#types";
 import type { BotDriver } from "#drivers/index.js";
 import { Boom } from "@hapi/boom";
 import { DisconnectReason } from "@whiskeysockets/baileys";
+import fs from "fs/promises";
 
 let state = "BOOT";
 let shuttingDown = false;
@@ -58,7 +59,15 @@ async function startBot() {
 
       logger.warn(t("system.disconnected", { reason: String(code) }));
 
-      if (!loggedOut && !shuttingDown) {
+      if (loggedOut) {
+        logger.warn(t("system.sessionExpired"));
+        try {
+          await fs.rm(AUTH_DIR, { recursive: true, force: true });
+        } catch (e) {
+          logger.error(`[whatsapp] Failed to remove session dir: ${(e as Error).message}`);
+        }
+        if (!shuttingDown) setTimeout(() => startBot(), 1000);
+      } else if (!shuttingDown) {
         logger.info(t("system.reconnecting", { secs: 5 }));
         setTimeout(() => startBot(), 5000);
       }

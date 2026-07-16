@@ -18,11 +18,11 @@ import { logger } from "#logger";
 // ── Tunables ──────────────────────────────────────────────────────────────────
 
 const GLOBAL_MSG_PER_SEC = 5;
-const CHAT_COOLDOWN_MS   = 300;
-const JITTER_MS          = { min: 100, max: 400 };
-const TYPING_CPS          = 55;
-const TYPING_MAX_MS       = 4500;
-const MEDIA_INDICATOR_MS  = { min: 800, max: 2000 };
+const CHAT_COOLDOWN_MS   = 150;
+const JITTER_MS          = { min: 50, max: 200 };
+const TYPING_CPS          = 90;
+const TYPING_MAX_MS       = 2000;
+const MEDIA_INDICATOR_MS  = { min: 400, max: 1000 };
 
 // ── Global token bucket ───────────────────────────────────────────────────────
 

@@ -98,7 +98,7 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
   }
 
   // Build a WAChat adapter from the message metadata
-  const chat: WAChat = buildChatFromMsg(msg, store);
+  const chat: WAChat = await buildChatFromMsg(msg, store, sock);
 
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({

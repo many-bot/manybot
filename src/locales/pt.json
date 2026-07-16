@@ -30,9 +30,23 @@
     "schedulerError": "Erro no agendamento do plugin \"{{name}}\": {{message}}",
     "schedulerRegistered": "Agendamento registrado — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Falha no job de download — {{message}}",
-    "reconnecting": "Reconectando em {{secs}}s..."
+    "reconnecting": "Reconectando em {{secs}}s...",
+    "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando..."
   },
   "errors": {
     "stack": "Stack"
+  },
+  "onboarding": {
+    "intro": "ManyBot — primeiro login",
+    "methodPrompt": "Como você quer conectar sua conta do WhatsApp?",
+    "methodPhone": "Digitar número de telefone",
+    "methodPhoneHint": "código de pareamento",
+    "methodQr": "Mostrar QR code",
+    "methodQrHint": "escaneie com seu celular",
+    "phonePrompt": "Número de telefone (com código do país, somente dígitos)",
+    "phoneValidation": "Somente dígitos, com código do país. Ex.: 5511999999999",
+    "outroQr": "Escaneie o QR code que vai aparecer a seguir.",
+    "outroPhone": "Aguarde o código de pareamento que vai aparecer a seguir.",
+    "cancelled": "Login cancelado."
   }
 }

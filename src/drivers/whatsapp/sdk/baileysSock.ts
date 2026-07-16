@@ -26,7 +26,7 @@ import pino from "pino";
 
 // ── Auth path ─────────────────────────────────────────────────────────────────
 
-const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
+export const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
 
 // ── Shared store (survives socket reconnects) ─────────────────────────────────
 
@@ -71,18 +71,36 @@ export async function createSocket(): Promise<SocketBundle> {
     logger:                         pino({ level: "silent" }),
     generateHighQualityLinkPreview: false,
     syncFullHistory:                false,
+    // Required for Baileys to decrypt incoming poll votes (and to retry
+    // sends) — it looks up the original message by key internally.
+    // Without this, pollUpdates never resolve even though the vote event
+    // arrives: ctx.poll.results()/onVote() silently stay at zero.
+    getMessage: async (key) => {
+      const stored = store.messages.get(key.remoteJid ?? "")?.get(key.id ?? "");
+      return stored?.message ?? undefined;
+    },
   }) as WASocket;
 
   store.bind(sock.ev);
+
   sock.ev.on("creds.update", saveCreds);
 
   // QR code — only if the chosen method was "qr" (intentionally ignores
   // PHONE_NUMBER even if one was saved from a previous choice).
+  let qrDisplayed = false;
+
   sock.ev.on("connection.update", (update) => {
-    const { qr } = update;
+    const { qr, connection } = update;
+
     if (qr && method === "qr") {
+      qrDisplayed = true;
       logger.info(t("system.qrScan"));
       qrcode.generate(qr, { small: true });
+    }
+
+    if (connection === "open" && qrDisplayed) {
+      console.clear();
+      qrDisplayed = false;
     }
   });
 

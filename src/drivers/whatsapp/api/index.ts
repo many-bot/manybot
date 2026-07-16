@@ -17,7 +17,7 @@ import { t, createPluginT,
          getCurrentLang }            from "#i18n";
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { enqueue }                   from "#download";
-import { schedule }                  from "#kernel/scheduler.js";
+import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
 import { emptyFolder }               from "#utils/file.js";
 import { normalizeJid, toPresenceCapable } from "../sdk/baileysSock.js";
 import { mkdirSync }                 from "fs";
@@ -28,7 +28,9 @@ import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration } from "#sendguard";
 import { buildSettingsApi }          from "#settingsdb";
 import { downloadMediaMessage,
-         getAggregateVotesInPollMessage } from "@whiskeysockets/baileys";
+         getAggregateVotesInPollMessage,
+         decryptPollVote,
+         jidNormalizedUser } from "@whiskeysockets/baileys";
 
 // ── Message body / type helpers ───────────────────────────────────────────────
 
@@ -103,15 +105,26 @@ function getMsgMimetype(msg: WAProtoMsg): string {
 
 // ── Chat adapter builder ──────────────────────────────────────────────────────
 
+// Group subjects only land in `store.chats` once Baileys fires chats.upsert
+// / chats.update for that chat — which depends on history sync and doesn't
+// always happen promptly (or at all) for a group the bot just joined. When
+// that hasn't happened yet, `chat.name` silently fell back to the numeric
+// group ID. sock.groupMetadata() always has the real subject, straight from
+// WhatsApp, so use it as a fallback — cached briefly so we're not hitting it
+// on every single incoming message from the same group.
+const GROUP_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
+const groupNameCache = new Map<string, { name: string; at: number }>();
+
 /**
  * Build a WAChat adapter from a Baileys message + store.
  * Exposed for use in messageHandler.ts.
  *
  * @param {WAProtoMsg} msg
  * @param {WAStore}    store
- * @returns {WAChat}
+ * @param {WASocket}   sock
+ * @returns {Promise<WAChat>}
  */
-export function buildChatFromMsg(msg: WAProtoMsg, store: WAStore): WAChat {
+export async function buildChatFromMsg(msg: WAProtoMsg, store: WAStore, sock: WASocket): Promise<WAChat> {
   const rawJid = msg.key.remoteJid ?? "";
   const jid    = normalizeJid(rawJid);
   const user   = jid.split("@")[0];
@@ -119,9 +132,26 @@ export function buildChatFromMsg(msg: WAProtoMsg, store: WAStore): WAChat {
 
   // Try to get name from store
   const stored = store.chats.get(rawJid);
-  const name   = stored?.name ?? user;
+  let name = stored?.name;
 
-  return { id: { _serialized: jid, user }, name, isGroup };
+  if (!name && isGroup) {
+    const cached = groupNameCache.get(rawJid);
+    if (cached && Date.now() - cached.at < GROUP_NAME_CACHE_TTL_MS) {
+      name = cached.name;
+    } else {
+      try {
+        const meta = await sock.groupMetadata(rawJid);
+        if (meta?.subject) {
+          name = meta.subject;
+          groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
+        }
+      } catch {
+        // fall through to the numeric fallback below
+      }
+    }
+  }
+
+  return { id: { _serialized: jid, user }, name: name ?? user, isGroup };
 }
 
 // ── MIME map for file sends ───────────────────────────────────────────────────
@@ -242,8 +272,11 @@ function buildSchedulerApi(pluginName: string) {
   return {
     /**
      * Register a cron task, scoped to this plugin.
+     * Re-registering the same expression replaces the previous task
+     * instead of stacking a new one.
      * @param {string}   expression — cron expression, e.g. "0 9 * * 1"
      * @param {Function} fn         — async function to run on schedule
+     * @returns {{ stop(): void }}
      */
     schedule(expression: string, fn: () => Promise<void>) {
       return schedule(expression, fn, pluginName);
@@ -297,24 +330,52 @@ const log = {
 
 /**
  * Build a normalized contact object from a JID and optional store metadata.
+ * isBusiness is resolved via sock.getBusinessProfile(jid) — it resolves to
+ * a profile only for WhatsApp Business accounts, undefined otherwise.
  * @param {string}           jid
  * @param {WAStoreContact}   [info]
  * @param {string|null}      [botJid]
+ * @param {WASocket}         [sock]
  */
-function normalizeContact(jid: string, info?: WAStoreContact, botJid?: string | null) {
+async function normalizeContact(jid: string, info: WAStoreContact | undefined, botJid: string | null | undefined, sock?: WASocket) {
   const number = jid.split("@")[0];
+  let isBusiness = false;
+  // We already have a contact record for this jid (learned from a real
+  // contacts.upsert or an actual message from them) — that alone proves
+  // it's a real WhatsApp account. Only fall back to the onWhatsApp() query
+  // when we don't, since that query is PN-oriented and unreliable for a
+  // raw @lid we've never resolved to a phone number (returns a false
+  // "doesn't exist" instead of throwing).
+  let isWAAccount = Boolean(info);
+  if (!isWAAccount && sock && !jid.endsWith("@g.us")) {
+    try {
+      const results = await sock.onWhatsApp(jid);
+      isWAAccount = Boolean(results?.[0]?.exists);
+    } catch {
+      // Couldn't verify — leave as false rather than claiming certainty.
+      isWAAccount = false;
+    }
+  }
+  if (sock && !jid.endsWith("@g.us")) {
+    try {
+      isBusiness = Boolean(await sock.getBusinessProfile(jid));
+    } catch {
+      isBusiness = false;
+    }
+  }
   return {
     id:           jid,
     number,
     pushname:     info?.notify ?? null,
     name:         info?.name ?? info?.verifiedName ?? null,
+    // Baileys' Contact type has no "short name" equivalent (that's a
+    // whatsapp-web.js/vCard concept) — always null here, not a bug.
     shortName:    null,
-    isBusiness:   false,
+    isBusiness,
     isEnterprise: false,
     isBlocked:    false,
     isMe:         botJid ? jid === normalizeJid(botJid) : false,
-    isMyContact:  !!(info?.name),
-    isWAContact:  true,
+    isWAAccount,
     isUser:       !jid.endsWith("@g.us"),
     isGroup:      jid.endsWith("@g.us"),
     mention:      { text: `@${number}`, mentions: [jid] },
@@ -331,9 +392,15 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * @returns {Promise<object|null>}
      */
     async get(contactId: string) {
-      const info = (store.contacts as Record<string, WAStoreContact>)[contactId]
-                ?? (store.contacts as Record<string, WAStoreContact>)[normalizeJid(contactId)];
-      return normalizeContact(normalizeJid(contactId), info, botJid);
+      const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
+      // The same person's data can be split across the raw (e.g. @lid) and
+      // store-resolved (PN) keys — one may have `notify` and the other
+      // `verifiedName`/`name`. Merge instead of taking whichever key
+      // happens to exist first, or we silently drop real fields.
+      const raw      = (store.contacts as Record<string, WAStoreContact>)[contactId];
+      const resolvedInfo = (store.contacts as Record<string, WAStoreContact>)[resolved];
+      const info = (raw || resolvedInfo) ? { ...raw, ...resolvedInfo } as WAStoreContact : undefined;
+      return normalizeContact(resolved, info, botJid, sock);
     },
 
     /**
@@ -342,8 +409,9 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * @returns {Promise<string|null>}
      */
     async getPfpUrl(contactId: string) {
+      const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
       try {
-        const url = await sock.profilePictureUrl(contactId, "image");
+        const url = await sock.profilePictureUrl(resolved, "image");
         return url ?? null;
       } catch {
         return null;
@@ -375,12 +443,29 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * @returns {Promise<string|null>}
      */
     async getAbout(contactId: string) {
+      // fetchStatus is a legacy/USync query — pass the store-resolved JID
+      // (PN when known) rather than a raw @lid, which it may not accept.
+      const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
       try {
         const res = await (sock as unknown as {
-          fetchStatus(jid: string): Promise<{ status?: string }>
-        }).fetchStatus(contactId);
+          fetchStatus(jid: string): Promise<
+            { status?: string }
+            | { id: string; status?: { status?: string | null; setAt?: Date } }[]
+            | undefined
+          >
+        }).fetchStatus(resolved);
+        // Current Baileys versions return a USync result array
+        // (`[{ id, status: { status, setAt } }]`) instead of the legacy
+        // single `{ status }` object — handle both shapes.
+        if (Array.isArray(res)) {
+          const entry = res.find(r => normalizeJid(r.id) === resolved) ?? res[0];
+          return entry?.status?.status ?? null;
+        }
         return res?.status ?? null;
-      } catch {
+      } catch (err) {
+        // Previously swallowed silently, which made "always null" look
+        // identical to "no status set" — log so real failures are visible.
+        logger.warn(`[contacts] getAbout(${contactId}) failed: ${err}`);
         return null;
       }
     },
@@ -489,9 +574,9 @@ export function buildMessageContext(
 
     async getContact() {
       const info = (store.contacts as Record<string, WAStoreContact>)[sender]
-                ?? (store.contacts as Record<string, WAStoreContact>)[msg.key.participant ?? ""];
+                ?? (store.contacts as Record<string, WAStoreContact>)[store.resolveJid(msg.key.participant ?? "")];
       const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
-      return normalizeContact(sender, info, botJid);
+      return normalizeContact(sender, info, botJid, sock);
     },
   };
 }
@@ -775,13 +860,15 @@ const listenerRegistry = new Map<string, Set<{ event: string; handler: (...args:
 
 export function cleanupPluginEvents(pluginName: string, sock: WASocket): void {
   const list = listenerRegistry.get(pluginName);
-  if (!list) return;
-  for (const { event, handler } of list) {
-    try {
-      (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
-    } catch {}
+  if (list) {
+    for (const { event, handler } of list) {
+      try {
+        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
+      } catch {}
+    }
+    listenerRegistry.delete(pluginName);
   }
-  listenerRegistry.delete(pluginName);
+  cancelPlugin(pluginName);
 }
 
 
@@ -1020,33 +1107,113 @@ function buildPollApi(
 ) {
   if (!pollRegistry.has(pluginName)) pollRegistry.set(pluginName, new Map());
   const registry = pollRegistry.get(pluginName)!;
+  // Keyed by creationId -> (voterKey -> latest vote entry). WhatsApp resends
+  // the *entire current selection* on every tap (not a diff), and Baileys'
+  // getAggregateVotesInPollMessage() replays whatever pollUpdates you give it
+  // with no dedup — so we must keep only the latest entry per voter ourselves,
+  // or retracted/changed votes keep counting alongside the new one.
+  const pollVotesByCreationId = new Map<string, Map<string, unknown>>();
 
   if (!pollListeners.has(pluginName)) {
     pollListeners.add(pluginName);
+  
+    const meId = sock.user?.id ? jidNormalizedUser(sock.user.id) : "me";
 
-    // Baileys delivers poll votes via messages.update with pollUpdates field
-    sock.ev.on("messages.update", async (updates) => {
-      for (const { key, update } of updates) {
-        if (!update.pollUpdates?.length) continue;
-
-        const handle = registry.get(key.id ?? "");
+    // WhatsApp doesn't consistently use the same JID shape (LID vs PN) for
+    // pollCreatorJid/voterJid when deriving the poll-vote decryption key —
+    // it depends on addressingMode, 1:1 vs group, and which side sent last.
+    // Trying to compute "the" correct JID up front (as the old resolveAuthor
+    // did, always preferring participantPn) causes AES-GCM auth failures
+    // whenever WhatsApp actually used the LID for that message. Instead,
+    // gather every plausible JID for each side and brute-force combinations
+    // until one decrypts successfully — see
+    // https://github.com/WhiskeySockets/Baileys/issues/2342 and #1678.
+    function jidCandidates(key: { fromMe?: boolean; participant?: string; remoteJid?: string; participantPn?: string }): string[] {
+      const cands: string[] = [];
+      if (key.fromMe) {
+        const selfLid = (sock.user as unknown as { lid?: string })?.lid;
+        if (selfLid) cands.push(jidNormalizedUser(selfLid));
+        if (sock.user?.id) cands.push(jidNormalizedUser(sock.user.id));
+      } else {
+        const rawParticipant = key.participant ?? key.remoteJid;
+        if (rawParticipant) cands.push(jidNormalizedUser(rawParticipant));
+        if (key.participantPn) cands.push(jidNormalizedUser(key.participantPn));
+        if (rawParticipant?.endsWith("@lid")) {
+          const resolved = store.resolveJid(rawParticipant);
+          if (resolved && resolved !== rawParticipant) cands.push(jidNormalizedUser(resolved));
+        }
+      }
+      return Array.from(new Set(cands.filter(Boolean)));
+    }
+  
+    sock.ev.on("messages.upsert", async ({ messages: msgs }) => {
+      for (const msg of msgs) {
+        const pum = msg.message?.pollUpdateMessage;
+        if (!pum) continue;
+  
+        const creationKey = pum.pollCreationMessageKey;
+        const creationId  = creationKey?.id ?? "";
+        const handle       = registry.get(creationId);
         if (!handle) continue;
-
-        // Retrieve the original poll message from store for decryption
-        const storeMsg = store.messages.get(key.remoteJid ?? "")?.get(key.id ?? "");
-        if (!storeMsg) continue;
-
+  
+        const storeMsg = store.messages.get(creationKey?.remoteJid ?? "")?.get(creationId);
+        const pollEncKeyRaw = storeMsg?.message?.messageContextInfo?.messageSecret;
+        if (!storeMsg || !pollEncKeyRaw || !pum.vote) continue;
+  
         try {
-          const aggregated = getAggregateVotesInPollMessage({
-            message:     storeMsg.message,
-            pollUpdates: storeMsg.pollUpdates ?? [],
+          const pollEncKey = Buffer.isBuffer(pollEncKeyRaw)
+            ? pollEncKeyRaw
+            : Buffer.from(pollEncKeyRaw as unknown as string, "base64");
+  
+          const creatorCandidates = jidCandidates((creationKey ?? {}) as never);
+          const voterCandidates   = jidCandidates(msg.key as never);
+  
+          let decryptedVote: ReturnType<typeof decryptPollVote> | undefined;
+          for (const pollCreatorJid of creatorCandidates) {
+            for (const voterJid of voterCandidates) {
+              try {
+                decryptedVote = decryptPollVote(pum.vote, {
+                  pollEncKey,
+                  pollCreatorJid,
+                  pollMsgId: creationId,
+                  voterJid,
+                });
+                break;
+              } catch {
+                // try next JID combination
+              }
+            }
+            if (decryptedVote) break;
+          }
+          if (!decryptedVote) {
+            throw new Error(
+              `all JID combinations failed (creator=${JSON.stringify(creatorCandidates)}, voter=${JSON.stringify(voterCandidates)})`
+            );
+          }
+  
+          const voterKey = msg.key.fromMe
+            ? meId
+            : jidNormalizedUser(msg.key.participant ?? msg.key.remoteJid ?? "");
+
+          const votesByVoter = pollVotesByCreationId.get(creationId) ?? new Map<string, unknown>();
+          votesByVoter.set(voterKey, {
+            pollUpdateMessageKey: msg.key,
+            vote:                 decryptedVote,
+            senderTimestampMs:    pum.senderTimestampMs,
           });
+          pollVotesByCreationId.set(creationId, votesByVoter);
+  
+          const aggregated = getAggregateVotesInPollMessage(
+            { message: storeMsg.message, pollUpdates: Array.from(votesByVoter.values()) as never },
+            meId
+          );
           handle._updateFromAggregated(aggregated);
-        } catch {}
+        } catch (err) {
+          logger.error(`[poll] erro ao decriptar voto: ${err}`);
+        }
       }
     });
   }
-
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
@@ -1066,6 +1233,18 @@ function buildPollApi(
       if (!rawMsg) throw new Error("[poll] failed to send poll message");
       const handle = new PollHandle(rawMsg, options, registry);
       registry.set(handle.msgId, handle);
+
+      // Ensure the poll message is in the store before any vote arrives —
+      // messages.upsert isn't guaranteed to fire (or land in time) for the
+      // bot's own sent messages, which previously dropped every vote.
+      const remoteJid = rawMsg.key.remoteJid;
+      if (remoteJid) {
+        if (!store.messages.has(remoteJid)) store.messages.set(remoteJid, new Map());
+        if (!store.messages.get(remoteJid)!.has(handle.msgId)) {
+          store.messages.get(remoteJid)!.set(handle.msgId, rawMsg);
+        }
+      }
+
       return handle;
     },
 
@@ -1195,6 +1374,24 @@ export function buildApi({
       }
     : null;
 
+  // Group participant JIDs come back in whatever addressing mode the group
+  // uses (@lid or @s.whatsapp.net/@c.us) — same issue as poll vote decryption.
+  // "sender" and "sock.user.id" are usually PN-normalized, so a straight
+  // `=== ` against an @lid participant list silently never matches, even
+  // when the person genuinely is an admin. Compare every known form
+  // (raw + store-resolved) on both sides instead of trusting a single shape.
+  function matchesParticipant(candidates: (string | null | undefined)[], participantId: string): boolean {
+    const pRaw      = normalizeJid(participantId);
+    const pResolved = normalizeJid(store.resolveJid(pRaw));
+    for (const raw of candidates) {
+      if (!raw) continue;
+      const c         = normalizeJid(raw);
+      const cResolved = normalizeJid(store.resolveJid(c));
+      if (c === pRaw || c === pResolved || cResolved === pRaw || cResolved === pResolved) return true;
+    }
+    return false;
+  }
+
   return {
     ...buildBaseApi(sock, store, pluginRegistry, pluginName),
     ...buildSendApi(sock, store, rawJid, guardOptions),
@@ -1239,7 +1436,7 @@ export function buildApi({
         try {
           const meta = await sock.groupMetadata(rawJid);
           return meta.participants.some(
-            p => normalizeJid(p.id) === contactId && (p.admin === "admin" || p.admin === "superadmin")
+            p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
         } catch {
           return false;
@@ -1254,8 +1451,9 @@ export function buildApi({
         if (!chat.isGroup) return false;
         try {
           const meta = await sock.groupMetadata(rawJid);
+          const rawSenderParticipant = msg.key.participant ?? msg.key.remoteJid ?? "";
           return meta.participants.some(
-            p => normalizeJid(p.id) === sender && (p.admin === "admin" || p.admin === "superadmin")
+            p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
         } catch {
           return false;
@@ -1268,12 +1466,13 @@ export function buildApi({
        */
       async isBotAdmin(): Promise<boolean> {
         if (!chat.isGroup) return false;
-        const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
-        if (!botJid) return false;
+        const botLid = (sock.user as unknown as { lid?: string })?.lid;
+        const botCandidates = [sock.user?.id, botLid];
+        if (!botCandidates.some(Boolean)) return false;
         try {
           const meta = await sock.groupMetadata(rawJid);
           return meta.participants.some(
-            p => normalizeJid(p.id) === botJid && (p.admin === "admin" || p.admin === "superadmin")
+            p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
         } catch {
           return false;
@@ -1325,4 +1524,3 @@ export function buildApi({
 
 /** Inferred shape of the `ctx` object passed to plugin.default(ctx) on every message. */
 export type PluginContext = ReturnType<typeof buildApi>;
-

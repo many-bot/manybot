@@ -12,11 +12,12 @@
 import * as clack from "@clack/prompts";
 import { CONFIG, persistConfigValue } from "#config";
 import { logger } from "#logger";
+import { t } from "#i18n";
 
 export type LoginMethod = "phone" | "qr";
 
 function cancelAndExit(): never {
-  clack.cancel("Login cancelled.");
+  clack.cancel(t("onboarding.cancelled"));
   process.exit(1);
 }
 
@@ -26,10 +27,10 @@ function cancelAndExit(): never {
  */
 async function promptLoginMethod(): Promise<LoginMethod> {
   const choice = await clack.select({
-    message: "How do you want to connect your WhatsApp account?",
+    message: t("onboarding.methodPrompt"),
     options: [
-      { value: "phone", label: "Enter phone number", hint: "pairing code" },
-      { value: "qr",    label: "Show QR code",        hint: "scan with your phone" },
+      { value: "phone", label: t("onboarding.methodPhone"), hint: t("onboarding.methodPhoneHint") },
+      { value: "qr",    label: t("onboarding.methodQr"),     hint: t("onboarding.methodQrHint") },
     ],
   });
 
@@ -45,11 +46,11 @@ async function promptLoginMethod(): Promise<LoginMethod> {
  */
 async function promptPhoneNumber(): Promise<string> {
   const phone = await clack.text({
-    message:     "Phone number (with country code, digits only)",
+    message:     t("onboarding.phonePrompt"),
     placeholder: "5511999999999",
     validate(value) {
       if (!/^\d{8,15}$/.test(value.trim())) {
-        return "Digits only, with country code. E.g.: 5511999999999";
+        return t("onboarding.phoneValidation");
       }
     },
   });
@@ -76,27 +77,29 @@ export interface ResolvedLogin {
  * session skips this module entirely (see baileysSock.ts).
  */
 export async function resolveLoginMethod(): Promise<ResolvedLogin> {
-  clack.intro("ManyBot — first login");
-
   let method = CONFIG.LOGIN_METHOD as LoginMethod | null;
+  let phone  = CONFIG.PHONE_NUMBER as string | null;
 
-  if (method !== "phone" && method !== "qr") {
-    method = await promptLoginMethod();
-  } else {
-    logger.info(`[login] Configured method: ${method}`);
+  const needsMethod = method !== "phone" && method !== "qr";
+  const needsPhone  = !needsMethod && method === "phone" && !phone;
+
+  if (!needsMethod && !needsPhone) {
+    return { method: method as LoginMethod, phone: method === "phone" ? phone : null };
   }
 
-  let phone = CONFIG.PHONE_NUMBER as string | null;
+  clack.intro(t("onboarding.intro"));
+
+  if (needsMethod) {
+    method = await promptLoginMethod();
+  }
 
   if (method === "phone" && !phone) {
     phone = await promptPhoneNumber();
   }
 
   clack.outro(
-    method === "qr"
-      ? "Scan the QR code that will appear next."
-      : "Wait for the pairing code that will appear next."
+    method === "qr" ? t("onboarding.outroQr") : t("onboarding.outroPhone")
   );
 
-  return { method, phone: method === "phone" ? phone : null };
+  return { method: method as LoginMethod, phone: method === "phone" ? phone : null };
 }
