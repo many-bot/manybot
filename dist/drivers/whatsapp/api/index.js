@@ -331,7 +331,6 @@ async function normalizeContact(jid, info, botJid, sock) {
         isEnterprise: false,
         isBlocked: false,
         isMe: botJid ? jid === normalizeJid(botJid) : false,
-        isMyContact: !!(info?.name),
         isWAAccount,
         isUser: !jid.endsWith("@g.us"),
         isGroup: jid.endsWith("@g.us"),
