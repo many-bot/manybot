@@ -85,9 +85,16 @@ function getConfiguredLang() {
     return lang;
 }
 // Load languages
-const currentLang = getConfiguredLang();
-const currentTranslations = loadLocale(currentLang) || {};
-const fallbackTranslations = loadLocale(DEFAULT_LANG) || {};
+let currentLang = null;
+let currentTranslations = {};
+let fallbackTranslations = {};
+function ensureLoaded() {
+    if (currentLang !== null)
+        return;
+    currentLang = getConfiguredLang();
+    currentTranslations = loadLocale(currentLang) || {};
+    fallbackTranslations = loadLocale(DEFAULT_LANG) || {};
+}
 /**
  * Gets a nested value from an object using dot path
  * @param {object} obj
@@ -123,6 +130,7 @@ function interpolate(str, context = {}) {
  * @returns {string}
  */
 export function t(key, context = {}) {
+    ensureLoaded();
     // Try current language first
     let value = getNestedValue(currentTranslations, key);
     // Fallback to English if not found
@@ -162,6 +170,7 @@ export function t(key, context = {}) {
 export function createPluginT(pluginMetaUrl) {
     const pluginDir = path.dirname(fileURLToPath(pluginMetaUrl));
     const pluginLocaleDir = path.join(pluginDir, "locale");
+    ensureLoaded();
     // Get bot's configured language
     const targetLang = currentLang;
     // Load plugin translations
@@ -211,19 +220,16 @@ export function createPluginT(pluginMetaUrl) {
  */
 export function reloadTranslations() {
     translations.clear();
-    const lang = getConfiguredLang();
-    const newTranslations = loadLocale(lang) || {};
-    const newFallback = loadLocale(DEFAULT_LANG) || {};
-    // Update references
-    Object.assign(currentTranslations, newTranslations);
-    Object.assign(fallbackTranslations, newFallback);
-    console.log(`[i18n] Translations reloaded for language: ${lang}`);
+    currentLang = null;
+    ensureLoaded();
+    console.log(`[i18n] Translations reloaded for language: ${currentLang}`);
 }
 /**
  * Returns current language
  * @returns {string}
  */
 export function getCurrentLang() {
+    ensureLoaded();
     return currentLang;
 }
 export default { t, createPluginT, reloadTranslations, getCurrentLang };

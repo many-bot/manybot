@@ -96,9 +96,16 @@ function getConfiguredLang(): string {
 }
 
 // Load languages
-const currentLang = getConfiguredLang();
-const currentTranslations = loadLocale(currentLang) || {};
-const fallbackTranslations = loadLocale(DEFAULT_LANG) || {};
+let currentLang: string | null = null;
+let currentTranslations: Record<string, unknown> = {};
+let fallbackTranslations: Record<string, unknown> = {};
+
+function ensureLoaded(): void {
+  if (currentLang !== null) return;
+  currentLang = getConfiguredLang();
+  currentTranslations = loadLocale(currentLang) || {};
+  fallbackTranslations = loadLocale(DEFAULT_LANG) || {};
+}
 
 /**
  * Gets a nested value from an object using dot path
@@ -139,6 +146,8 @@ function interpolate(str: string, context: Record<string, unknown> = {}): string
  * @returns {string}
  */
 export function t(key: string, context: Record<string, unknown> = {}): string {
+  ensureLoaded();
+
   // Try current language first
   let value = getNestedValue(currentTranslations, key);
 
@@ -183,6 +192,8 @@ export function t(key: string, context: Record<string, unknown> = {}): string {
 export function createPluginT(pluginMetaUrl: string) {
   const pluginDir = path.dirname(fileURLToPath(pluginMetaUrl));
   const pluginLocaleDir = path.join(pluginDir, "locale");
+
+  ensureLoaded();
 
   // Get bot's configured language
   const targetLang = currentLang;
@@ -242,15 +253,10 @@ export function createPluginT(pluginMetaUrl: string) {
  */
 export function reloadTranslations(): void {
   translations.clear();
-  const lang = getConfiguredLang();
-  const newTranslations = loadLocale(lang) || {};
-  const newFallback = loadLocale(DEFAULT_LANG) || {};
+  currentLang = null;
+  ensureLoaded();
 
-  // Update references
-  Object.assign(currentTranslations, newTranslations);
-  Object.assign(fallbackTranslations, newFallback);
-
-  console.log(`[i18n] Translations reloaded for language: ${lang}`);
+  console.log(`[i18n] Translations reloaded for language: ${currentLang}`);
 }
 
 /**
@@ -258,7 +264,8 @@ export function reloadTranslations(): void {
  * @returns {string}
  */
 export function getCurrentLang(): string {
-  return currentLang;
+  ensureLoaded()
+  return currentLang as string;
 }
 
 export default { t, createPluginT, reloadTranslations, getCurrentLang };

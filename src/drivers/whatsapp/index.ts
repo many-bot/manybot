@@ -76,15 +76,18 @@ async function startBot() {
 
   // Incoming messages
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify" || state !== "READY") return;
-
+    if (state !== "READY") return;
+    if (type !== "notify" && type !== "append") return;
+  
     for (const msg of messages) {
-      // Skip empty messages (e.g. presence updates)
-      const body = getBodyQuick(msg as WAProtoMsg);
-      if (!body && !msgHasMediaQuick(msg as WAProtoMsg)) continue;
-
+      const m = msg as WAProtoMsg;
+      if (type === "append" && !m.key.fromMe) continue;
+  
+      const body = getBodyQuick(m);
+      if (!body && !msgHasMediaQuick(m)) continue;
+  
       try {
-        await handleMessage(msg as WAProtoMsg, sock, store);
+        await handleMessage(m, sock, store);
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
         logger.error(`${err.message}\n${err.stack}`);
