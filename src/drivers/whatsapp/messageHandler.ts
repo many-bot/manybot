@@ -13,7 +13,7 @@
  */
 
 import type { WAProtoMsg, WASocket, WAStore, WAChat } from "#types";
-import { CHATS, TEST_CHAT }   from "#config";
+import { CHATS }              from "#config";
 import { buildApi,
          buildChatFromMsg }  from "./api/index.js";
 import { pluginRegistry }     from "#kernel/pluginLoader.js";
@@ -69,12 +69,6 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
   const jid    = normalizeJid(rawJid);
 
   if (CHATS.length > 0 && !CHATS.includes(jid)) {
-    return;
-  }
-
-  const isTestChat = !!TEST_CHAT && jid === normalizeJid(TEST_CHAT);
-
-  if (msg.key.fromMe && !isTestChat) {
     return;
   }
 

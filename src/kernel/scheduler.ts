@@ -21,7 +21,7 @@
  */
 
 import cron     from "node-cron";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import path     from "path";
 import { mkdirSync } from "fs";
 import { logger }    from "#logger";
@@ -45,8 +45,8 @@ const tasks = new Map<string, TaskEntry>();
 // ── Persistence (metadata only — fn can't be serialized) ────────────────────
 
 mkdirSync(CONFIG_DIR, { recursive: true });
-const db = new Database(path.join(CONFIG_DIR, "scheduler.db"));
-db.pragma("journal_mode = WAL");
+const db = new DatabaseSync(path.join(CONFIG_DIR, "scheduler.db"));
+db.exec("PRAGMA journal_mode = WAL");
 db.exec(`
   CREATE TABLE IF NOT EXISTS scheduled_tasks (
     plugin_name  TEXT NOT NULL,
