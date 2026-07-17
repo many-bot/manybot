@@ -10,16 +10,16 @@
  *
  * Plugins never touch the DB directly — only through buildSettingsApi().
  */
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import path from "path";
 import { mkdirSync } from "fs";
 import { CONFIG_DIR } from "#config";
 // ── DB init ───────────────────────────────────────────────────────────────────
 const DB_PATH = path.join(CONFIG_DIR, "settings.db");
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
-const db = new Database(DB_PATH);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const db = new DatabaseSync(DB_PATH);
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
 db.exec(`
   CREATE TABLE IF NOT EXISTS plugin_settings (
     plugin_name  TEXT NOT NULL,

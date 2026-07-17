@@ -11,7 +11,7 @@
  *
  * Each plugin decides whether to act or ignore.
  */
-import { CHATS, TEST_CHAT } from "#config";
+import { CHATS } from "#config";
 import { buildApi, buildChatFromMsg } from "./api/index.js";
 import { pluginRegistry } from "#kernel/pluginLoader.js";
 import { runPlugin } from "#kernel/pluginGuard.js";
@@ -56,10 +56,6 @@ export async function handleMessage(msg, sock, store) {
     const rawJid = msg.key.remoteJid ?? "";
     const jid = normalizeJid(rawJid);
     if (CHATS.length > 0 && !CHATS.includes(jid)) {
-        return;
-    }
-    const isTestChat = !!TEST_CHAT && jid === normalizeJid(TEST_CHAT);
-    if (msg.key.fromMe && !isTestChat) {
         return;
     }
     if (alreadyProcessed(msg.key.id)) {

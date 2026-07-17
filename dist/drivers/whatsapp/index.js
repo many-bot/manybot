@@ -123,9 +123,9 @@ export const whatsappDriver = {
      * it's your own message or someone else's — prints the normalized
      * JID and the chat name (if any), and exits.
      *
-     * Intentionally does not go through the CHATS/fromMe/dedup filters of
+     * Intentionally does not go through the CHATS/dedup filters of
      * handleMessage: the only goal here is to discover the JID so you can
-     * configure CHATS/TEST_CHAT afterward, so there's no reason to filter
+     * configure CHATS afterward, so there's no reason to filter
      * anything out yet.
      */
     async getId() {
@@ -151,7 +151,7 @@ export const whatsappDriver = {
                 logger.success(`[getid] JID: ${jid}`);
                 if (name)
                     logger.info(`[getid] Chat/sender: ${name}`);
-                logger.info("[getid] Paste this value into CHATS or TEST_CHAT in manybot.toml.");
+                logger.info("[getid] Paste this value into CHATS in manybot.toml.");
                 resolve();
             });
         });

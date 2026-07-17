@@ -55,7 +55,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 // ── --getid mode (provisional) ───────────────────────────────────────────
 // Usage: npm run start -- --getid
 // Connects, waits for the next message to arrive from any chat, and prints
-// the JID to the console, to paste into CHATS/TEST_CHAT in manybot.toml.
+// the JID to the console, to paste into CHATS in manybot.toml.
 // Does not enter the normal bot flow (plugins are not loaded).
 if (process.argv.includes("--getid")) {
     if (!activeDriver.getId) {

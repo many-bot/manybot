@@ -42,14 +42,41 @@ function loadLocale(lang) {
     }
 }
 /**
- * Gets configured language or default
+ * Detects the OS locale without depending on a single env var, since LANG
+ * isn't reliably set on macOS GUI sessions or Windows. Used as a fallback
+ * when CONFIG.LANGUAGE isn't available yet (e.g. circular import during
+ * config bootstrap) or isn't set.
+ */
+function detectSystemLang() {
+    try {
+        const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+        if (locale)
+            return locale.split("-")[0].toLowerCase();
+    }
+    catch {
+        // Intl unavailable — fall through to env vars
+    }
+    const envLocale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || process.env.LANGUAGE;
+    if (envLocale)
+        return envLocale.split(/[_.]/)[0].toLowerCase();
+    return DEFAULT_LANG;
+}
+/**
+ * Gets configured language or falls back to system locale, then English.
  * @returns {string}
  */
 function getConfiguredLang() {
-    const lang = CONFIG.LANGUAGE?.trim().toLowerCase();
-    if (!lang)
-        return DEFAULT_LANG;
-    // Check if file exists
+    let lang;
+    try {
+        lang = CONFIG.LANGUAGE?.trim().toLowerCase();
+    }
+    catch {
+        // CONFIG not initialized yet (e.g. this module was pulled in via a
+        // circular import while #config is still bootstrapping)
+    }
+    if (!lang) {
+        lang = detectSystemLang();
+    }
     const filePath = path.join(LOCALES_DIR, `${lang}.json`);
     if (!fs.existsSync(filePath)) {
         console.warn(`[i18n] Language "${lang}" not found, falling back to "${DEFAULT_LANG}"`);

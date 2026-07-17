@@ -21,6 +21,7 @@ import os from "os";
 import path from "path";
 import { parse as parseToml } from "smol-toml";
 import { logger } from "#logger";
+import { t } from "#i18n";
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
@@ -208,13 +209,6 @@ PHONE_NUMBER = ""
 # Leave blank to choose interactively on first run — the choice is then
 # saved here automatically.
 LOGIN_METHOD = ""
-
-# JID of a single chat where the bot is allowed to respond to messages
-# sent by yourself (fromMe) — useful for testing commands without
-# affecting other conversations. In every other chat, fromMe messages
-# are always ignored.
-# Example: TEST_CHAT = "5511999999999@c.us"
-TEST_CHAT    = ""
 `;
 const DEFAULT_TOML_PT = `# Arquivo de configuração do ManyBot
 # Veja https://manybot.org/docs/config para saber mais
@@ -230,12 +224,6 @@ PHONE_NUMBER = ""
 # PHONE_NUMBER). Deixe em branco para escolher interativamente na primeira
 # execução — a escolha é salva aqui automaticamente.
 LOGIN_METHOD = ""
-
-# JID de um único chat onde o bot pode responder a mensagens enviadas por
-# você mesmo (fromMe) — útil para testar comandos sem afetar outras
-# conversas. Em qualquer outro chat, mensagens fromMe são sempre ignoradas.
-# Exemplo: TEST_CHAT = "5511999999999@c.us"
-TEST_CHAT    = ""
 `;
 const DEFAULT_TOML = detectSystemLang() === "pt" ? DEFAULT_TOML_PT : DEFAULT_TOML_EN;
 await fs.mkdir(CONFIG_DIR, { recursive: true });
@@ -261,8 +249,9 @@ async function loadToml(file, label) {
     }
     catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
-        logger.warn(`Error parsing ${label}: ${err.message}`);
-        return {};
+        logger.error(t("errors.invalid_config", { file: label, error: err.message }));
+        logger.error(t("errors.fix_config", { file: label }));
+        process.exit(1);
     }
 }
 tomlLayer = {
@@ -277,7 +266,6 @@ const DEFAULTS = {
     LANGUAGE: "en",
     PHONE_NUMBER: null,
     PLATFORM: "whatsapp",
-    TEST_CHAT: null,
     LOGIN_METHOD: null,
 };
 function normalize(cfg) {
@@ -285,8 +273,6 @@ function normalize(cfg) {
     // can always do a simple truthiness check regardless of config source.
     if (cfg.PHONE_NUMBER === "")
         cfg.PHONE_NUMBER = null;
-    if (cfg.TEST_CHAT === "")
-        cfg.TEST_CHAT = null;
     // Anything other than "phone"/"qr" is treated as "not configured yet",
     // so a typo or leftover garbage value falls back to the interactive
     // prompt instead of silently misbehaving.
@@ -327,7 +313,6 @@ export const PLUGINS = CONFIG.PLUGINS;
 export const LANGUAGE = CONFIG.LANGUAGE;
 export const PHONE_NUMBER = CONFIG.PHONE_NUMBER;
 export const PLATFORM = CONFIG.PLATFORM;
-export const TEST_CHAT = CONFIG.TEST_CHAT;
 export const LOGIN_METHOD = CONFIG.LOGIN_METHOD;
 /**
  * Writes a single value back to manybot.toml without rewriting the whole

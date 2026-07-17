@@ -34,7 +34,9 @@
     "sessionExpired": "Session expired or logged out — removing local session and restarting..."
   },
   "errors": {
-    "stack": "Stack"
+    "stack": "Stack",
+    "invalid_config": "Invalid config file {{file}}: {{error}}",
+    "fix_config": "Fix the syntax in {{file}} before starting the bot."
   },
   "onboarding": {
     "intro": "ManyBot — first login",

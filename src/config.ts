@@ -22,6 +22,7 @@ import os from "os";
 import path from "path";
 import { parse as parseToml } from "smol-toml";
 import { logger } from "#logger";
+import { t } from "#i18n";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -275,8 +276,8 @@ async function loadToml(file: string, label: string): Promise<Record<string, unk
   try {
     return parseToml(raw);
   } catch (e) { const err = e instanceof Error ? e : new Error(String(e));
-    logger.error(`Invalid config file ${label}: ${err.message}`);
-    logger.error(`Fix the syntax in ${file} before starting the bot.`);
+    logger.error(t("errors.invalid_config", { file: label, error: err.message }));
+    logger.error(t("errors.fix_config", { file: label }));
     process.exit(1);
   }
 }
