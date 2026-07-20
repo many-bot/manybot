@@ -630,7 +630,7 @@ export function buildMessageContext(msg, sock, store, guardOptions = {}) {
         async getContact() {
             const info = store.contacts[sender]
                 ?? store.contacts[store.resolveJid(msg.key.participant ?? "")];
-            const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+            const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
             return normalizeContact(sender, info, botJid, sock);
         },
     };
@@ -1268,7 +1268,7 @@ function buildPollApi(sock, store, rawJid, guardOptions, pluginName) {
 }
 // ── Base API (shared between setup and runtime) ───────────────────────────────
 function buildBaseApi(sock, store, pluginRegistry, pluginName) {
-    const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+    const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
     if (!botJid)
         logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
     return {

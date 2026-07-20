@@ -196,7 +196,7 @@ export function createStore(): BotStore {
         // one extra source we have (feeds the on-disk cache too).
         const pushName = (msg as unknown as { pushName?: string }).pushName;
         const senderId = key.participant ?? msg.key.remoteJid;
-        if (pushName && senderId && !senderId.endsWith("@g.us")) {
+        if (pushName && senderId && !msg.key.fromMe && !senderId.endsWith("@g.us")) {
           const existing = contacts[senderId];
           if (existing?.notify !== pushName) {
             contacts[senderId] = { ...existing, id: senderId, notify: pushName };

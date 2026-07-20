@@ -735,7 +735,7 @@ export function buildMessageContext(
     async getContact() {
       const info = (store.contacts as Record<string, WAStoreContact>)[sender]
                 ?? (store.contacts as Record<string, WAStoreContact>)[store.resolveJid(msg.key.participant ?? "")];
-      const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+      const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
       return normalizeContact(sender, info, botJid, sock);
     },
   };
@@ -1472,7 +1472,7 @@ function buildBaseApi(
   pluginRegistry: Map<string, PluginEntry>,
   pluginName:     string
 ) {
-  const botJid = sock.user?.id ? normalizeJid(sock.user.id) : null;
+  const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
   if (!botJid) logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
 
   return {
