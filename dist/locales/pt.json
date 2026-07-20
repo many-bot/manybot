@@ -31,7 +31,9 @@
     "schedulerRegistered": "Agendamento registrado — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Falha no job de download — {{message}}",
     "reconnecting": "Reconectando em {{secs}}s...",
-    "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando..."
+    "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando...",
+    "cacheLoaded": "{{count}} conversa(s) carregada(s) do cache.",
+    "cacheLoadedStale": "{{count}} conversa(s) carregada(s) do cache (desatualizado)."
   },
   "errors": {
     "stack": "Stack",
@@ -50,5 +52,19 @@
     "outroQr": "Escaneie o QR code que vai aparecer a seguir.",
     "outroPhone": "Aguarde o código de pareamento que vai aparecer a seguir.",
     "cancelled": "Login cancelado."
+  },
+  "getid": {
+    "connecting": "Conectando (sessão própria, não afeta o bot em execução)...",
+    "syncingChats": "Sincronizando conversas...",
+    "chatsFound": "{{count}} conversa(s) encontrada(s).",
+    "noChatsSynced": "Nenhuma conversa sincronizada ainda. Certifique-se de que essa conta já tem histórico de conversas e tente novamente.",
+    "pickPrompt": "Escolha uma ou mais conversas (↑↓ + Espaço para marcar, Enter para confirmar).",
+    "cancelled": "Cancelado.",
+    "copied": "{{count}} ID(s) copiado(s) para a área de transferência:\n{{ids}}",
+    "copyFailed": "Não foi possível acessar a área de transferência — copie manualmente:\n{{ids}}",
+    "connectFailed": "Tentativa de conexão falhou — motivo: {{reason}}",
+    "retrying": "Tentando novamente ({{attempt}}/{{max}})...",
+    "sessionWiped": "Sessão descartada, tentando parear novamente ({{round}}/{{max}})...",
+    "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
   }
 }

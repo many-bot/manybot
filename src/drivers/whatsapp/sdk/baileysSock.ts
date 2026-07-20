@@ -10,6 +10,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   DisconnectReason,
   Browsers,
+  proto,
 } from "@whiskeysockets/baileys";
 import { Boom }             from "@hapi/boom";
 import path                 from "path";
@@ -44,8 +45,13 @@ export interface SocketBundle {
  * Reconnection is the caller's responsibility — call createSocket() again
  * on `connection.close`.
  */
-export async function createSocket(): Promise<SocketBundle> {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+export function sessionDir(authDirName: string): string {
+  return path.join(CONFIG_DIR, "sessions", authDirName);
+}
+
+export async function createSocket(authDirName: string = CLIENT_ID): Promise<SocketBundle> {
+  const authDir = sessionDir(authDirName);
+  const { state, saveCreds } = await useMultiFileAuthState(authDir);
   const { version }          = await fetchLatestBaileysVersion();
 
   // Already-valid session (creds registered in .manybot/sessions) → skips
@@ -71,6 +77,13 @@ export async function createSocket(): Promise<SocketBundle> {
     logger:                         pino({ level: "silent" }),
     generateHighQualityLinkPreview: false,
     syncFullHistory:                false,
+    // Without this, Baileys' default for syncFullHistory:false is
+    // `() => false`, which disables ALL history sync — not just full
+    // messages, but the chat list, contacts, and LID mappings too (see
+    // https://github.com/WhiskeySockets/Baileys — SocketConfig docs).
+    // This keeps the initial/recent sync (needed for store.chats and
+    // LID→phone resolution) while still skipping the full download.
+    shouldSyncHistoryMessage:       ({ syncType }) => syncType !== proto.HistorySync.HistorySyncType.FULL,
     // Required for Baileys to decrypt incoming poll votes (and to retry
     // sends) — it looks up the original message by key internally.
     // Without this, pollUpdates never resolve even though the vote event
@@ -82,6 +95,15 @@ export async function createSocket(): Promise<SocketBundle> {
   }) as WASocket;
 
   store.bind(sock.ev);
+
+  // Each plugin's setup() can attach its own listeners via api.events (see
+  // buildEventsApi in api/index.ts), on top of the driver's own and the
+  // store's. That easily exceeds Node's default cap of 10 with a handful
+  // of plugins — it's expected, not a leak. Reconnects don't add to this:
+  // createSocket() always returns a fresh emitter and the caller tears
+  // down the previous one.
+  const evAsEmitter = sock.ev as unknown as { setMaxListeners?: (n: number) => void };
+  evAsEmitter.setMaxListeners?.(50);
 
   sock.ev.on("creds.update", saveCreds);
 

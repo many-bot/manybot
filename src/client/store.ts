@@ -20,6 +20,17 @@ export interface StoreChat {
   name: string;
 }
 
+/**
+ * Plain-data snapshot of the store (chats, contacts, learned @lid↔PN
+ * mappings) — no live messages, those aren't cached. Used to persist to
+ * disk (client/cache.ts) and to hydrate a fresh store from that cache.
+ */
+export interface StoreSnapshot {
+  chats:    StoreChat[];
+  contacts: Record<string, WAStoreContact>;
+  lidMap:   [string, string][];
+}
+
 export interface BotStore {
   /** Map of JID → StoreChat */
   readonly chats: {
@@ -40,10 +51,32 @@ export interface BotStore {
    */
   resolveJid(jid: string): string;
   /**
+   * Record (or overwrite) a `@lid` → phone-based JID mapping from a source
+   * external to the store's own event listeners — e.g. a live
+   * `groupMetadata()` lookup, which carries WhatsApp's own current
+   * `phoneNumber` for a participant and is more trustworthy than a mapping
+   * heuristically learned from a past, possibly unrelated message. No-op if
+   * `lid` isn't a `@lid` JID or `pn` is empty/also a `@lid`.
+   */
+  learnLid(lid?: string | null, pn?: string | null): void;
+  /**
+   * Discard a previously-learned `@lid` → phone-based JID mapping.
+   * Use when a resolution is later proven wrong (e.g. a `@lid` that got
+   * reassigned to a different WhatsApp account than the one the store
+   * learned it as) — removing the stale entry lets it be relearned
+   * correctly instead of permanently serving the wrong contact. No-op if
+   * `lid` isn't currently mapped.
+   */
+  forgetLid(lid: string): void;
+  /**
    * Bind the store to a socket event emitter.
    * Must be called immediately after socket creation.
    */
   bind(ev: WASocket["ev"]): void;
+  /** Plain-data snapshot for persisting to disk (client/cache.ts). */
+  toJSON(): StoreSnapshot;
+  /** Merge a previously-saved snapshot into this store. */
+  hydrate(snapshot: StoreSnapshot): void;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -69,6 +102,10 @@ export function createStore(): BotStore {
     return lidMap.get(jid) ?? jid;
   }
 
+  function forgetLid(lid: string): void {
+    lidMap.delete(lid);
+  }
+
   // Max messages kept per chat (prevents unbounded memory growth)
   const MAX_MSGS_PER_CHAT = 200;
 
@@ -78,11 +115,16 @@ export function createStore(): BotStore {
   }
 
   function upsertContact(contact: Contact) {
+    // Don't let a later, poorer sync round (e.g. a bare history-sync stub)
+    // blank out a name/notify/verifiedName we already learned from an
+    // earlier, richer one (e.g. a live message's pushName) — only accept
+    // a field when this contact object actually carries it.
+    const existing = contacts[contact.id];
     contacts[contact.id] = {
       id:           contact.id,
-      name:         contact.name,
-      notify:       contact.notify,
-      verifiedName: contact.verifiedName,
+      name:         contact.name ?? existing?.name,
+      notify:       contact.notify ?? existing?.notify,
+      verifiedName: contact.verifiedName ?? existing?.verifiedName,
     };
     // Baileys' Contact carries both the traditional JID (id) and the LID
     // (lid) once known — learn the mapping either direction.
@@ -109,6 +151,11 @@ export function createStore(): BotStore {
   }
 
   function bind(ev: WASocket["ev"]) {
+    ev.on("messaging-history.set", ({ chats, contacts }) => {
+      for (const chat of chats) upsertChat(chat);
+      for (const contact of contacts) upsertContact(contact);
+    });
+
     ev.on("chats.upsert", (newChats) => {
       for (const chat of newChats) upsertChat(chat);
     });
@@ -142,6 +189,19 @@ export function createStore(): BotStore {
         const key = msg.key as unknown as { participant?: string; participantAlt?: string; remoteJid?: string; remoteJidAlt?: string };
         learnLid(key.participantAlt, key.participant);
         learnLid(key.remoteJidAlt, key.remoteJid);
+
+        // pushName only ever arrives on a live message — contact/history
+        // sync alone won't give us a name for someone who never messaged
+        // and isn't a saved contact. Worth capturing here, since it's the
+        // one extra source we have (feeds the on-disk cache too).
+        const pushName = (msg as unknown as { pushName?: string }).pushName;
+        const senderId = key.participant ?? msg.key.remoteJid;
+        if (pushName && senderId && !senderId.endsWith("@g.us")) {
+          const existing = contacts[senderId];
+          if (existing?.notify !== pushName) {
+            contacts[senderId] = { ...existing, id: senderId, notify: pushName };
+          }
+        }
       }
     });
 
@@ -166,6 +226,22 @@ export function createStore(): BotStore {
     });
   }
 
+  function toJSON(): StoreSnapshot {
+    return {
+      chats:    [...chatsMap.values()],
+      contacts: { ...contacts },
+      lidMap:   [...lidMap.entries()],
+    };
+  }
+
+  function hydrate(snapshot: StoreSnapshot) {
+    for (const chat of snapshot.chats ?? []) chatsMap.set(chat.id, chat);
+    for (const [id, contact] of Object.entries(snapshot.contacts ?? {})) {
+      contacts[id] = { ...contacts[id], ...contact };
+    }
+    for (const [lid, pn] of snapshot.lidMap ?? []) learnLid(lid, pn);
+  }
+
   return {
     chats: {
       get:  (id) => chatsMap.get(id) ?? null,
@@ -174,6 +250,10 @@ export function createStore(): BotStore {
     contacts,
     messages,
     resolveJid,
+    learnLid,
+    forgetLid,
     bind,
+    toJSON,
+    hydrate,
   };
 }

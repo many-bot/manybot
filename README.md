@@ -16,7 +16,7 @@ Open-source framework for message automation, extensible via community plugins.
 
 ## Requirements
 
-- Node.js >= 24.17.0
+- Node.js >= 24
 - npm
 
 ## Getting started

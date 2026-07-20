@@ -36,7 +36,41 @@ export const pluginRegistry = new Map<string, PluginEntry>();
 let globalSock: WASocket | null = null;
 let globalStore: WAStore | null = null;
 
-const pluginWatchers = new Map<string, fs.FSWatcher>();
+const pluginWatchers = new Map<string, fs.FSWatcher[]>();
+
+// fs.watch's `recursive: true` emulates recursion on Linux by opening one
+// inotify watch per subdirectory — a plugin shipping its own node_modules
+// can blow past the OS's fs.inotify.max_user_watches (ENOSPC). Walk the
+// tree ourselves and skip directories that don't need watching.
+const IGNORED_WATCH_DIRS = new Set(["node_modules", ".git", "dist", "build", ".cache"]);
+
+function watchDirRecursive(rootDir: string, onChange: fs.WatchListener<string>): fs.FSWatcher[] {
+  const watchers: fs.FSWatcher[] = [];
+
+  function walk(dir: string) {
+    try {
+      watchers.push(fs.watch(dir, onChange));
+    } catch {
+      return;
+    }
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory() && !IGNORED_WATCH_DIRS.has(entry.name)) {
+        walk(path.join(dir, entry.name));
+      }
+    }
+  }
+
+  walk(rootDir);
+  return watchers;
+}
 let configWatcher: fs.FSWatcher | null = null;
 
 /**
@@ -313,14 +347,14 @@ export function watchPluginDirectory(name: string) {
 
   try {
     let watchTimeout: NodeJS.Timeout | null = null;
-    const watcher = fs.watch(dir, { recursive: true }, (eventType, filename) => {
+    const watchers = watchDirRecursive(dir, (eventType, filename) => {
       if (watchTimeout) clearTimeout(watchTimeout);
       watchTimeout = setTimeout(async () => {
         logger.info(`[watcher] Plugin "${name}" file change detected (${filename}). Reloading...`);
         await reloadPlugin(name);
       }, 500);
     });
-    pluginWatchers.set(name, watcher);
+    pluginWatchers.set(name, watchers);
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
     logger.warn(`[watcher] Failed to watch plugin "${name}" directory: ${err.message}`);
@@ -331,9 +365,9 @@ export function watchPluginDirectory(name: string) {
  * Stop watching a plugin's directory.
  */
 export function unwatchPlugin(name: string) {
-  const watcher = pluginWatchers.get(name);
-  if (watcher) {
-    watcher.close();
+  const watchers = pluginWatchers.get(name);
+  if (watchers) {
+    for (const w of watchers) w.close();
     pluginWatchers.delete(name);
   }
 }
@@ -366,8 +400,8 @@ export async function cleanupPlugins(): Promise<void> {
     configWatcher.close();
     configWatcher = null;
   }
-  for (const [name, watcher] of pluginWatchers.entries()) {
-    watcher.close();
+  for (const watchers of pluginWatchers.values()) {
+    for (const w of watchers) w.close();
   }
   pluginWatchers.clear();
 

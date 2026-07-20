@@ -10,33 +10,110 @@
  * - Plugin context building (via buildApi)
  * - Event handling and plugin execution
  */
-import { createSocket, normalizeJid, AUTH_DIR } from "./sdk/baileysSock.js";
+import { createSocket, normalizeJid, sessionDir, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { handleMessage } from "./messageHandler.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
 import { logger } from "#logger";
 import { PLUGINS, CLIENT_ID } from "#config";
 import { t } from "#i18n";
 import { printBanner } from "#client/banner.js";
-import { DisconnectReason } from "@whiskeysockets/baileys";
+import { loadChatCache, saveChatCache, isCacheFresh } from "#client/cache.js";
+import { DisconnectReason, normalizeMessageContent } from "@whiskeysockets/baileys";
 import fs from "fs/promises";
+import * as clack from "@clack/prompts";
+import { copyToClipboard } from "#utils/clipboard.js";
 let state = "BOOT";
 let shuttingDown = false;
 let currentSock = null;
 let currentStore = null;
+let reconnectTimer = null;
+let connecting = false;
+let reconnectAttempts = 0;
+let cacheHydrated = false;
+let cacheSaveTimer = null;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 60000;
+const CACHE_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5min
+/**
+ * Loads the on-disk cache and merges it into `store` (union, never
+ * overwrite — see client/cache.ts). Runs once per process: the shared
+ * store singleton already accumulates across reconnects, so re-hydrating
+ * later would just redo a no-op merge.
+ */
+async function hydrateFromCache(store) {
+    if (cacheHydrated)
+        return;
+    cacheHydrated = true;
+    const snapshot = await loadChatCache();
+    if (!snapshot)
+        return;
+    store.hydrate(snapshot);
+    const fresh = await isCacheFresh();
+    const count = snapshot.chats.length;
+    const key = fresh ? "system.cacheLoaded" : "system.cacheLoadedStale";
+    logger.info(`[cache] ${t(key, { count })}`);
+}
+function startCacheAutosave(store) {
+    if (cacheSaveTimer)
+        return;
+    cacheSaveTimer = setInterval(() => { saveChatCache(store); }, CACHE_SAVE_INTERVAL_MS);
+}
+function stopCacheAutosave() {
+    if (!cacheSaveTimer)
+        return;
+    clearInterval(cacheSaveTimer);
+    cacheSaveTimer = null;
+}
+function nextBackoffMs() {
+    const delay = RECONNECT_BASE_MS * 2 ** reconnectAttempts;
+    reconnectAttempts++;
+    return Math.min(delay, RECONNECT_MAX_MS);
+}
+function teardownSock(sock) {
+    if (!sock)
+        return;
+    try {
+        sock.ev.removeAllListeners();
+    }
+    catch { }
+    try {
+        sock.end(undefined);
+    }
+    catch { }
+}
+function scheduleReconnect(delayMs) {
+    if (shuttingDown)
+        return;
+    if (reconnectTimer)
+        clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        startBot();
+    }, delayMs);
+}
 async function startBot() {
+    if (connecting)
+        return;
+    connecting = true;
+    await hydrateFromCache(sharedStore);
+    const previousSock = currentSock;
     const { sock, store } = await createSocket();
+    teardownSock(previousSock);
     currentSock = sock;
     currentStore = store;
+    connecting = false;
     // ── Normal bot mode ─────────────────────────────────────────────────────────
     sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === "open") {
             state = "READY_INIT";
+            reconnectAttempts = 0;
             logger.success(t("system.connected"));
             logger.info(t("system.clientId", { id: CLIENT_ID }));
             printBanner();
             await loadPlugins(PLUGINS);
             await setupPlugins(sock, store);
+            startCacheAutosave(store);
             // buffer anti-replay / sync ghost messages
             setTimeout(() => { state = "READY"; }, 2000);
         }
@@ -53,12 +130,12 @@ async function startBot() {
                 catch (e) {
                     logger.error(`[whatsapp] Failed to remove session dir: ${e.message}`);
                 }
-                if (!shuttingDown)
-                    setTimeout(() => startBot(), 1000);
+                scheduleReconnect(1000);
             }
             else if (!shuttingDown) {
-                logger.info(t("system.reconnecting", { secs: 5 }));
-                setTimeout(() => startBot(), 5000);
+                const delay = nextBackoffMs();
+                logger.info(t("system.reconnecting", { secs: Math.round(delay / 1000) }));
+                scheduleReconnect(delay);
             }
         }
     });
@@ -87,7 +164,7 @@ async function startBot() {
 }
 /** Quick body extraction to avoid importing helpers here. */
 function getBodyQuick(msg) {
-    const m = msg.message;
+    const m = normalizeMessageContent(msg.message);
     if (!m)
         return "";
     return (m.conversation ??
@@ -97,7 +174,7 @@ function getBodyQuick(msg) {
         "");
 }
 function msgHasMediaQuick(msg) {
-    const m = msg.message;
+    const m = normalizeMessageContent(msg.message);
     return !!(m?.imageMessage || m?.videoMessage || m?.audioMessage || m?.documentMessage || m?.stickerMessage);
 }
 export const whatsappDriver = {
@@ -107,62 +184,165 @@ export const whatsappDriver = {
     },
     async disconnect() {
         shuttingDown = true;
-        if (currentSock) {
-            try {
-                currentSock.ev?.removeAllListeners();
-            }
-            catch { }
-            try {
-                currentSock.end(undefined);
-            }
-            catch { }
-            currentSock = null;
-            currentStore = null;
+        reconnectAttempts = 0;
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
         }
+        stopCacheAutosave();
+        if (currentStore)
+            await saveChatCache(currentStore);
+        teardownSock(currentSock);
+        currentSock = null;
+        currentStore = null;
     },
     /**
-     * Diagnostic mode: connects normally (reusing an already saved
-     * session/QR), but instead of loading plugins, just waits for the
-     * NEXT message to arrive — from any chat, from any sender, whether
-     * it's your own message or someone else's — prints the normalized
-     * JID and the chat name (if any), and exits.
-     *
-     * Intentionally does not go through the CHATS/dedup filters of
-     * handleMessage: the only goal here is to discover the JID so you can
-     * configure CHATS afterward, so there's no reason to filter
-     * anything out yet.
+     * Diagnostic mode: connects on its own session (separate from the
+     * running bot's, so it doesn't compete for the same WhatsApp Web
+     * slot), waits for the initial chat sync, then shows an interactive
+     * list — arrow keys to navigate, Enter to pick. The selected chat's
+     * id is normalized, resolved from `@lid` to the real phone-based JID
+     * when known, copied to the clipboard, and printed.
      */
     async getId() {
-        const { sock } = await createSocket();
-        logger.info("[getid] Connecting... wait for the QR/pairing prompt if this is the first run.");
-        await new Promise((resolve) => {
-            let done = false;
-            sock.ev.on("connection.update", (update) => {
-                if (update.connection === "open") {
-                    logger.success("[getid] Connected. Send ANY message in the chat you want to identify.");
+        logger.info(`[getid] ${t("getid.connecting")}`);
+        await hydrateFromCache(sharedStore);
+        const CONNECT_TIMEOUT_MS = 25000;
+        const MAX_ATTEMPTS = 3;
+        const MAX_ROUNDS = 2;
+        const getidAuthDir = `${CLIENT_ID}-getid`;
+        let sock = null;
+        let store = null;
+        for (let round = 1; round <= MAX_ROUNDS && !sock; round++) {
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS && !sock; attempt++) {
+                const created = await createSocket(getidAuthDir);
+                // Not a spinner here on purpose: if this session isn't paired yet,
+                // Baileys prints the QR/pairing code through the normal logger
+                // right after this — a spinner redrawing the line would bury it,
+                // so the person never gets a chance to approve it on their phone
+                // and the connection hangs forever waiting for "open".
+                const opened = await new Promise((resolve) => {
+                    let settled = false;
+                    const timer = setTimeout(() => {
+                        if (!settled) {
+                            settled = true;
+                            resolve(false);
+                        }
+                    }, CONNECT_TIMEOUT_MS);
+                    created.sock.ev.on("connection.update", (update) => {
+                        if (settled)
+                            return;
+                        if (update.connection === "open") {
+                            settled = true;
+                            clearTimeout(timer);
+                            resolve(true);
+                        }
+                        else if (update.connection === "close") {
+                            const code = update.lastDisconnect?.error?.output?.statusCode;
+                            settled = true;
+                            clearTimeout(timer);
+                            logger.warn(`[getid] ${t("getid.connectFailed", { reason: String(code ?? "?") })}`);
+                            resolve(false);
+                        }
+                    });
+                });
+                if (opened) {
+                    sock = created.sock;
+                    store = created.store;
+                    break;
                 }
-            });
-            sock.ev.on("messages.upsert", ({ messages, type }) => {
-                if (done || type !== "notify")
-                    return;
-                const msg = messages[0];
-                const rawJid = msg?.key?.remoteJid;
-                if (!rawJid)
-                    return;
-                done = true;
-                const jid = normalizeJid(rawJid);
-                const name = msg?.pushName ?? "";
-                logger.success(`[getid] JID: ${jid}`);
-                if (name)
-                    logger.info(`[getid] Chat/sender: ${name}`);
-                logger.info("[getid] Paste this value into CHATS in manybot.toml.");
-                resolve();
-            });
-        });
+                try {
+                    created.sock.ev?.removeAllListeners();
+                    created.sock.end(undefined);
+                }
+                catch { }
+                if (attempt < MAX_ATTEMPTS) {
+                    logger.info(`[getid] ${t("getid.retrying", { attempt: attempt + 1, max: MAX_ATTEMPTS })}`);
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+            }
+            // Exhausted every attempt this round without ever reaching "open" —
+            // likely a corrupted/stuck -getid session (not the normal first-pairing
+            // 515, which already succeeds within a round). Wipe it and re-pair
+            // from scratch instead of forcing the person to rerun the command.
+            if (!sock && round < MAX_ROUNDS) {
+                logger.warn(`[getid] ${t("getid.sessionWiped", { round: round + 1, max: MAX_ROUNDS })}`);
+                try {
+                    await fs.rm(sessionDir(getidAuthDir), { recursive: true, force: true });
+                }
+                catch (e) {
+                    logger.error(`[getid] Failed to remove session dir: ${e.message}`);
+                }
+                await new Promise((r) => setTimeout(r, 1000));
+            }
+        }
+        if (!sock || !store) {
+            logger.error(`[getid] ${t("getid.connectGaveUp")}`);
+            return;
+        }
+        const s = clack.spinner();
+        s.start(t("getid.syncingChats"));
+        // History sync arrives as several independent streams (chats,
+        // contacts, push-names...), each firing its own `isLatest: true` when
+        // THAT stream ends — not when everything is done. Stopping on the
+        // first one cuts the others short (fewer chats, missing names).
+        // Instead, wait for a quiet period with no sync activity at all.
+        let lastActivityAt = null;
+        const markActivity = () => { lastActivityAt = Date.now(); };
+        sock.ev.on("messaging-history.set", markActivity);
+        sock.ev.on("chats.upsert", markActivity);
+        sock.ev.on("contacts.upsert", markActivity);
+        sock.ev.on("contacts.update", markActivity);
+        const QUIET_MS = 2000;
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+            if (lastActivityAt !== null && Date.now() - lastActivityAt >= QUIET_MS)
+                break;
+            await new Promise((r) => setTimeout(r, 200));
+        }
+        const chats = store.chats.all();
+        s.stop(t("getid.chatsFound", { count: chats.length }));
+        await saveChatCache(store);
         try {
             sock.ev?.removeAllListeners();
             sock.end(undefined);
         }
         catch { }
+        if (chats.length === 0) {
+            logger.warn(`[getid] ${t("getid.noChatsSynced")}`);
+            return;
+        }
+        const options = chats
+            .map((chat) => {
+            const isGroup = chat.id.endsWith("@g.us");
+            const resolved = normalizeJid(store.resolveJid(chat.id));
+            const contact = store.contacts[chat.id] ?? store.contacts[resolved];
+            const hasChatName = chat.name && chat.name !== chat.id.split("@")[0];
+            const displayName = hasChatName ? chat.name : contact?.name ?? contact?.notify ?? resolved;
+            return {
+                value: resolved,
+                label: `${isGroup ? "👥" : "👤"} ${displayName}`,
+                hint: resolved,
+            };
+        })
+            .sort((a, b) => a.label.localeCompare(b.label));
+        const picked = await clack.multiselect({
+            message: t("getid.pickPrompt"),
+            options,
+            required: true,
+        });
+        if (clack.isCancel(picked)) {
+            clack.cancel(t("getid.cancelled"));
+            return;
+        }
+        const ids = picked;
+        const joined = ids.join("\n");
+        const copied = await copyToClipboard(joined);
+        if (copied) {
+            logger.success(`[getid] ${t("getid.copied", { count: ids.length, ids: joined })}`);
+        }
+        else {
+            logger.warn(`[getid] ${t("getid.copyFailed", { count: ids.length, ids: joined })}`);
+        }
     },
 };

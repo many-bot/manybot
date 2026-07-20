@@ -31,7 +31,9 @@
     "schedulerRegistered": "Schedule registered — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Download job failed — {{message}}",
     "reconnecting": "Reconnecting in {{secs}}s...",
-    "sessionExpired": "Session expired or logged out — removing local session and restarting..."
+    "sessionExpired": "Session expired or logged out — removing local session and restarting...",
+    "cacheLoaded": "{{count}} chat(s) loaded from cache.",
+    "cacheLoadedStale": "{{count}} chat(s) loaded from cache (stale)."
   },
   "errors": {
     "stack": "Stack",
@@ -50,5 +52,19 @@
     "outroQr": "Scan the QR code that will appear next.",
     "outroPhone": "Wait for the pairing code that will appear next.",
     "cancelled": "Login cancelled."
+  },
+  "getid": {
+    "connecting": "Connecting (own session, won't disturb the running bot)...",
+    "syncingChats": "Syncing chats...",
+    "chatsFound": "{{count}} chat(s) found.",
+    "noChatsSynced": "No chats synced yet. Make sure this WhatsApp account already has some conversation history and try again.",
+    "pickPrompt": "Pick one or more chats (↑↓ + Space to select, Enter to confirm).",
+    "cancelled": "Cancelled.",
+    "copied": "{{count}} id(s) copied to the clipboard:\n{{ids}}",
+    "copyFailed": "Couldn't access the clipboard — copy manually:\n{{ids}}",
+    "connectFailed": "Connection attempt failed — reason: {{reason}}",
+    "retrying": "Retrying ({{attempt}}/{{max}})...",
+    "sessionWiped": "Session discarded, pairing again ({{round}}/{{max}})...",
+    "connectGaveUp": "Couldn't connect after several attempts. Check your network and try again."
   }
 }

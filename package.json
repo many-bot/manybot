@@ -9,7 +9,7 @@
   "license": "GPL-3.0-only",
   "private": false,
   "engines": {
-    "node": ">=24.17.0"
+    "node": ">=24.0.0"
   },
   "repository": {
     "type": "git",
@@ -25,7 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\"",
+    "build": "npm i && tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\"",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit"
   },
@@ -59,5 +59,10 @@
     "#config": "./dist/config.js",
     "#main": "./dist/main.js",
     "#types": "./dist/types.js"
+  },
+  "allowScripts": {
+    "@whiskeysockets/baileys@6.7.23": true,
+    "esbuild@0.28.1": true,
+    "protobufjs@7.6.4": true
   }
 }

@@ -20,6 +20,36 @@ export const pluginRegistry = new Map();
 let globalSock = null;
 let globalStore = null;
 const pluginWatchers = new Map();
+// fs.watch's `recursive: true` emulates recursion on Linux by opening one
+// inotify watch per subdirectory — a plugin shipping its own node_modules
+// can blow past the OS's fs.inotify.max_user_watches (ENOSPC). Walk the
+// tree ourselves and skip directories that don't need watching.
+const IGNORED_WATCH_DIRS = new Set(["node_modules", ".git", "dist", "build", ".cache"]);
+function watchDirRecursive(rootDir, onChange) {
+    const watchers = [];
+    function walk(dir) {
+        try {
+            watchers.push(fs.watch(dir, onChange));
+        }
+        catch {
+            return;
+        }
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory() && !IGNORED_WATCH_DIRS.has(entry.name)) {
+                walk(path.join(dir, entry.name));
+            }
+        }
+    }
+    walk(rootDir);
+    return watchers;
+}
 let configWatcher = null;
 /**
  * Load all active plugins listed in `activePlugins`.
@@ -248,7 +278,7 @@ export function watchPluginDirectory(name) {
         return;
     try {
         let watchTimeout = null;
-        const watcher = fs.watch(dir, { recursive: true }, (eventType, filename) => {
+        const watchers = watchDirRecursive(dir, (eventType, filename) => {
             if (watchTimeout)
                 clearTimeout(watchTimeout);
             watchTimeout = setTimeout(async () => {
@@ -256,7 +286,7 @@ export function watchPluginDirectory(name) {
                 await reloadPlugin(name);
             }, 500);
         });
-        pluginWatchers.set(name, watcher);
+        pluginWatchers.set(name, watchers);
     }
     catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
@@ -267,9 +297,10 @@ export function watchPluginDirectory(name) {
  * Stop watching a plugin's directory.
  */
 export function unwatchPlugin(name) {
-    const watcher = pluginWatchers.get(name);
-    if (watcher) {
-        watcher.close();
+    const watchers = pluginWatchers.get(name);
+    if (watchers) {
+        for (const w of watchers)
+            w.close();
         pluginWatchers.delete(name);
     }
 }
@@ -302,8 +333,9 @@ export async function cleanupPlugins() {
         configWatcher.close();
         configWatcher = null;
     }
-    for (const [name, watcher] of pluginWatchers.entries()) {
-        watcher.close();
+    for (const watchers of pluginWatchers.values()) {
+        for (const w of watchers)
+            w.close();
     }
     pluginWatchers.clear();
     for (const plugin of pluginRegistry.values()) {

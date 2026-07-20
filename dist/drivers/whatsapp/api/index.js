@@ -21,10 +21,17 @@ import { readFileSync } from "fs";
 import path from "path";
 import { waitForSendSlot, simulateState, typingDuration, mediaDuration } from "#sendguard";
 import { buildSettingsApi } from "#settingsdb";
-import { downloadMediaMessage, getAggregateVotesInPollMessage, decryptPollVote, jidNormalizedUser } from "@whiskeysockets/baileys";
+import { downloadMediaMessage, getAggregateVotesInPollMessage, decryptPollVote, jidNormalizedUser, normalizeMessageContent } from "@whiskeysockets/baileys";
 // ── Message body / type helpers ───────────────────────────────────────────────
+// WhatsApp wraps media in ephemeralMessage/viewOnceMessage/etc when sent as
+// disappearing or view-once — the actual imageMessage/videoMessage/... sits
+// one level deeper. Reading msg.message directly misses all of that (this
+// was the cause of hasMedia silently returning false for such messages).
+function unwrap(msg) {
+    return normalizeMessageContent(msg.message) ?? undefined;
+}
 function getMsgBody(msg) {
-    const m = msg.message;
+    const m = unwrap(msg);
     if (!m)
         return "";
     return (m.conversation ??
@@ -37,7 +44,7 @@ function getMsgBody(msg) {
         "");
 }
 function getMsgType(msg) {
-    const m = msg.message;
+    const m = unwrap(msg);
     if (!m)
         return "unknown";
     if (m.conversation || m.extendedTextMessage)
@@ -69,11 +76,11 @@ function getMsgType(msg) {
     return "unknown";
 }
 function msgHasMedia(msg) {
-    const m = msg.message;
+    const m = unwrap(msg);
     return !!(m?.imageMessage || m?.videoMessage || m?.audioMessage || m?.documentMessage || m?.stickerMessage);
 }
 function msgIsGif(msg) {
-    return !!(msg.message?.videoMessage?.gifPlayback);
+    return !!(unwrap(msg)?.videoMessage?.gifPlayback);
 }
 /** Sender JID — group participant or DM remote JID, normalized. */
 function getMsgSender(msg, store) {
@@ -81,7 +88,7 @@ function getMsgSender(msg, store) {
     return normalizeJid(store.resolveJid(raw));
 }
 function getContextInfo(msg) {
-    const m = msg.message;
+    const m = unwrap(msg);
     return (m?.extendedTextMessage?.contextInfo ??
         m?.imageMessage?.contextInfo ??
         m?.videoMessage?.contextInfo ??
@@ -90,7 +97,7 @@ function getContextInfo(msg) {
         null);
 }
 function getMsgMimetype(msg) {
-    const m = msg.message;
+    const m = unwrap(msg);
     return (m?.imageMessage?.mimetype ??
         m?.videoMessage?.mimetype ??
         m?.audioMessage?.mimetype ??
@@ -382,17 +389,92 @@ function buildContactsApi(sock, store, botJid) {
         /**
          * Get a normalized contact object by JID.
          * @param {string} contactId
+         * @param {{groupId?: string}} [opts] — when `contactId` is a raw `@lid`, this
+         *   always cross-checks it against Baileys' own protocol-level
+         *   `sock.signalRepository.lidMapping` first (populated from real Signal
+         *   session/identity resolution — not a heuristic, and doesn't need a
+         *   group). If `opts.groupId` is also given and that didn't resolve it,
+         *   falls back to a live `groupMetadata()` call for that group as a
+         *   second attempt (NOTE: on Baileys 6.7.x, `groupMetadata()` is known to
+         *   still return a bare `@lid` with no `phoneNumber` for some
+         *   participants — see WhiskeySockets/Baileys#1505 — so this second
+         *   attempt is best-effort and won't always help). Either source, once
+         *   it yields a phone-based JID, corrects the store's own `lidMap` too,
+         *   which is only ever learned from past messages/contact syncs and can
+         *   go stale or, rarely, end up mapped to the wrong person (e.g. after a
+         *   `@lid` gets reassigned). Every cross-check is best-effort: on any
+         *   failure this silently falls back to whatever the store already has
+         *   — never throws because of the cross-check itself.
          * @returns {Promise<object|null>}
          */
-        async get(contactId) {
-            const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
+        async get(contactId, opts) {
+            if (contactId.endsWith("@lid")) {
+                let freshPn;
+                // 1) Baileys' own protocol-level LID↔PN store — populated as part of
+                // real Signal session/identity handling, so it's authoritative when
+                // it has an answer (unlike our own heuristic lidMap). Not part of
+                // the public v6.7 TS surface, hence the cast; guarded with a
+                // typeof check since older/patched Baileys builds may not have it.
+                try {
+                    const lidMapping = sock.signalRepository?.lidMapping;
+                    if (typeof lidMapping?.getPNForLID === "function") {
+                        freshPn = await lidMapping.getPNForLID(contactId);
+                    }
+                }
+                catch (err) {
+                    logger.warn(`[contacts.get] signalRepository.lidMapping cross-check failed for "${contactId}" — ${err.message}`);
+                }
+                // 2) Fall back to live groupMetadata() when we know the group and
+                // the signal repository didn't have an answer. Best-effort — see
+                // the Baileys 6.7.x caveat in the doc comment above.
+                if (!freshPn && opts?.groupId) {
+                    try {
+                        const meta = await sock.groupMetadata(opts.groupId);
+                        const participant = meta.participants.find((p) => normalizeJid(p.id) === normalizeJid(contactId));
+                        freshPn = participant?.phoneNumber;
+                    }
+                    catch (err) {
+                        logger.warn(`[contacts.get] live groupMetadata cross-check failed for "${contactId}" in "${opts.groupId}" — ${err.message}`);
+                    }
+                }
+                if (freshPn)
+                    store.learnLid(contactId, normalizeJid(freshPn));
+            }
+            const normalizedContactId = normalizeJid(contactId);
+            let resolved = normalizeJid(store.resolveJid(normalizedContactId));
+            // Sanity guard: a @lid resolving to the bot's own JID is only ever
+            // legitimate when we were actually looking up the bot itself. Any
+            // other case means the stored lidMap entry is stale/wrong — e.g. a
+            // @lid that got reassigned to a different WhatsApp account since we
+            // learned it (see the best-effort cross-check above, which doesn't
+            // always catch this — WhiskeySockets/Baileys#1505). Serving it
+            // anyway would silently hand the bot owner's own identity out as
+            // some other member's. Discard the bad mapping so it can be
+            // relearned correctly, and treat this lookup as unresolved instead.
+            if (botJid &&
+                normalizedContactId.endsWith("@lid") &&
+                resolved === normalizeJid(botJid) &&
+                normalizedContactId !== normalizeJid(botJid)) {
+                logger.warn(`[contacts.get] "${contactId}" resolved to the bot's own JID — discarding stale lidMap entry, treating as unresolved.`);
+                store.forgetLid(normalizedContactId);
+                resolved = normalizedContactId;
+            }
             // The same person's data can be split across the raw (e.g. @lid) and
             // store-resolved (PN) keys — one may have `notify` and the other
-            // `verifiedName`/`name`. Merge instead of taking whichever key
-            // happens to exist first, or we silently drop real fields.
+            // `verifiedName`/`name`. Merge field-by-field instead of spreading
+            // whole objects: upsertContact() always writes all three fields, so
+            // a plain `{ ...raw, ...resolvedInfo }` lets resolvedInfo's explicit
+            // `undefined` silently clobber a real value already present in raw
+            // (or vice versa) — which is how a contact could resolve correctly
+            // by id yet still come back with a null pushname/name.
             const raw = store.contacts[contactId];
             const resolvedInfo = store.contacts[resolved];
-            const info = (raw || resolvedInfo) ? { ...raw, ...resolvedInfo } : undefined;
+            const info = (raw || resolvedInfo) ? {
+                id: resolved,
+                name: resolvedInfo?.name ?? raw?.name,
+                notify: resolvedInfo?.notify ?? raw?.notify,
+                verifiedName: resolvedInfo?.verifiedName ?? raw?.verifiedName,
+            } : undefined;
             return normalizeContact(resolved, info, botJid, sock);
         },
         /**
@@ -843,6 +925,28 @@ function buildAdminApi(sock, chatJid) {
             throw new Error(`Group not found: ${jid}`);
         return meta;
     }
+    /**
+     * Baileys' `groupParticipantsUpdate()` resolves normally even when
+     * WhatsApp rejected some (or all) of the requested participants — it
+     * returns an array with a per-participant `status` code (`'200'` =
+     * success; anything else is a rejection — e.g. `'403'`/`'401'` not
+     * authorized, often because the target's privacy settings block being
+     * added by a non-contact; `'409'` already a participant; `'408'`
+     * partial/timeout). A caller that only awaits the promise sees a
+     * "successful" resolution even when nobody was actually
+     * added/removed/promoted/demoted — silently reporting failure as
+     * success. Throw here so `ctx.admin.add/kick/promote/demote` produce a
+     * real rejection callers can catch, instead of a false positive.
+     */
+    function assertParticipantsUpdateOk(action, results) {
+        if (!Array.isArray(results))
+            return; // unexpected shape — nothing to validate
+        const failed = results.filter((r) => r?.status && r.status !== "200");
+        if (failed.length > 0) {
+            const detail = failed.map((r) => `${r.jid ?? "?"}=${r.status}`).join(", ");
+            throw new Error(`groupParticipantsUpdate("${action}") rejeitado para: ${detail}`);
+        }
+    }
     function createTargetableAction(action, memberIds) {
         const users = norm(memberIds);
         const executeCurrent = async () => { requireChat(); return action(chatJid, users); };
@@ -862,22 +966,32 @@ function buildAdminApi(sock, chatJid) {
     return {
         /** @param {string|string[]} memberIds */
         add(memberIds) {
-            return createTargetableAction((jid, users) => sock.groupParticipantsUpdate(jid, users, "add"), memberIds);
+            return createTargetableAction(async (jid, users) => {
+                const results = await sock.groupParticipantsUpdate(jid, users, "add");
+                assertParticipantsUpdateOk("add", results);
+                return results;
+            }, memberIds);
         },
         /** @param {string|string[]} memberIds */
         async kick(memberIds) {
             requireChat();
-            return sock.groupParticipantsUpdate(chatJid, norm(memberIds), "remove");
+            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "remove");
+            assertParticipantsUpdateOk("remove", results);
+            return results;
         },
         /** @param {string|string[]} memberIds */
         async promote(memberIds) {
             requireChat();
-            return sock.groupParticipantsUpdate(chatJid, norm(memberIds), "promote");
+            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "promote");
+            assertParticipantsUpdateOk("promote", results);
+            return results;
         },
         /** @param {string|string[]} memberIds */
         async demote(memberIds) {
             requireChat();
-            return sock.groupParticipantsUpdate(chatJid, norm(memberIds), "demote");
+            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "demote");
+            assertParticipantsUpdateOk("demote", results);
+            return results;
         },
         /** @param {string} name */
         async setSubject(name) {
@@ -895,9 +1009,11 @@ function buildAdminApi(sock, chatJid) {
             const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
             return sock.updateProfilePicture(chatJid, buffer);
         },
-        async getInviteLink() {
-            requireChat();
-            const code = await sock.groupInviteCode(chatJid);
+        async getInviteLink(groupId) {
+            const jid = groupId ?? chatJid;
+            if (!jid)
+                throw new Error("This admin operation requires a runtime group context.");
+            const code = await sock.groupInviteCode(jid);
             return `https://chat.whatsapp.com/${code}`;
         },
         async revokeInvite() {
@@ -928,7 +1044,11 @@ function buildMeApi(sock) {
 }
 // ── Poll API ──────────────────────────────────────────────────────────────────
 const pollRegistry = new Map();
-const pollListeners = new Set();
+// Rebinding must happen per socket instance — a plugin name alone doesn't
+// tell us whether the listener is bound to the CURRENT (post-reconnect)
+// sock.ev or a dead one from before. WeakMap keyed by sock lets old
+// entries fall off automatically once that socket is garbage collected.
+const pollListenersBySocket = new WeakMap();
 /**
  * Tracks votes for an active poll.
  * Obtained via ctx.poll.create().
@@ -1004,8 +1124,13 @@ function buildPollApi(sock, store, rawJid, guardOptions, pluginName) {
     // with no dedup — so we must keep only the latest entry per voter ourselves,
     // or retracted/changed votes keep counting alongside the new one.
     const pollVotesByCreationId = new Map();
-    if (!pollListeners.has(pluginName)) {
-        pollListeners.add(pluginName);
+    let boundPlugins = pollListenersBySocket.get(sock);
+    if (!boundPlugins) {
+        boundPlugins = new Set();
+        pollListenersBySocket.set(sock, boundPlugins);
+    }
+    if (!boundPlugins.has(pluginName)) {
+        boundPlugins.add(pluginName);
         const meId = sock.user?.id ? jidNormalizedUser(sock.user.id) : "me";
         // WhatsApp doesn't consistently use the same JID shape (LID vs PN) for
         // pollCreatorJid/voterJid when deriving the poll-vote decryption key —

@@ -31,7 +31,9 @@
     "schedulerRegistered": "Programación registrada — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Error en el trabajo de descarga — {{message}}",
     "reconnecting": "Reconectando en {{secs}}s...",
-    "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando..."
+    "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando...",
+    "cacheLoaded": "{{count}} chat(s) cargado(s) desde la caché.",
+    "cacheLoadedStale": "{{count}} chat(s) cargado(s) desde la caché (desactualizada)."
   },
   "errors": {
     "stack": "Stack",
@@ -50,5 +52,19 @@
     "outroQr": "Escanea el código QR que aparecerá a continuación.",
     "outroPhone": "Espera el código de emparejamiento que aparecerá a continuación.",
     "cancelled": "Inicio de sesión cancelado."
+  },
+  "getid": {
+    "connecting": "Conectando (sesión propia, no afecta al bot en ejecución)...",
+    "syncingChats": "Sincronizando chats...",
+    "chatsFound": "{{count}} chat(s) encontrado(s).",
+    "noChatsSynced": "Aún no hay chats sincronizados. Asegúrate de que esta cuenta ya tenga historial de conversaciones e intenta de nuevo.",
+    "pickPrompt": "Elige uno o más chats (↑↓ + Espacio para marcar, Enter para confirmar).",
+    "cancelled": "Cancelado.",
+    "copied": "{{count}} ID(s) copiado(s) al portapapeles:\n{{ids}}",
+    "copyFailed": "No se pudo acceder al portapapeles — cópialo manualmente:\n{{ids}}",
+    "connectFailed": "El intento de conexión falló — motivo: {{reason}}",
+    "retrying": "Reintentando ({{attempt}}/{{max}})...",
+    "sessionWiped": "Sesión descartada, emparejando de nuevo ({{round}}/{{max}})...",
+    "connectGaveUp": "No se pudo conectar tras varios intentos. Revisa tu conexión e intenta de nuevo."
   }
 }
