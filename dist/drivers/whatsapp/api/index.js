@@ -15,6 +15,16 @@ import { enqueue } from "#download";
 import { schedule, cancelPlugin } from "#kernel/scheduler.js";
 import { emptyFolder } from "#utils/file.js";
 import { normalizeJid, toPresenceCapable } from "../sdk/baileysSock.js";
+// store.contacts is keyed by whatever raw JID Baileys handed the store
+// (e.g. "...@s.whatsapp.net" for a normal DM) — never run through
+// normalizeJid. Every lookup here works in normalized ("...@c.us") form,
+// so a plain `store.contacts[normalizedId]` misses for any non-@lid
+// contact. @lid contacts don't hit this: normalizeJid doesn't touch
+// "@lid", so the raw store key already matches. Used as a fallback key
+// alongside the normalized one wherever we read store.contacts directly.
+function denormalizeJid(jid) {
+    return jid.replace(/@c\.us$/, "@s.whatsapp.net");
+}
 import { mkdirSync } from "fs";
 import { readFile, writeFile } from "fs/promises";
 import { readFileSync } from "fs";
@@ -323,6 +333,26 @@ const log = {
 };
 // ── Contact normalization ─────────────────────────────────────────────────────
 /**
+ * Resolve the text to show after "@" in a mention.
+ *
+ * WhatsApp's tag/notify behavior (who gets pinged, the bold highlight) is
+ * driven entirely by contextInfo.mentionedJid — the visible text after "@"
+ * is cosmetic and each client fills it in independently. Web commonly
+ * resolves it from the group's synced metadata, but mobile clients only do
+ * this when the number is saved in the phone's own contacts — otherwise
+ * they show the raw digits (e.g. "@5516999999999"), which is the "só
+ * aparece @numero no celular" behavior. Using the name Baileys already
+ * knows (contact name / business verifiedName / WhatsApp "notify" push
+ * name) instead of the number sidesteps that client-side lookup and
+ * renders consistently everywhere.
+ * @param {string}          jid
+ * @param {WAStoreContact}  [info]
+ */
+function mentionDisplayName(jid, info) {
+    const number = jid.split("@")[0];
+    return info?.name ?? info?.verifiedName ?? info?.notify ?? number;
+}
+/**
  * Build a normalized contact object from a JID and optional store metadata.
  * isBusiness is resolved via sock.getBusinessProfile(jid) — it resolves to
  * a profile only for WhatsApp Business accounts, undefined otherwise.
@@ -380,7 +410,7 @@ async function normalizeContact(jid, info, botJid, sock) {
         isWAAccount,
         isUser: !jid.endsWith("@g.us"),
         isGroup: jid.endsWith("@g.us"),
-        mention: { text: `@${number}`, mentions: [jid] },
+        mention: { text: `@${mentionDisplayName(jid, info)}`, mentions: [jid] },
     };
 }
 // ── Contact API ───────────────────────────────────────────────────────────────
@@ -467,8 +497,10 @@ function buildContactsApi(sock, store, botJid) {
             // `undefined` silently clobber a real value already present in raw
             // (or vice versa) — which is how a contact could resolve correctly
             // by id yet still come back with a null pushname/name.
-            const raw = store.contacts[contactId];
-            const resolvedInfo = store.contacts[resolved];
+            const raw = store.contacts[contactId]
+                ?? store.contacts[denormalizeJid(contactId)];
+            const resolvedInfo = store.contacts[resolved]
+                ?? store.contacts[denormalizeJid(resolved)];
             const info = (raw || resolvedInfo) ? {
                 id: resolved,
                 name: resolvedInfo?.name ?? raw?.name,
@@ -629,7 +661,9 @@ export function buildMessageContext(msg, sock, store, guardOptions = {}) {
          */
         async getContact() {
             const info = store.contacts[sender]
-                ?? store.contacts[store.resolveJid(msg.key.participant ?? "")];
+                ?? store.contacts[denormalizeJid(sender)]
+                ?? store.contacts[store.resolveJid(msg.key.participant ?? "")]
+                ?? store.contacts[denormalizeJid(store.resolveJid(msg.key.participant ?? ""))];
             const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
             return normalizeContact(sender, info, botJid, sock);
         },
@@ -730,7 +764,7 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
         text(content, opts = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
-                const sendOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+                const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
                 if (opts.linkPreview === false) {
                     sendOpts.linkPreview = false;
                 }
@@ -745,9 +779,12 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
         image(filePath, caption = "", opts = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
-                const sendOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+                const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
                 if (opts.viewOnce) {
                     sendOpts.viewOnce = true;
+                }
+                if (opts.mentions?.length) {
+                    sendOpts.mentions = opts.mentions;
                 }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
@@ -758,9 +795,12 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
         video(filePath, caption = "", opts = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
-                const sendOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+                const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
                 if (opts.viewOnce) {
                     sendOpts.viewOnce = true;
+                }
+                if (opts.mentions?.length) {
+                    sendOpts.mentions = opts.mentions;
                 }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
@@ -771,7 +811,7 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
         audio(filePath, { asVoice = true, viewOnce = false } = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
-                const sendOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+                const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
                 if (viewOnce) {
                     sendOpts.viewOnce = true;
                 }
@@ -837,8 +877,8 @@ function buildSendApi(sock, store, rawJid, guardOptions = {}) {
     return {
         send: {
             text: (text, opts) => current.text(text, opts),
-            image: (filePath, caption) => current.image(filePath, caption),
-            video: (filePath, caption) => current.video(filePath, caption),
+            image: (filePath, caption, opts) => current.image(filePath, caption, opts),
+            video: (filePath, caption, opts) => current.video(filePath, caption, opts),
             audio: (filePath, opts) => current.audio(filePath, opts),
             sticker: (source) => current.sticker(source),
             file: (filePath, filename) => current.file(filePath, filename),
@@ -914,7 +954,31 @@ function buildEventsApi(sock, pluginName) {
  * @param {string|null}  chatJid — raw JID of the current group (null in setup context)
  */
 function buildAdminApi(sock, chatJid) {
-    const norm = (v) => Array.isArray(v) ? v : [v];
+    /**
+     * Normalize a participant identifier to the wire JID format WhatsApp's
+     * servers require (`...@s.whatsapp.net`). `groupParticipantsUpdate()`
+     * doesn't fail per-participant for a malformed entry — the WHOLE IQ
+     * query gets rejected by the server as a "bad-request" Boom error
+     * before any per-participant status even exists. This silently broke
+     * for the two most common inputs a plugin author reaches for:
+     *   - `contact.id` — this framework's own normalized `@c.us` form
+     *     (see normalizeJid()/denormalizeJid()), which isn't wire-valid.
+     *   - a bare phone number (with or without "+", spaces or dashes),
+     *     which has no `@...` server segment at all.
+     * Already-correct JIDs (`@s.whatsapp.net`, `@lid`, `@g.us`) pass through
+     * unchanged.
+     * @param {string} id
+     */
+    function toParticipantJid(id) {
+        const trimmed = id.trim();
+        if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed))
+            return trimmed;
+        if (trimmed.endsWith("@c.us"))
+            return denormalizeJid(trimmed);
+        const digits = trimmed.replace(/\D/g, "");
+        return `${digits}@s.whatsapp.net`;
+    }
+    const norm = (v) => (Array.isArray(v) ? v : [v]).map(toParticipantJid);
     function requireChat() {
         if (!chatJid)
             throw new Error("This admin operation requires a runtime group context.");
@@ -947,6 +1011,23 @@ function buildAdminApi(sock, chatJid) {
             throw new Error(`groupParticipantsUpdate("${action}") rejeitado para: ${detail}`);
         }
     }
+    /**
+     * Thin wrapper around `sock.groupParticipantsUpdate()` that turns an
+     * opaque Boom rejection (e.g. the whole IQ query bounced with
+     * "bad-request") into an error that names the group/action/participants
+     * involved, then still runs the per-participant status check above.
+     */
+    async function runParticipantsUpdate(jid, users, action) {
+        let results;
+        try {
+            results = await sock.groupParticipantsUpdate(jid, users, action);
+        }
+        catch (err) {
+            throw new Error(`groupParticipantsUpdate("${action}") falhou para o grupo "${jid}" com participantes [${users.join(", ")}]: ${err.message}`);
+        }
+        assertParticipantsUpdateOk(action, results);
+        return results;
+    }
     function createTargetableAction(action, memberIds) {
         const users = norm(memberIds);
         const executeCurrent = async () => { requireChat(); return action(chatJid, users); };
@@ -964,34 +1045,24 @@ function buildAdminApi(sock, chatJid) {
         };
     }
     return {
-        /** @param {string|string[]} memberIds */
+        /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
         add(memberIds) {
-            return createTargetableAction(async (jid, users) => {
-                const results = await sock.groupParticipantsUpdate(jid, users, "add");
-                assertParticipantsUpdateOk("add", results);
-                return results;
-            }, memberIds);
+            return createTargetableAction((jid, users) => runParticipantsUpdate(jid, users, "add"), memberIds);
         },
-        /** @param {string|string[]} memberIds */
+        /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
         async kick(memberIds) {
             requireChat();
-            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "remove");
-            assertParticipantsUpdateOk("remove", results);
-            return results;
+            return runParticipantsUpdate(chatJid, norm(memberIds), "remove");
         },
-        /** @param {string|string[]} memberIds */
+        /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
         async promote(memberIds) {
             requireChat();
-            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "promote");
-            assertParticipantsUpdateOk("promote", results);
-            return results;
+            return runParticipantsUpdate(chatJid, norm(memberIds), "promote");
         },
-        /** @param {string|string[]} memberIds */
+        /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
         async demote(memberIds) {
             requireChat();
-            const results = await sock.groupParticipantsUpdate(chatJid, norm(memberIds), "demote");
-            assertParticipantsUpdateOk("demote", results);
-            return results;
+            return runParticipantsUpdate(chatJid, norm(memberIds), "demote");
         },
         /** @param {string} name */
         async setSubject(name) {

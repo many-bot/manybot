@@ -102,6 +102,7 @@ async function startBot() {
     currentSock = sock;
     currentStore = store;
     connecting = false;
+    let pluginsReady = false;
     // ── Normal bot mode ─────────────────────────────────────────────────────────
     sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
@@ -111,8 +112,11 @@ async function startBot() {
             logger.success(t("system.connected"));
             logger.info(t("system.clientId", { id: CLIENT_ID }));
             printBanner();
-            await loadPlugins(PLUGINS);
-            await setupPlugins(sock, store);
+            if (!pluginsReady) {
+                pluginsReady = true;
+                await loadPlugins(PLUGINS);
+                await setupPlugins(sock, store);
+            }
             startCacheAutosave(store);
             // buffer anti-replay / sync ghost messages
             setTimeout(() => { state = "READY"; }, 2000);

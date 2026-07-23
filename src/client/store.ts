@@ -150,10 +150,35 @@ export function createStore(): BotStore {
     }
   }
 
+  // pushName only ever arrives on a message stanza (live or synced history)
+  // — contact/history-contact sync alone won't give us a name for someone
+  // who never messaged and isn't a saved contact. Shared by both
+  // "messages.upsert" (live) and "messaging-history.set" (backfill on
+  // connect), since history-sync messages carry the same field.
+  function capturePushNames(msgs: WAProtoMsg[]) {
+    for (const msg of msgs) {
+      const key = msg.key as unknown as { participant?: string; participantAlt?: string; remoteJid?: string; remoteJidAlt?: string };
+      learnLid(key.participantAlt, key.participant);
+      learnLid(key.remoteJidAlt, key.remoteJid);
+
+      const pushName = (msg as unknown as { pushName?: string }).pushName;
+      const senderId  = key.participant ?? msg.key.remoteJid;
+      if (pushName && senderId && !msg.key.fromMe && !senderId.endsWith("@g.us")) {
+        const existing = contacts[senderId];
+        if (existing?.notify !== pushName) {
+          contacts[senderId] = { ...existing, id: senderId, notify: pushName };
+        }
+      }
+    }
+  }
+
   function bind(ev: WASocket["ev"]) {
-    ev.on("messaging-history.set", ({ chats, contacts }) => {
+    ev.on("messaging-history.set", ({ chats, contacts, messages }) => {
       for (const chat of chats) upsertChat(chat);
       for (const contact of contacts) upsertContact(contact);
+      // Backfilled messages carry pushName too — was previously dropped,
+      // leaving contacts unresolved until they next messaged live.
+      if (messages?.length) capturePushNames(messages as unknown as WAProtoMsg[]);
     });
 
     ev.on("chats.upsert", (newChats) => {
@@ -184,25 +209,8 @@ export function createStore(): BotStore {
     });
 
     ev.on("messages.upsert", ({ messages: msgs }) => {
-      for (const msg of msgs) {
-        storeMessage(msg);
-        const key = msg.key as unknown as { participant?: string; participantAlt?: string; remoteJid?: string; remoteJidAlt?: string };
-        learnLid(key.participantAlt, key.participant);
-        learnLid(key.remoteJidAlt, key.remoteJid);
-
-        // pushName only ever arrives on a live message — contact/history
-        // sync alone won't give us a name for someone who never messaged
-        // and isn't a saved contact. Worth capturing here, since it's the
-        // one extra source we have (feeds the on-disk cache too).
-        const pushName = (msg as unknown as { pushName?: string }).pushName;
-        const senderId = key.participant ?? msg.key.remoteJid;
-        if (pushName && senderId && !msg.key.fromMe && !senderId.endsWith("@g.us")) {
-          const existing = contacts[senderId];
-          if (existing?.notify !== pushName) {
-            contacts[senderId] = { ...existing, id: senderId, notify: pushName };
-          }
-        }
-      }
+      for (const msg of msgs) storeMessage(msg);
+      capturePushNames(msgs);
     });
 
     ev.on("messages.update", (updates) => {
