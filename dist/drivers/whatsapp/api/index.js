@@ -348,9 +348,8 @@ const log = {
  * @param {string}          jid
  * @param {WAStoreContact}  [info]
  */
-function mentionDisplayName(jid, info) {
-    const number = jid.split("@")[0];
-    return info?.name ?? info?.verifiedName ?? info?.notify ?? number;
+function mentionDisplayName(jid) {
+    return jid.split("@")[0];
 }
 /**
  * Build a normalized contact object from a JID and optional store metadata.
@@ -410,7 +409,7 @@ async function normalizeContact(jid, info, botJid, sock) {
         isWAAccount,
         isUser: !jid.endsWith("@g.us"),
         isGroup: jid.endsWith("@g.us"),
-        mention: { text: `@${mentionDisplayName(jid, info)}`, mentions: [jid] },
+        mention: { text: `@${mentionDisplayName(jid)}`, mentions: [toWireJid(jid)] },
     };
 }
 // ── Contact API ───────────────────────────────────────────────────────────────
@@ -765,60 +764,72 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
                 const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
+                // mentions/linkPreview are part of the message CONTENT, not the send
+                // options — Baileys reads contextInfo.mentionedJid off the content
+                // object. Putting them on sendOpts (3rd arg) is silently ignored: the
+                // message sends fine, "@name" shows as plain text, and nobody actually
+                // gets tagged/notified.
+                const messageContent = { text: content };
                 if (opts.linkPreview === false) {
-                    sendOpts.linkPreview = false;
+                    messageContent.linkPreview = null;
                 }
                 if (opts.mentions?.length) {
-                    sendOpts.mentions = opts.mentions;
+                    messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
                 }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, typingDuration(content), "typing");
-                return sock.sendMessage(jid, { text: content }, sendOpts);
+                return sock.sendMessage(jid, messageContent, sendOpts);
             })(), sock, store, { cooldown, jitter });
         },
         image(filePath, caption = "", opts = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
                 const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
-                if (opts.viewOnce) {
-                    sendOpts.viewOnce = true;
-                }
-                if (opts.mentions?.length) {
-                    sendOpts.mentions = opts.mentions;
-                }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
                 const buffer = await readFile(filePath);
-                return sock.sendMessage(jid, { image: buffer, caption }, sendOpts);
+                // viewOnce/mentions are part of the message CONTENT — see note above.
+                const messageContent = { image: buffer, caption };
+                if (opts.viewOnce) {
+                    messageContent.viewOnce = true;
+                }
+                if (opts.mentions?.length) {
+                    messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
+                }
+                return sock.sendMessage(jid, messageContent, sendOpts);
             })(), sock, store, { cooldown, jitter });
         },
         video(filePath, caption = "", opts = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
                 const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
-                if (opts.viewOnce) {
-                    sendOpts.viewOnce = true;
-                }
-                if (opts.mentions?.length) {
-                    sendOpts.mentions = opts.mentions;
-                }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
                 const buffer = await readFile(filePath);
-                return sock.sendMessage(jid, { video: buffer, caption }, sendOpts);
+                // viewOnce/mentions are part of the message CONTENT — see note above.
+                const messageContent = { video: buffer, caption };
+                if (opts.viewOnce) {
+                    messageContent.viewOnce = true;
+                }
+                if (opts.mentions?.length) {
+                    messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
+                }
+                return sock.sendMessage(jid, messageContent, sendOpts);
             })(), sock, store, { cooldown, jitter });
         },
         audio(filePath, { asVoice = true, viewOnce = false } = {}) {
             return new MessageHandle((async () => {
                 const quotedMsg = await resolveQuoted();
                 const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
-                if (viewOnce) {
-                    sendOpts.viewOnce = true;
-                }
                 await waitForSendSlot(normJid, { cooldown, jitter });
                 await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "recording");
                 const buffer = await readFile(filePath);
-                return sock.sendMessage(jid, { audio: buffer, mimetype: "audio/mp4", ptt: asVoice }, sendOpts);
+                // viewOnce is part of the message CONTENT — see note above.
+                const messageContent = { audio: buffer, mimetype: "audio/mp4", ptt: asVoice };
+                if (viewOnce) {
+                    messageContent.viewOnce = true;
+                }
+                return sock.sendMessage(jid, messageContent, sendOpts);
             })(), sock, store, { cooldown, jitter });
         },
         sticker(source) {
@@ -953,32 +964,76 @@ function buildEventsApi(sock, pluginName) {
  * @param {WASocket}     sock
  * @param {string|null}  chatJid — raw JID of the current group (null in setup context)
  */
-function buildAdminApi(sock, chatJid) {
-    /**
-     * Normalize a participant identifier to the wire JID format WhatsApp's
-     * servers require (`...@s.whatsapp.net`). `groupParticipantsUpdate()`
-     * doesn't fail per-participant for a malformed entry — the WHOLE IQ
-     * query gets rejected by the server as a "bad-request" Boom error
-     * before any per-participant status even exists. This silently broke
-     * for the two most common inputs a plugin author reaches for:
-     *   - `contact.id` — this framework's own normalized `@c.us` form
-     *     (see normalizeJid()/denormalizeJid()), which isn't wire-valid.
-     *   - a bare phone number (with or without "+", spaces or dashes),
-     *     which has no `@...` server segment at all.
-     * Already-correct JIDs (`@s.whatsapp.net`, `@lid`, `@g.us`) pass through
-     * unchanged.
-     * @param {string} id
-     */
-    function toParticipantJid(id) {
-        const trimmed = id.trim();
-        if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed))
-            return trimmed;
-        if (trimmed.endsWith("@c.us"))
-            return denormalizeJid(trimmed);
-        const digits = trimmed.replace(/\D/g, "");
-        return `${digits}@s.whatsapp.net`;
+/**
+ * Normalize any identifier to the wire JID format WhatsApp's servers and
+ * protocol actually expect (`...@s.whatsapp.net`). Used anywhere a JID is
+ * handed straight to Baileys — `groupParticipantsUpdate()` and message
+ * `mentions` — both of which silently misbehave otherwise: a malformed
+ * group-update JID gets the whole IQ query rejected ("bad-request"), and
+ * a malformed mentions entry just doesn't tag/notify anyone (the message
+ * still sends fine, so it looks like nothing is wrong until you check).
+ * Handles this framework's own normalized `@c.us` form (`contact.id`,
+ * `getMsgSender()`'s output — see normalizeJid()/denormalizeJid()), a bare
+ * phone number (with or without "+", spaces or dashes), and already-valid
+ * wire JIDs (`@s.whatsapp.net`, `@lid`, `@g.us`), which pass through
+ * unchanged.
+ * @param {string} id
+ */
+function toWireJid(id) {
+    const trimmed = id.trim();
+    if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed))
+        return trimmed;
+    if (trimmed.endsWith("@c.us"))
+        return denormalizeJid(trimmed);
+    const digits = trimmed.replace(/\D/g, "");
+    return `${digits}@s.whatsapp.net`;
+}
+/**
+ * Resolve mentions to the exact JID form the destination group uses for
+ * that participant — not whatever store.resolveJid() happens to have
+ * mapped it to. A group can address a member via @lid even when we've
+ * separately learned their phone number; WhatsApp only tags/notifies a
+ * mention when the JID matches the group's own addressing for that
+ * member. DMs have no participant list to check against, so just wire-
+ * normalize as before (mentions aren't a real thing in DMs anyway).
+ */
+async function resolveMentionJids(sock, store, jid, mentions) {
+    const result = [];
+    for (const m of mentions) {
+        const wire = toWireJid(m);
+        if (wire)
+            result.push(wire);
+        const resolved = store.resolveJid(m);
+        if (resolved && resolved !== m) {
+            const resolvedWire = toWireJid(resolved);
+            if (resolvedWire)
+                result.push(resolvedWire);
+        }
     }
-    const norm = (v) => (Array.isArray(v) ? v : [v]).map(toParticipantJid);
+    if (!jid.endsWith("@g.us")) {
+        return Array.from(new Set(result.filter(Boolean)));
+    }
+    let meta;
+    try {
+        meta = await getGroupMetadataCached(sock, jid);
+    }
+    catch {
+        return Array.from(new Set(result.filter(Boolean)));
+    }
+    for (const m of mentions) {
+        const wire = toWireJid(m);
+        const resolved = normalizeJid(store.resolveJid(m));
+        const match = meta.participants.find(p => toWireJid(p.id) === wire || normalizeJid(store.resolveJid(p.id)) === resolved);
+        if (match) {
+            const matchWire = toWireJid(match.id);
+            if (matchWire)
+                result.push(matchWire);
+        }
+    }
+    return Array.from(new Set(result.filter(Boolean)));
+}
+function buildAdminApi(sock, chatJid) {
+    const norm = (v) => (Array.isArray(v) ? v : [v]).map(toWireJid);
     function requireChat() {
         if (!chatJid)
             throw new Error("This admin operation requires a runtime group context.");
