@@ -2,7 +2,7 @@
 
 ![ManyBot Logo](logo.png)
 
-![Node.js 24+](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js&logoColor=white)
+![Node.js 24+](https://img.shields.io/badge/Node.js-24+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
 ![GPL v3](https://img.shields.io/badge/License-GPL--v3-blue.svg)
 ![Linux](https://img.shields.io/badge/Linux%20%7C%20Windows-lightgrey)
@@ -46,9 +46,9 @@ Browse available plugins at **[manybot.org/plugins](https://manybot.org/plugins/
 All kinds of contributions are welcome:
 
 - **Bug reports and feature requests**: open an issue on GitHub or Codeberg
-- **Code**: pull requests are welcome on [GitHub](https://github.com/many-bot/manybot) or [Codeberg](https://codeberg.org/many-bot/manybot); patches by email (`devel+manybot.org`) are also accepted - subscribe to the mailing list [here](https://list.stxerr.dev).
+- **Code**: pull requests are welcome on [GitHub](https://github.com/many-bot/manybot) or [Codeberg](https://codeberg.org/many-bot/manybot); patches by email (`manybot@pm.me`) are also accepted.
 - **Plugins**: submit your plugin to [manyplug-repo](https://github.com/many-bot/manyplug-repo), which has instructions on how to do it
-- **Anything else**: suggestions, translations, documentation fixes - reach out by email or open an issue
+- **Anything else**: suggestions, translations, documentation fixes, art - reach out by email or open an issue
 
 ## License
 
