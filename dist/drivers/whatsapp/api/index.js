@@ -940,6 +940,7 @@ function buildSendApi(sock, store, rawJid, guardOptions = {}) {
             text: (text, opts) => current.text(text, opts),
             image: (filePath, caption, opts) => current.image(filePath, caption, opts),
             video: (filePath, caption, opts) => current.video(filePath, caption, opts),
+            gif: (filePath, caption, opts) => current.gif(filePath, caption, opts),
             audio: (filePath, opts) => current.audio(filePath, opts),
             sticker: (source) => current.sticker(source),
             file: (filePath, filename) => current.file(filePath, filename),

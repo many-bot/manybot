@@ -1112,6 +1112,7 @@ function buildSendApi(sock: WASocket, store: WAStore, rawJid: string, guardOptio
       text:    (text: string, opts?: Record<string, unknown>)           => current.text(text, opts),
       image:   (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.image(filePath, caption, opts),
       video:   (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.video(filePath, caption, opts),
+      gif:     (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.gif(filePath, caption, opts),
       audio:   (filePath: string, opts?: Record<string, unknown>)       => current.audio(filePath, opts as never),
       sticker: (source: string | Buffer)                                => current.sticker(source),
       file:    (filePath: string, filename?: string)                    => current.file(filePath, filename),
@@ -1962,3 +1963,4 @@ export function buildApi({
 
 /** Inferred shape of the `ctx` object passed to plugin.default(ctx) on every message. */
 export type PluginContext = ReturnType<typeof buildApi>;
+
