@@ -461,6 +461,24 @@ async function normalizeContact(jid: string, info: WAStoreContact | undefined, b
   };
 }
 
+// ── Chats API ─────────────────────────────────────────────────────────────────
+
+function buildChatsApi(store: WAStore) {
+  return {
+    /**
+     * Chats currently known from the in-memory cache (populated from
+     * Baileys' chats.upsert / messaging-history.set events) — no network call.
+     * @returns {Array<{ id: string, name: string, isGroup: boolean }>}
+     */
+    all(): Array<{ id: string; name: string; isGroup: boolean }> {
+      return store.chats.all().map((c) => {
+        const id = normalizeJid(c.id);
+        return { id, name: c.name, isGroup: id.endsWith("@g.us") };
+      });
+    },
+  };
+}
+
 // ── Contact API ───────────────────────────────────────────────────────────────
 
 function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null) {
@@ -469,6 +487,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * Get a normalized contact object by JID.
      * @param {string} contactId
      * @param {{groupId?: string}} [opts] — when `contactId` is a raw `@lid`, this
+
      *   always cross-checks it against Baileys' own protocol-level
      *   `sock.signalRepository.lidMapping` first (populated from real Signal
      *   session/identity resolution — not a heuristic, and doesn't need a
@@ -631,6 +650,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
         // Previously swallowed silently, which made "always null" look
         // identical to "no status set" — log so real failures are visible.
         logger.warn(`[contacts] getAbout(${contactId}) failed: ${err}`);
+
         return null;
       }
     },
@@ -659,6 +679,8 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
 
 /** Shape of the `ctx.msg` object passed to plugins on every message. */
 export interface WAMessageContext {
+  id:         string;
+  timestamp:  number;
   body:       string;
   type:       string;
   fromMe:     boolean;
@@ -678,6 +700,29 @@ export interface WAMessageContext {
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
   getContact(): ReturnType<typeof normalizeContact>;
+}
+
+/**
+ * Array of past messages (oldest → newest), as returned by `ctx.chat.history`.
+ * Behaves like a normal array (`history[10]`, `.length`, `.map()`, ...) plus
+ * two convenience filters, both chainable and re-wrapped as WAHistoryArray.
+ */
+export interface WAHistoryArray extends Array<WAMessageContext> {
+  /** Last `n` messages (oldest → newest). Omit `n` for the full list. */
+  last(n?: number): WAHistoryArray;
+  /** Only messages sent by `senderId`. */
+  from(senderId: string): WAHistoryArray;
+}
+
+function makeHistoryArray(entries: WAMessageContext[], store: WAStore): WAHistoryArray {
+  const arr = entries as WAHistoryArray;
+  arr.last = (n?: number) =>
+    makeHistoryArray(typeof n === "number" ? entries.slice(-n) : entries.slice(), store);
+  arr.from = (senderId: string) => {
+    const target = normalizeJid(store.resolveJid(normalizeJid(senderId)));
+    return makeHistoryArray(entries.filter((e) => e.sender === target), store);
+  };
+  return arr;
 }
 
 export function buildMessageContext(
@@ -713,6 +758,8 @@ export function buildMessageContext(
     : null;
 
   return {
+    id:         msg.key.id ?? "",
+    timestamp:  Number(msg.messageTimestamp) || 0,
     body,
     type:       getMsgType(msg),
     fromMe:     !!(msg.key.fromMe),
@@ -950,6 +997,29 @@ function makeSender(
         const buffer = await readFile(filePath);
         // viewOnce/mentions are part of the message CONTENT — see note above.
         const messageContent: any = { video: buffer, caption };
+        if (opts.viewOnce) {
+          messageContent.viewOnce = true;
+        }
+        if (opts.mentions?.length) {
+          messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
+        }
+        return sock.sendMessage(jid, messageContent, sendOpts);
+      })(), sock, store, { cooldown, jitter });
+    },
+
+    /**
+     * Send a GIF. WhatsApp has no native GIF format — this sends an mp4
+     * with the `gifPlayback` flag, which the client auto-loops, muted.
+     * `filePath` must already be mp4-encoded (no .gif input, no conversion).
+     */
+    gif(filePath: string, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
+      return new MessageHandle((async () => {
+        const quotedMsg = await resolveQuoted();
+        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
+        await waitForSendSlot(normJid, { cooldown, jitter });
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        const buffer = await readFile(filePath);
+        const messageContent: any = { video: buffer, caption, gifPlayback: true };
         if (opts.viewOnce) {
           messageContent.viewOnce = true;
         }
@@ -1628,6 +1698,7 @@ function buildBaseApi(
     download:  buildDownloadApi(),
     scheduler: buildSchedulerApi(pluginName),
     plugins:   buildPluginsApi(pluginRegistry),
+    chats:     buildChatsApi(store),
     contacts:  buildContactsApi(sock, store, botJid),
     storage:   buildStorageApi(pluginName),
     botId:     botJid,
@@ -1759,6 +1830,20 @@ export function buildApi({
       id:      normJid,
       name:    chat.name,
       isGroup: chat.isGroup,
+
+      /**
+       * Cached message history for this chat (oldest → newest), capped at
+       * the store's per-chat limit. Supports index access (`history[10]`)
+       * and two chainable filters: `.last(n)` and `.from(senderId)`.
+       * @returns {WAHistoryArray}
+       */
+      get history(): WAHistoryArray {
+        const chatMsgs = store.messages.get(rawJid);
+        const entries = chatMsgs
+          ? [...chatMsgs.values()].map((m) => buildMessageContext(m, sock, store, { cooldown: false, jitter: false }))
+          : [];
+        return makeHistoryArray(entries, store);
+      },
 
       /**
        * List of group participants.

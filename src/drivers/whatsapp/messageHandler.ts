@@ -54,17 +54,6 @@ function alreadyProcessed(id: string | null | undefined): boolean {
  * @param {WAStore}    store
  */
 export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WAStore): Promise<void> {
-  const msgTimestamp = Number(msg.messageTimestamp);
-
-  if (msgTimestamp) {
-    const nowInSeconds = Math.floor(Date.now() / 1000);
-    const messageAge   = nowInSeconds - msgTimestamp;
-
-    if (messageAge > 60) {
-      return;
-    }
-  }
-
   const rawJid = msg.key.remoteJid ?? "";
   const jid    = normalizeJid(rawJid);
 

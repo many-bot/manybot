@@ -45,14 +45,6 @@ function alreadyProcessed(id) {
  * @param {WAStore}    store
  */
 export async function handleMessage(msg, sock, store) {
-    const msgTimestamp = Number(msg.messageTimestamp);
-    if (msgTimestamp) {
-        const nowInSeconds = Math.floor(Date.now() / 1000);
-        const messageAge = nowInSeconds - msgTimestamp;
-        if (messageAge > 60) {
-            return;
-        }
-    }
     const rawJid = msg.key.remoteJid ?? "";
     const jid = normalizeJid(rawJid);
     if (CHATS.length > 0 && !CHATS.includes(jid)) {

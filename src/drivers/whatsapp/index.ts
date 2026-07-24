@@ -38,6 +38,47 @@ let reconnectAttempts = 0;
 let cacheHydrated = false;
 let cacheSaveTimer: NodeJS.Timeout | null = null;
 
+// ── Per-chat message queue ──────────────────────────────────────────────────
+// Messages from the same chat are processed one at a time (in order), but
+// different chats run concurrently — a slow plugin in one chat (e.g. sticker
+// generation) no longer blocks replies in every other chat.
+const chatQueues = new Map<string, Promise<void>>();
+
+function enqueueForChat(jid: string, task: () => Promise<void>): void {
+  const prev = chatQueues.get(jid) ?? Promise.resolve();
+
+  const settled = prev.catch(() => {}).then(task).catch((e) => {
+    const err = e instanceof Error ? e : new Error(String(e));
+    logger.error(`${err.message}\n${err.stack}`);
+  });
+
+  chatQueues.set(jid, settled);
+
+  settled.finally(() => {
+    if (chatQueues.get(jid) === settled) chatQueues.delete(jid);
+  });
+}
+
+// Messages older than this (WhatsApp's own delivery delay — e.g. backlog
+// dumped after the bot reconnects) are skipped. Checked at arrival time,
+// so time spent waiting in chatQueues never counts against a message.
+const MAX_MESSAGE_AGE_SECONDS = 60;
+
+function isMessageStale(msg: WAProtoMsg): boolean {
+  const msgTimestamp = Number(msg.messageTimestamp);
+  if (!msgTimestamp) return false;
+
+  const nowInSeconds = Math.floor(Date.now() / 1000);
+  const age = nowInSeconds - msgTimestamp;
+
+  if (age > MAX_MESSAGE_AGE_SECONDS) {
+    logger.debug(`[whatsapp] Skipping stale message (age: ${age}s, id: ${msg.key.id})`);
+    return true;
+  }
+
+  return false;
+}
+
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS  = 60000;
 const CACHE_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5min
@@ -165,20 +206,18 @@ async function startBot() {
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (state !== "READY") return;
     if (type !== "notify" && type !== "append") return;
-  
+
     for (const msg of messages) {
       const m = msg as WAProtoMsg;
       if (type === "append" && !m.key.fromMe) continue;
-  
+
       const body = getBodyQuick(m);
       if (!body && !msgHasMediaQuick(m)) continue;
-  
-      try {
-        await handleMessage(m, sock, store);
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        logger.error(`${err.message}\n${err.stack}`);
-      }
+
+      if (isMessageStale(m)) continue;
+
+      const jid = normalizeJid(m.key.remoteJid ?? "");
+      enqueueForChat(jid, () => handleMessage(m, sock, store));
     }
   });
 }

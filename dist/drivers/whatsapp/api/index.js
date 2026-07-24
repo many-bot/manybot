@@ -412,6 +412,22 @@ async function normalizeContact(jid, info, botJid, sock) {
         mention: { text: `@${mentionDisplayName(jid)}`, mentions: [toWireJid(jid)] },
     };
 }
+// ── Chats API ─────────────────────────────────────────────────────────────────
+function buildChatsApi(store) {
+    return {
+        /**
+         * Chats currently known from the in-memory cache (populated from
+         * Baileys' chats.upsert / messaging-history.set events) — no network call.
+         * @returns {Array<{ id: string, name: string, isGroup: boolean }>}
+         */
+        all() {
+            return store.chats.all().map((c) => {
+                const id = normalizeJid(c.id);
+                return { id, name: c.name, isGroup: id.endsWith("@g.us") };
+            });
+        },
+    };
+}
 // ── Contact API ───────────────────────────────────────────────────────────────
 function buildContactsApi(sock, store, botJid) {
     return {
@@ -419,6 +435,7 @@ function buildContactsApi(sock, store, botJid) {
          * Get a normalized contact object by JID.
          * @param {string} contactId
          * @param {{groupId?: string}} [opts] — when `contactId` is a raw `@lid`, this
+    
          *   always cross-checks it against Baileys' own protocol-level
          *   `sock.signalRepository.lidMapping` first (populated from real Signal
          *   session/identity resolution — not a heuristic, and doesn't need a
@@ -587,6 +604,15 @@ function buildContactsApi(sock, store, botJid) {
         },
     };
 }
+function makeHistoryArray(entries, store) {
+    const arr = entries;
+    arr.last = (n) => makeHistoryArray(typeof n === "number" ? entries.slice(-n) : entries.slice(), store);
+    arr.from = (senderId) => {
+        const target = normalizeJid(store.resolveJid(normalizeJid(senderId)));
+        return makeHistoryArray(entries.filter((e) => e.sender === target), store);
+    };
+    return arr;
+}
 export function buildMessageContext(msg, sock, store, guardOptions = {}) {
     const body = getMsgBody(msg);
     const prefix = CONFIG.CMD_PREFIX;
@@ -612,6 +638,8 @@ export function buildMessageContext(msg, sock, store, guardOptions = {}) {
         }
         : null;
     return {
+        id: msg.key.id ?? "",
+        timestamp: Number(msg.messageTimestamp) || 0,
         body,
         type: getMsgType(msg),
         fromMe: !!(msg.key.fromMe),
@@ -808,6 +836,28 @@ function makeSender(sock, store, jid, quoted = null, { cooldown = true, jitter =
                 const buffer = await readFile(filePath);
                 // viewOnce/mentions are part of the message CONTENT — see note above.
                 const messageContent = { video: buffer, caption };
+                if (opts.viewOnce) {
+                    messageContent.viewOnce = true;
+                }
+                if (opts.mentions?.length) {
+                    messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
+                }
+                return sock.sendMessage(jid, messageContent, sendOpts);
+            })(), sock, store, { cooldown, jitter });
+        },
+        /**
+         * Send a GIF. WhatsApp has no native GIF format — this sends an mp4
+         * with the `gifPlayback` flag, which the client auto-loops, muted.
+         * `filePath` must already be mp4-encoded (no .gif input, no conversion).
+         */
+        gif(filePath, caption = "", opts = {}) {
+            return new MessageHandle((async () => {
+                const quotedMsg = await resolveQuoted();
+                const sendOpts = quotedMsg ? { quoted: quotedMsg } : {};
+                await waitForSendSlot(normJid, { cooldown, jitter });
+                await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+                const buffer = await readFile(filePath);
+                const messageContent = { video: buffer, caption, gifPlayback: true };
                 if (opts.viewOnce) {
                     messageContent.viewOnce = true;
                 }
@@ -1406,6 +1456,7 @@ function buildBaseApi(sock, store, pluginRegistry, pluginName) {
         download: buildDownloadApi(),
         scheduler: buildSchedulerApi(pluginName),
         plugins: buildPluginsApi(pluginRegistry),
+        chats: buildChatsApi(store),
         contacts: buildContactsApi(sock, store, botJid),
         storage: buildStorageApi(pluginName),
         botId: botJid,
@@ -1502,6 +1553,19 @@ export function buildApi({ msg, chat, sock, store, pluginRegistry, pluginName, g
             id: normJid,
             name: chat.name,
             isGroup: chat.isGroup,
+            /**
+             * Cached message history for this chat (oldest → newest), capped at
+             * the store's per-chat limit. Supports index access (`history[10]`)
+             * and two chainable filters: `.last(n)` and `.from(senderId)`.
+             * @returns {WAHistoryArray}
+             */
+            get history() {
+                const chatMsgs = store.messages.get(rawJid);
+                const entries = chatMsgs
+                    ? [...chatMsgs.values()].map((m) => buildMessageContext(m, sock, store, { cooldown: false, jitter: false }))
+                    : [];
+                return makeHistoryArray(entries, store);
+            },
             /**
              * List of group participants.
              * Returns [] for non-group chats.
