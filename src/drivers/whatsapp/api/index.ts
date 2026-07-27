@@ -32,9 +32,12 @@ function denormalizeJid(jid: string): string {
   return jid.replace(/@c\.us$/, "@s.whatsapp.net");
 }
 import { mkdirSync }                 from "fs";
-import { readFile, writeFile }       from "fs/promises";
+import { readFile, writeFile, unlink } from "fs/promises";
 import { readFileSync }              from "fs";
 import path                          from "path";
+import os                            from "os";
+import { spawn }                     from "child_process";
+import { randomUUID }                from "crypto";
 import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration } from "#sendguard";
 import { buildSettingsApi }          from "#settingsdb";
@@ -487,7 +490,6 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * Get a normalized contact object by JID.
      * @param {string} contactId
      * @param {{groupId?: string}} [opts] — when `contactId` is a raw `@lid`, this
-
      *   always cross-checks it against Baileys' own protocol-level
      *   `sock.signalRepository.lidMapping` first (populated from real Signal
      *   session/identity resolution — not a heuristic, and doesn't need a
@@ -650,7 +652,6 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
         // Previously swallowed silently, which made "always null" look
         // identical to "no status set" — log so real failures are visible.
         logger.warn(`[contacts] getAbout(${contactId}) failed: ${err}`);
-
         return null;
       }
     },
@@ -918,6 +919,42 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
 
 // ── Sender factory ────────────────────────────────────────────────────────────
 
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", args, { stdio: "ignore" });
+    proc.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        reject(new Error("ffmpeg not found on PATH — required to send .gif files. Install ffmpeg, or pass an already mp4-encoded file to gif()."));
+      } else {
+        reject(err);
+      }
+    });
+    proc.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited with code ${code}`))));
+  });
+}
+
+/**
+ * Converts a raw .gif to an mp4 WhatsApp can actually decode as a video —
+ * sending GIF89a bytes labeled as video/mp4 leaves the client unable to
+ * play it (blurred placeholder + download button, no inline loop).
+ */
+async function gifToMp4(gifPath: string): Promise<Buffer> {
+  const outPath = path.join(os.tmpdir(), `${randomUUID()}.mp4`);
+  try {
+    await runFfmpeg([
+      "-y",
+      "-i", gifPath,
+      "-movflags", "faststart",
+      "-pix_fmt", "yuv420p",
+      "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      outPath,
+    ]);
+    return await readFile(outPath);
+  } finally {
+    await unlink(outPath).catch(() => {});
+  }
+}
+
 /**
  * Returns send methods bound to a specific JID.
  *
@@ -1010,7 +1047,8 @@ function makeSender(
     /**
      * Send a GIF. WhatsApp has no native GIF format — this sends an mp4
      * with the `gifPlayback` flag, which the client auto-loops, muted.
-     * `filePath` must already be mp4-encoded (no .gif input, no conversion).
+     * `.gif` input is converted to mp4 (via ffmpeg) automatically; an
+     * already mp4-encoded `filePath` is sent as-is, no conversion cost.
      */
     gif(filePath: string, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
@@ -1018,7 +1056,9 @@ function makeSender(
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer = await readFile(filePath);
+        const buffer = path.extname(filePath).toLowerCase() === ".gif"
+          ? await gifToMp4(filePath)
+          : await readFile(filePath);
         const messageContent: any = { video: buffer, caption, gifPlayback: true };
         if (opts.viewOnce) {
           messageContent.viewOnce = true;
