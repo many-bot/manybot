@@ -32,7 +32,7 @@ function denormalizeJid(jid: string): string {
   return jid.replace(/@c\.us$/, "@s.whatsapp.net");
 }
 import { mkdirSync }                 from "fs";
-import { readFile, writeFile, unlink } from "fs/promises";
+import { readFile, writeFile, unlink, mkdtemp, rm } from "fs/promises";
 import { readFileSync }              from "fs";
 import path                          from "path";
 import os                            from "os";
@@ -41,6 +41,7 @@ import { randomUUID }                from "crypto";
 import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration } from "#sendguard";
 import { buildSettingsApi }          from "#settingsdb";
+import WebP                          from "node-webpmux";
 import { downloadMediaMessage,
          getAggregateVotesInPollMessage,
          decryptPollVote,
@@ -233,6 +234,31 @@ const MIME_MAP: Record<string, string> = {
 
 function mimeFromPath(filePath: string): string {
   return MIME_MAP[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+// ── Media source resolution (path or Buffer) ────────────────────────────────
+
+/**
+ * Resolves a media source to a Buffer. Every ctx.send.* / msg.reply.*
+ * media method accepts either a filesystem path (string) or an
+ * already-loaded Buffer — this is what auto-detects which one it got.
+ */
+async function resolveMediaBuffer(source: string | Buffer): Promise<Buffer> {
+  return Buffer.isBuffer(source) ? source : await readFile(source);
+}
+
+const GIF_MAGIC = Buffer.from("GIF8");
+
+/** True if the buffer's magic bytes identify it as a raw .gif image. */
+function isGifBuffer(buffer: Buffer): boolean {
+  return buffer.length >= 4 && buffer.subarray(0, 4).equals(GIF_MAGIC);
+}
+
+/** True if a gif() source needs ffmpeg conversion to mp4 before sending. */
+function needsGifConversion(source: string | Buffer): boolean {
+  return Buffer.isBuffer(source)
+    ? isGifBuffer(source)
+    : path.extname(source).toLowerCase() === ".gif";
 }
 
 // ── Storage API ───────────────────────────────────────────────────────────────
@@ -692,12 +718,13 @@ export interface WAMessageContext {
   is(cmd: string): boolean;
   hasMedia: boolean;
   isGif:    boolean;
-  downloadMedia(): Promise<{ mimetype: string; data: string } | null>;
+  downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
   hasReply: boolean;
   getReply(): Promise<WAMessageContext | null>;
   reply: WAMessageSender;
   react(emoji: string): Promise<unknown>;
   delete(forEveryone?: boolean): Promise<unknown>;
+  edit(text: string): Promise<unknown>;
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
   getContact(): ReturnType<typeof normalizeContact>;
@@ -774,10 +801,15 @@ export function buildMessageContext(
     hasMedia: msgHasMedia(msg),
     isGif:    msgIsGif(msg),
 
-    async downloadMedia(): Promise<{ mimetype: string; data: string } | null> {
+    async downloadMedia(opts: { asMp4?: boolean } = {}): Promise<{ mimetype: string; data: string } | null> {
       try {
         const buffer = await downloadMediaMessage(msg, "buffer", {});
         if (!buffer || !Buffer.isBuffer(buffer)) return null;
+        const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
+        if (opts.asMp4 && isAnimatedSticker) {
+          const mp4 = await stickerToMp4(buffer);
+          return { mimetype: "video/mp4", data: mp4.toString("base64") };
+        }
         return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
       } catch {
         return null;
@@ -801,6 +833,13 @@ export function buildMessageContext(
       if (forEveryone) {
         return sock.sendMessage(rawJid, { delete: msg.key });
       }
+    },
+
+    async edit(text: string) {
+      if (!msg.key.fromMe) {
+        throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
+      }
+      return sock.sendMessage(rawJid, { text, edit: msg.key });
     },
 
     async pin(_duration?: number) {
@@ -915,6 +954,16 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
       react: { text: emoji, key: msg.key },
     });
   }
+
+  /** Edit the sent message's text. Only works on the bot's own messages. */
+  async edit(text: string) {
+    const msg = await this.rawPromise;
+    if (!msg?.key) return;
+    if (!msg.key.fromMe) {
+      throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
+    }
+    return this._sock.sendMessage(msg.key.remoteJid!, { text, edit: msg.key });
+  }
 }
 
 // ── Sender factory ────────────────────────────────────────────────────────────
@@ -938,12 +987,15 @@ function runFfmpeg(args: string[]): Promise<void> {
  * sending GIF89a bytes labeled as video/mp4 leaves the client unable to
  * play it (blurred placeholder + download button, no inline loop).
  */
-async function gifToMp4(gifPath: string): Promise<Buffer> {
+async function gifToMp4(gifSource: string | Buffer): Promise<Buffer> {
   const outPath = path.join(os.tmpdir(), `${randomUUID()}.mp4`);
+  const isBuffer = Buffer.isBuffer(gifSource);
+  const inPath   = isBuffer ? path.join(os.tmpdir(), `${randomUUID()}.gif`) : gifSource;
   try {
+    if (isBuffer) await writeFile(inPath, gifSource);
     await runFfmpeg([
       "-y",
-      "-i", gifPath,
+      "-i", inPath,
       "-movflags", "faststart",
       "-pix_fmt", "yuv420p",
       "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
@@ -951,6 +1003,91 @@ async function gifToMp4(gifPath: string): Promise<Buffer> {
     ]);
     return await readFile(outPath);
   } finally {
+    await unlink(outPath).catch(() => {});
+    if (isBuffer) await unlink(inPath).catch(() => {});
+  }
+}
+
+/**
+ * Converts an animated-sticker WebP buffer to mp4.
+ *
+ * ffmpeg's own "webp" decoder cannot read animated WebP at all — it
+ * silently skips the ANIM/ANMF chunks ("skipping unsupported chunk: ANIM",
+ * "image data not found") and the whole conversion fails. This is a
+ * long-standing ffmpeg limitation (still true as of ffmpeg-devel
+ * discussion in mid-2025: "we have no [animated webp] decoder"), not
+ * anything specific to this bot — passing an animated .webp straight to
+ * `ffmpeg -i` always fails this way, no matter what you ask it to output.
+ *
+ * Workaround: use node-webpmux (already a project dependency, bundles its
+ * own libwebp via WASM) to demux the animation into individual
+ * single-frame WebP files — those decode fine with ffmpeg, since only the
+ * ANIM *container* trips it up, not the WebP codec itself — then hand
+ * ffmpeg a concat list with each frame's real delay so timing survives.
+ *
+ * Caveat: this assumes each ANMF frame is a full-canvas frame, which is
+ * true for the vast majority of sticker-maker output. Stickers authored
+ * with partial-frame deltas (a blend region smaller than the canvas)
+ * won't composite correctly here — that would need full RGBA canvas
+ * compositing via getFrameData() per frame, which isn't implemented.
+ */
+async function stickerToMp4(webpBuffer: Buffer): Promise<Buffer> {
+  const img = new WebP.Image();
+  await img.load(webpBuffer);
+  const outPath = path.join(os.tmpdir(), `${randomUUID()}.mp4`);
+  const scaleFilter = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
+
+  if (!img.hasAnim) {
+    // Not actually animated — a plain static webp decodes fine on its own.
+    const inPath = path.join(os.tmpdir(), `${randomUUID()}.webp`);
+    try {
+      await writeFile(inPath, webpBuffer);
+      await runFfmpeg([
+        "-y",
+        "-i", inPath,
+        "-movflags", "faststart",
+        "-pix_fmt", "yuv420p",
+        "-vf", scaleFilter,
+        outPath,
+      ]);
+      return await readFile(outPath);
+    } finally {
+      await unlink(inPath).catch(() => {});
+      await unlink(outPath).catch(() => {});
+    }
+  }
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "sticker-"));
+  try {
+    const frameBuffers = await img.demux({ buffers: true });
+    const delays = (img.frames ?? []).map(f => (f.delay > 0 ? f.delay : 100)); // ms; WebP spec treats 0 as implementation-defined
+
+    const listLines: string[] = [];
+    for (let i = 0; i < frameBuffers.length; i++) {
+      const framePath = path.join(dir, `frame_${i}.webp`);
+      await writeFile(framePath, frameBuffers[i]);
+      listLines.push(`file '${framePath}'`);
+      listLines.push(`duration ${((delays[i] ?? 100) / 1000).toFixed(3)}`);
+    }
+    // The concat demuxer ignores the final `duration` line unless the last
+    // file is listed once more after it.
+    listLines.push(`file '${path.join(dir, `frame_${frameBuffers.length - 1}.webp`)}'`);
+    const listPath = path.join(dir, "list.txt");
+    await writeFile(listPath, listLines.join("\n"));
+
+    await runFfmpeg([
+      "-y",
+      "-f", "concat", "-safe", "0",
+      "-i", listPath,
+      "-vsync", "vfr",
+      "-pix_fmt", "yuv420p",
+      "-vf", scaleFilter,
+      "-movflags", "faststart",
+      outPath,
+    ]);
+    return await readFile(outPath);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
     await unlink(outPath).catch(() => {});
   }
 }
@@ -1006,13 +1143,13 @@ function makeSender(
       })(), sock, store, { cooldown, jitter });
     },
 
-    image(filePath: string, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
+    image(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer = await readFile(filePath);
+        const buffer = await resolveMediaBuffer(source);
         // viewOnce/mentions are part of the message CONTENT — see note above.
         const messageContent: any = { image: buffer, caption };
         if (opts.viewOnce) {
@@ -1025,13 +1162,13 @@ function makeSender(
       })(), sock, store, { cooldown, jitter });
     },
 
-    video(filePath: string, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
+    video(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer = await readFile(filePath);
+        const buffer = await resolveMediaBuffer(source);
         // viewOnce/mentions are part of the message CONTENT — see note above.
         const messageContent: any = { video: buffer, caption };
         if (opts.viewOnce) {
@@ -1047,18 +1184,20 @@ function makeSender(
     /**
      * Send a GIF. WhatsApp has no native GIF format — this sends an mp4
      * with the `gifPlayback` flag, which the client auto-loops, muted.
-     * `.gif` input is converted to mp4 (via ffmpeg) automatically; an
-     * already mp4-encoded `filePath` is sent as-is, no conversion cost.
+     * Accepts a path or a Buffer. `.gif` input (detected by extension for
+     * a path, or by magic bytes for a Buffer) is converted to mp4 via
+     * ffmpeg automatically; already mp4-encoded input is sent as-is, no
+     * conversion cost.
      */
-    gif(filePath: string, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
+    gif(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer = path.extname(filePath).toLowerCase() === ".gif"
-          ? await gifToMp4(filePath)
-          : await readFile(filePath);
+        const buffer = needsGifConversion(source)
+          ? await gifToMp4(source)
+          : await resolveMediaBuffer(source);
         const messageContent: any = { video: buffer, caption, gifPlayback: true };
         if (opts.viewOnce) {
           messageContent.viewOnce = true;
@@ -1070,13 +1209,13 @@ function makeSender(
       })(), sock, store, { cooldown, jitter });
     },
 
-    audio(filePath: string, { asVoice = true, viewOnce = false } = {}) {
+    audio(source: string | Buffer, { asVoice = true, viewOnce = false } = {}) {
       return new MessageHandle((async () => {
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "recording");
-        const buffer = await readFile(filePath);
+        const buffer = await resolveMediaBuffer(source);
         // viewOnce is part of the message CONTENT — see note above.
         const messageContent: any = { audio: buffer, mimetype: "audio/mp4", ptt: asVoice };
         if (viewOnce) {
@@ -1092,23 +1231,29 @@ function makeSender(
         const qOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer = Buffer.isBuffer(source) ? source : await readFile(source);
+        const buffer = await resolveMediaBuffer(source);
         return sock.sendMessage(jid, { sticker: buffer }, qOpts);
       })(), sock, store, { cooldown, jitter });
     },
 
-    file(filePath: string, filename?: string) {
+    file(source: string | Buffer, filename?: string) {
       return new MessageHandle((async () => {
         const quotedMsg = await resolveQuoted();
         const qOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
-        const buffer   = await readFile(filePath);
-        const mimetype = mimeFromPath(filePath);
+        const isBuffer = Buffer.isBuffer(source);
+        const buffer   = await resolveMediaBuffer(source);
+        // With a path we can always infer the mimetype/name from it. With a
+        // raw Buffer there's no extension to read, so an explicit `filename`
+        // is what lets us infer the mimetype too — otherwise we fall back to
+        // a generic octet-stream document named "file".
+        const mimetype = filename ? mimeFromPath(filename) : (isBuffer ? "application/octet-stream" : mimeFromPath(source));
+        const resolvedFilename = filename ?? (isBuffer ? "file" : path.basename(source));
         return sock.sendMessage(jid, {
           document: buffer,
           mimetype,
-          fileName: filename ?? path.basename(filePath),
+          fileName: resolvedFilename,
         }, qOpts);
       })(), sock, store, { cooldown, jitter });
     },
@@ -1150,12 +1295,12 @@ function buildSendApi(sock: WASocket, store: WAStore, rawJid: string, guardOptio
   return {
     send: {
       text:    (text: string, opts?: Record<string, unknown>)           => current.text(text, opts),
-      image:   (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.image(filePath, caption, opts),
-      video:   (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.video(filePath, caption, opts),
-      gif:     (filePath: string, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.gif(filePath, caption, opts),
-      audio:   (filePath: string, opts?: Record<string, unknown>)       => current.audio(filePath, opts as never),
-      sticker: (source: string | Buffer)                                => current.sticker(source),
-      file:    (filePath: string, filename?: string)                    => current.file(filePath, filename),
+      image:   (source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.image(source, caption, opts),
+      video:   (source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.video(source, caption, opts),
+      gif:     (source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }) => current.gif(source, caption, opts),
+      audio:   (source: string | Buffer, opts?: Record<string, unknown>)       => current.audio(source, opts as never),
+      sticker: (source: string | Buffer)                                       => current.sticker(source),
+      file:    (source: string | Buffer, filename?: string)                    => current.file(source, filename),
       poll:    (q: string, opts: string[], cfg?: { allowMultipleAnswers?: boolean }) => current.poll(q, opts, cfg),
 
       /**
@@ -1986,10 +2131,15 @@ export function buildApi({
       sock,
       store,
       msg,
-      downloadMedia: async () => {
+      downloadMedia: async (opts: { asMp4?: boolean } = {}) => {
         try {
           const buffer = await downloadMediaMessage(msg, "buffer", {});
           if (!buffer || !Buffer.isBuffer(buffer)) return null;
+          const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
+          if (opts.asMp4 && isAnimatedSticker) {
+            const mp4 = await stickerToMp4(buffer);
+            return { mimetype: "video/mp4", data: mp4.toString("base64") };
+          }
           return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
         } catch {
           return null;
@@ -2003,4 +2153,3 @@ export function buildApi({
 
 /** Inferred shape of the `ctx` object passed to plugin.default(ctx) on every message. */
 export type PluginContext = ReturnType<typeof buildApi>;
-
