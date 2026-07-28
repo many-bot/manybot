@@ -74,7 +74,7 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
     // browser doesn't match one of the known signatures — resulting in
     // "Couldn't link device" on the phone even with the correct code.
     browser:                        Browsers.ubuntu("Chrome"),
-    logger:                         pino({ level: "silent" }),
+    logger:                         pino({ level: "silent" }) as any,
     generateHighQualityLinkPreview: false,
     syncFullHistory:                false,
     // Without this, Baileys' default for syncFullHistory:false is

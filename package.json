@@ -1,6 +1,6 @@
 {
   "name": "@manybot/manybot",
-  "description": "Free and open source WhatsApp bot",
+  "description": "Framework to build WhatsApp bots based on plugins",
   "author": {
     "name": "SyntaxError!",
     "email": "me@stxerr.dev"
@@ -37,7 +37,7 @@
   "dependencies": {
     "@clack/prompts": "^0.10.1",
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.17.16",
+    "@whiskeysockets/baileys": "^6.6.0",
     "node-cron": "^4.6.0",
     "node-webpmux": "^3.2.1",
     "pino": "^10.3.1",
