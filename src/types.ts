@@ -23,7 +23,7 @@ export type WAStore = BotStore;
 /** A single incoming/outgoing Baileys message. */
 export type WAProtoMsg = WAMessage;
 
-export type { proto } from "@whiskeysockets/baileys";
+export type { WAProto } from "@whiskeysockets/baileys";
 
 /** Contact metadata as tracked by the in-memory store (client/store.ts). */
 export interface WAStoreContact {

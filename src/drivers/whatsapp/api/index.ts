@@ -10,7 +10,7 @@
  */
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
-import type { WASocket, WAStore, WAProtoMsg, WAChat, WAStoreContact, proto } from "#types";
+import type { WASocket, WAStore, WAProtoMsg, WAChat, WAStoreContact, WAProto } from "#types";
 import { logger }                    from "#logger";
 import { t, createPluginT,
          reloadTranslations,
@@ -54,7 +54,7 @@ import { downloadMediaMessage,
 // disappearing or view-once — the actual imageMessage/videoMessage/... sits
 // one level deeper. Reading msg.message directly misses all of that (this
 // was the cause of hasMedia silently returning false for such messages).
-function unwrap(msg: WAProtoMsg): proto.IMessage | undefined {
+function unwrap(msg: WAProtoMsg): WAProto.IMessage | undefined {
   return normalizeMessageContent(msg.message) ?? undefined;
 }
 
@@ -108,7 +108,7 @@ function getMsgSender(msg: WAProtoMsg, store: WAStore): string {
   return normalizeJid(store.resolveJid(raw));
 }
 
-function getContextInfo(msg: WAProtoMsg): proto.IContextInfo | null {
+function getContextInfo(msg: WAProtoMsg): WAProto.IContextInfo | null {
   const m = unwrap(msg);
   return (
     m?.extendedTextMessage?.contextInfo ??

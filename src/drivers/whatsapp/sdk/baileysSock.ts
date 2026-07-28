@@ -5,12 +5,12 @@
  * Handles auth state persistence, QR/pairing-code display, and reconnection.
  */
 
-import makeWASocket, {
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason,
-  Browsers,
-  proto,
+import {
+    makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    Browsers,
+    WAProto,
 } from "@whiskeysockets/baileys";
 import { Boom }             from "@hapi/boom";
 import path                 from "path";
@@ -83,7 +83,7 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
     // https://github.com/WhiskeySockets/Baileys — SocketConfig docs).
     // This keeps the initial/recent sync (needed for store.chats and
     // LID→phone resolution) while still skipping the full download.
-    shouldSyncHistoryMessage:       ({ syncType }) => syncType !== proto.HistorySync.HistorySyncType.FULL,
+    shouldSyncHistoryMessage:       ({ syncType }) => syncType !== WAProto.HistorySync.HistorySyncType.FULL,
     // Required for Baileys to decrypt incoming poll votes (and to retry
     // sends) — it looks up the original message by key internally.
     // Without this, pollUpdates never resolve even though the vote event
