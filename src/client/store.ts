@@ -110,6 +110,7 @@ export function createStore(): BotStore {
   const MAX_MSGS_PER_CHAT = 200;
 
   function upsertChat(chat: Chat) {
+    if (!chat.id) return;
     const name = (chat as unknown as { name?: string }).name ?? chat.id.split("@")[0];
     chatsMap.set(chat.id, { id: chat.id, name });
   }

@@ -13,6 +13,7 @@ import {
     WAProto,
 } from "@whiskeysockets/baileys";
 import { Boom }             from "@hapi/boom";
+import { EventEmitter }     from "events";
 import path                 from "path";
 import qrcode               from "qrcode-terminal";
 import { CONFIG_DIR, CLIENT_ID } from "#config";
@@ -26,6 +27,11 @@ import type { WASocket, WAStore } from "#types";
 import pino from "pino";
 
 // ── Auth path ─────────────────────────────────────────────────────────────────
+
+// Baileys' sock.ev wraps an internal EventEmitter that no longer exposes
+// setMaxListeners (see the comment in createSocket() below) — raised
+// globally instead, before makeWASocket() ever constructs one.
+EventEmitter.defaultMaxListeners = 50;
 
 export const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
 
@@ -102,8 +108,12 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
   // of plugins — it's expected, not a leak. Reconnects don't add to this:
   // createSocket() always returns a fresh emitter and the caller tears
   // down the previous one.
-  const evAsEmitter = sock.ev as unknown as { setMaxListeners?: (n: number) => void };
-  evAsEmitter.setMaxListeners?.(50);
+  //
+  // Baileys 7.x's sock.ev is a buffered-event wrapper (makeEventBuffer),
+  // not a raw EventEmitter — it has no setMaxListeners of its own, so
+  // calling it here is a silent no-op. The cap is raised globally instead,
+  // via EventEmitter.defaultMaxListeners set at module load (before any
+  // socket — and its internal emitter — is created).
 
   sock.ev.on("creds.update", saveCreds);
 
