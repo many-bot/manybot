@@ -14,6 +14,8 @@
 import { createSocket, normalizeJid, sessionDir, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { handleMessage } from "./messageHandler.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
+import { registerIncoming, floodKey, MUTE_MS } from "#kernel/floodGuard.js";
+import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { logger } from "#logger";
 import { PLUGINS, CLIENT_ID } from "#config";
 import { t } from "#i18n";
@@ -35,8 +37,10 @@ let currentStore: WAStore | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let connecting = false;
 let reconnectAttempts = 0;
+let halted = false;
 let cacheHydrated = false;
 let cacheSaveTimer: NodeJS.Timeout | null = null;
+let contactRefreshTimer: NodeJS.Timeout | null = null;
 
 // ── Per-chat message queue ──────────────────────────────────────────────────
 // Messages from the same chat are processed one at a time (in order), but
@@ -81,6 +85,16 @@ function isMessageStale(msg: WAProtoMsg): boolean {
 
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS  = 60000;
+// Reaction used to signal a sender got muted by the flood guard — cleared
+// automatically once the mute lifts (see MUTE_MS import from floodGuard).
+const MUTE_REACTION_EMOJI = "🔇";
+// Circuit breaker: after this many consecutive failed reconnects, stop
+// retrying automatically instead of hammering the connection forever.
+// Rapid repeated attempts are themselves a ban signal (WhatsApp's abuse
+// detection treats connect/disconnect loops as suspicious automation and
+// each failed re-pairing attempt during a cooldown resets its timer), so
+// silently retrying past this point can make a restriction last longer.
+const MAX_RECONNECT_ATTEMPTS = 6;
 const CACHE_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5min
 
 /**
@@ -113,6 +127,24 @@ function stopCacheAutosave() {
   if (!cacheSaveTimer) return;
   clearInterval(cacheSaveTimer);
   cacheSaveTimer = null;
+}
+
+// Runs a few times a day, each time touching only a couple of stale
+// contacts (see REFRESH_SWEEP_SAMPLE) — deliberately slow and staggered,
+// same anti-detection reasoning as everything else in sendGuard.
+const CONTACT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function startContactRefreshSweep(sock: WASocket) {
+  if (contactRefreshTimer) return;
+  contactRefreshTimer = setInterval(() => {
+    runContactRefreshSweep(sock).catch(() => {});
+  }, CONTACT_REFRESH_INTERVAL_MS);
+}
+
+function stopContactRefreshSweep() {
+  if (!contactRefreshTimer) return;
+  clearInterval(contactRefreshTimer);
+  contactRefreshTimer = null;
 }
 
 function nextBackoffMs(): number {
@@ -174,6 +206,7 @@ async function startBot() {
         await setupPlugins(sock, store);
       }
       startCacheAutosave(store);
+      startContactRefreshSweep(sock);
 
       // buffer anti-replay / sync ghost messages
       setTimeout(() => { state = "READY"; }, 2000);
@@ -195,6 +228,11 @@ async function startBot() {
         }
         scheduleReconnect(1000);
       } else if (!shuttingDown) {
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          halted = true;
+          logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
+          return;
+        }
         const delay = nextBackoffMs();
         logger.info(t("system.reconnecting", { secs: Math.round(delay / 1000) }));
         scheduleReconnect(delay);
@@ -217,6 +255,18 @@ async function startBot() {
       if (isMessageStale(m)) continue;
 
       const jid = normalizeJid(m.key.remoteJid ?? "");
+
+      const sender = m.key.participant ? normalizeJid(m.key.participant) : undefined;
+      const floodStatus = registerIncoming(floodKey(jid, sender));
+
+      if (floodStatus === "tripped") {
+        sock.sendMessage(jid, { react: { text: MUTE_REACTION_EMOJI, key: m.key } }).catch(() => {});
+        setTimeout(() => {
+          sock.sendMessage(jid, { react: { text: "", key: m.key } }).catch(() => {});
+        }, MUTE_MS);
+      }
+      if (floodStatus !== "allow") continue;
+
       enqueueForChat(jid, () => handleMessage(m, sock, store));
     }
   });
@@ -243,6 +293,8 @@ function msgHasMediaQuick(msg: WAProtoMsg): boolean {
 export const whatsappDriver: BotDriver = {
   async connect(): Promise<void> {
     shuttingDown = false;
+    halted = false;
+    reconnectAttempts = 0;
     await startBot();
   },
 
@@ -254,6 +306,7 @@ export const whatsappDriver: BotDriver = {
       reconnectTimer = null;
     }
     stopCacheAutosave();
+    stopContactRefreshSweep();
     if (currentStore) await saveChatCache(currentStore);
     teardownSock(currentSock);
     currentSock = null;

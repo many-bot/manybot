@@ -217,11 +217,17 @@ const DEFAULT_TOML_EN =
 `# ManyBot configuration file
 # See https://manybot.org/docs/config to learn more
 
-CLIENT_ID    = "manybot"
-CMD_PREFIX   = "!"
-CHATS        = []
-LANGUAGE     = "en"
-PHONE_NUMBER = ""
+CLIENT_ID     = "manybot"
+CMD_PREFIX    = "!"
+CHATS         = []
+EXCLUDE_CHATS = []
+LANGUAGE      = "en"
+PHONE_NUMBER  = ""
+
+# How cautious the bot is about looking automated: "low", "medium", "high".
+# Higher levels slow the bot down (fewer concurrent chats, longer delays)
+# but reduce the risk of WhatsApp flagging the account.
+SECURITY_LEVEL = "medium"
 
 # How to connect the first time: "qr" (scan with WhatsApp on your phone)
 # or "phone" (receive a pairing code on the number set in PHONE_NUMBER).
@@ -234,11 +240,17 @@ const DEFAULT_TOML_PT =
 `# Arquivo de configuração do ManyBot
 # Veja https://manybot.org/docs/config para saber mais
 
-CLIENT_ID    = "manybot"
-CMD_PREFIX   = "!"
-CHATS        = []
-LANGUAGE     = "pt"
-PHONE_NUMBER = ""
+CLIENT_ID     = "manybot"
+CMD_PREFIX    = "!"
+CHATS         = []
+EXCLUDE_CHATS = []
+LANGUAGE      = "pt"
+PHONE_NUMBER  = ""
+
+# Quão cauteloso o bot é pra não parecer automatizado: "low", "medium", "high".
+# Níveis mais altos deixam o bot mais lento (menos chats simultâneos, atrasos
+# maiores), mas reduzem o risco do WhatsApp sinalizar a conta.
+SECURITY_LEVEL = "medium"
 
 # Como conectar pela primeira vez: "qr" (escaneie com o WhatsApp no celular)
 # ou "phone" (recebe um código de pareamento no número definido em
@@ -295,26 +307,30 @@ tomlLayer = {
 // ---------------------------------------------------------------------------
 
 export interface Config {
-  CMD_PREFIX:   string;
-  CLIENT_ID:    string;
-  CHATS:        string[];
-  PLUGINS:      string[];
-  LANGUAGE:     string;
-  PHONE_NUMBER: string | null;
-  PLATFORM:     string;
-  LOGIN_METHOD: "phone" | "qr" | null;
+  CMD_PREFIX:    string;
+  CLIENT_ID:     string;
+  CHATS:         string[];
+  EXCLUDE_CHATS: string[];
+  SECURITY_LEVEL: "low" | "medium" | "high";
+  PLUGINS:       string[];
+  LANGUAGE:      string;
+  PHONE_NUMBER:  string | null;
+  PLATFORM:      string;
+  LOGIN_METHOD:  "phone" | "qr" | null;
   [key: string]: unknown;
 }
 
 const DEFAULTS: Config = {
-  CMD_PREFIX:   "!",
-  CLIENT_ID:    "manybot",
-  CHATS:        [],
-  PLUGINS:      [],
-  LANGUAGE:     "en",
-  PHONE_NUMBER: null,
-  PLATFORM:     "whatsapp",
-  LOGIN_METHOD: null,
+  CMD_PREFIX:    "!",
+  CLIENT_ID:     "manybot",
+  CHATS:         [],
+  EXCLUDE_CHATS: [],
+  SECURITY_LEVEL: "medium",
+  PLUGINS:       [],
+  LANGUAGE:      "en",
+  PHONE_NUMBER:  null,
+  PLATFORM:      "whatsapp",
+  LOGIN_METHOD:  null,
 };
 
 function normalize(cfg: Config): Config {
@@ -327,6 +343,10 @@ function normalize(cfg: Config): Config {
   // prompt instead of silently misbehaving.
   if (cfg.LOGIN_METHOD !== "phone" && cfg.LOGIN_METHOD !== "qr") {
     cfg.LOGIN_METHOD = null;
+  }
+
+  if (!["low", "medium", "high"].includes(cfg.SECURITY_LEVEL)) {
+    cfg.SECURITY_LEVEL = "medium";
   }
 
   return cfg;
@@ -357,20 +377,25 @@ export async function reloadConfig(): Promise<void> {
 
   CHATS.length = 0;
   CHATS.push(...(CONFIG.CHATS || []));
+
+  EXCLUDE_CHATS.length = 0;
+  EXCLUDE_CHATS.push(...(CONFIG.EXCLUDE_CHATS || []));
 }
 
 // ---------------------------------------------------------------------------
 // Named exports — identical shape regardless of config source
 // ---------------------------------------------------------------------------
 
-export const CLIENT_ID    = CONFIG.CLIENT_ID;
-export const CMD_PREFIX   = CONFIG.CMD_PREFIX;
-export const CHATS        = CONFIG.CHATS;
-export const PLUGINS      = CONFIG.PLUGINS;
-export const LANGUAGE     = CONFIG.LANGUAGE;
-export const PHONE_NUMBER = CONFIG.PHONE_NUMBER;
-export const PLATFORM     = CONFIG.PLATFORM;
-export const LOGIN_METHOD = CONFIG.LOGIN_METHOD;
+export const CLIENT_ID     = CONFIG.CLIENT_ID;
+export const CMD_PREFIX    = CONFIG.CMD_PREFIX;
+export const CHATS         = CONFIG.CHATS;
+export const EXCLUDE_CHATS = CONFIG.EXCLUDE_CHATS;
+export const SECURITY_LEVEL = CONFIG.SECURITY_LEVEL;
+export const PLUGINS       = CONFIG.PLUGINS;
+export const LANGUAGE      = CONFIG.LANGUAGE;
+export const PHONE_NUMBER  = CONFIG.PHONE_NUMBER;
+export const PLATFORM      = CONFIG.PLATFORM;
+export const LOGIN_METHOD  = CONFIG.LOGIN_METHOD;
 
 /**
  * Writes a single value back to manybot.toml without rewriting the whole

@@ -31,6 +31,7 @@
     "schedulerRegistered": "Programación registrada — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Error en el trabajo de descarga — {{message}}",
     "reconnecting": "Reconectando en {{secs}}s...",
+    "reconnectHalted": "Se dejó de reconectar tras {{attempts}} intentos — llama a connect() manualmente para reintentar. Los bucles de reconexión repetidos pueden prolongar una restricción de WhatsApp.",
     "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando...",
     "cacheLoaded": "{{count}} chat(s) cargado(s) desde la caché.",
     "cacheLoadedStale": "{{count}} chat(s) cargado(s) desde la caché (desactualizada)."

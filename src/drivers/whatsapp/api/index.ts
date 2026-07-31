@@ -39,7 +39,8 @@ import os                            from "os";
 import { spawn }                     from "child_process";
 import { randomUUID }                from "crypto";
 import { waitForSendSlot, simulateState,
-         typingDuration, mediaDuration } from "#sendguard";
+         typingDuration, mediaDuration,
+         waitForEditSlot }  from "#sendguard";
 import { buildSettingsApi }          from "#settingsdb";
 import WebP                          from "node-webpmux";
 import { downloadMediaMessage,
@@ -47,6 +48,23 @@ import { downloadMediaMessage,
          decryptPollVote,
          jidNormalizedUser,
          normalizeMessageContent } from "@whiskeysockets/baileys";
+
+// Baileys' downloadMediaMessage(ctx.logger) expects a pino-shaped logger
+// (level + child() + trace/debug/info/warn/error(obj, msg?)) — our own
+// `logger` from #logger only has console-style (...args) methods and no
+// child(), so passing it directly would throw the moment Baileys' reupload
+// path calls logger.child(...). This shim just satisfies the shape; only
+// warn/error are forwarded to our real logger, trace/debug are noise we
+// don't want.
+const baileysLogger = {
+  level: "silent",
+  child()  { return baileysLogger; },
+  trace()  {},
+  debug()  {},
+  info()   {},
+  warn(obj: unknown, msg?: string)  { logger.warn(`[baileys]`, msg ?? obj); },
+  error(obj: unknown, msg?: string) { logger.error(`[baileys]`, msg ?? obj); },
+};
 
 // ── Message body / type helpers ───────────────────────────────────────────────
 
@@ -118,6 +136,29 @@ function getContextInfo(msg: WAProtoMsg): WAProto.IContextInfo | null {
     m?.documentMessage?.contextInfo ??
     null
   );
+}
+
+/** True if the message has any @mention at all. */
+function hasMention(contextInfo: WAProto.IContextInfo | null): boolean {
+  return !!(contextInfo?.mentionedJid && contextInfo.mentionedJid.length > 0);
+}
+
+/** True if the bot's own JID (PN or LID) is in contextInfo.mentionedJid. */
+function hasBotMention(contextInfo: WAProto.IContextInfo | null, sock: WASocket, store: WAStore): boolean {
+  const mentioned = contextInfo?.mentionedJid;
+  if (!mentioned || mentioned.length === 0) return false;
+
+  const botLid = (sock.user as unknown as { lid?: string })?.lid;
+  const botCandidates = [sock.user?.id, botLid]
+    .filter((v): v is string => !!v)
+    .map(v => normalizeJid(store.resolveJid(normalizeJid(v))));
+
+  if (botCandidates.length === 0) return false;
+
+  return mentioned.some(jid => {
+    const resolved = normalizeJid(store.resolveJid(normalizeJid(jid)));
+    return botCandidates.includes(resolved);
+  });
 }
 
 function getMsgMimetype(msg: WAProtoMsg): string {
@@ -721,6 +762,8 @@ export interface WAMessageContext {
   downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
   hasReply: boolean;
   getReply(): Promise<WAMessageContext | null>;
+  hasMention: boolean;
+  hasBotMention: boolean;
   reply: WAMessageSender;
   react(emoji: string): Promise<unknown>;
   delete(forEveryone?: boolean): Promise<unknown>;
@@ -803,7 +846,13 @@ export function buildMessageContext(
 
     async downloadMedia(opts: { asMp4?: boolean } = {}): Promise<{ mimetype: string; data: string } | null> {
       try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {});
+        // Without reuploadRequest, Baileys can't ask WA to resend media whose
+        // stream needs a fresh fetch (routine for larger/older media) — the
+        // download just throws and this looked like "no media detected".
+        const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+          logger: baileysLogger,
+          reuploadRequest: sock.updateMediaMessage,
+        });
         if (!buffer || !Buffer.isBuffer(buffer)) return null;
         const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
         if (opts.asMp4 && isAnimatedSticker) {
@@ -811,7 +860,8 @@ export function buildMessageContext(
           return { mimetype: "video/mp4", data: mp4.toString("base64") };
         }
         return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
-      } catch {
+      } catch (err) {
+        logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
         return null;
       }
     },
@@ -822,6 +872,9 @@ export function buildMessageContext(
       if (!quotedRaw) return null;
       return buildMessageContext(quotedRaw, sock, store, { cooldown: false, jitter: false });
     },
+
+    hasMention: hasMention(contextInfo),
+    hasBotMention: hasBotMention(contextInfo, sock, store),
 
     reply: makeSender(sock, store, rawJid, msg, { cooldown, jitter }),
 
@@ -839,6 +892,7 @@ export function buildMessageContext(
       if (!msg.key.fromMe) {
         throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
       }
+      if (!msg.key.id || !(await waitForEditSlot(msg.key.id))) return;
       return sock.sendMessage(rawJid, { text, edit: msg.key });
     },
 
@@ -962,6 +1016,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
     if (!msg.key.fromMe) {
       throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
     }
+    if (!msg.key.id || !(await waitForEditSlot(msg.key.id))) return;
     return this._sock.sendMessage(msg.key.remoteJid!, { text, edit: msg.key });
   }
 }
@@ -2133,7 +2188,10 @@ export function buildApi({
       msg,
       downloadMedia: async (opts: { asMp4?: boolean } = {}) => {
         try {
-          const buffer = await downloadMediaMessage(msg, "buffer", {});
+          const buffer = await downloadMediaMessage(msg, "buffer", {}, {
+            logger: baileysLogger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
           if (!buffer || !Buffer.isBuffer(buffer)) return null;
           const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
           if (opts.asMp4 && isAnimatedSticker) {
@@ -2141,7 +2199,8 @@ export function buildApi({
             return { mimetype: "video/mp4", data: mp4.toString("base64") };
           }
           return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
-        } catch {
+        } catch (err) {
+          logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
           return null;
         }
       }

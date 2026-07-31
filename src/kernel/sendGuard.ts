@@ -3,40 +3,91 @@
  *
  * Anti-detection throttle layer for all outbound sends.
  *
- * Three protections applied before every message:
- *   1. Global token bucket  — hard cap on messages/second across all chats
- *   2. Per-chat cooldown    — minimum gap between sends to the same chat
- *   3. Human jitter         — random delay to break robotic timing patterns
+ * Protections applied before every message:
+ *   1. Global token bucket   — hard cap on messages/second across all chats
+ *   2. Per-chat cooldown     — minimum gap between sends to the same chat
+ *   3. Human jitter          — random delay to break robotic timing patterns
+ *   4. Chat-concurrency gate — caps how many different chats the bot can be
+ *                              actively answering at the same time
+ *   5. Edit throttle         — jittered minimum gap + cap on edits per
+ *                              message, so things like loading animations
+ *                              don't edit on a fixed, bot-like cadence
+ *
+ * All of the above scale with SECURITY_LEVEL ("low" | "medium" | "high").
+ * Higher levels are slower and more conservative — lower risk of WhatsApp's
+ * automation detection, at the cost of response speed.
  *
  * Text sends simulate the typing/recording presence indicator before
  * the message arrives, so the chat shows "typing..." realistically.
  */
 
 import type { PresenceCapable } from "#core/adapter.js";
+import { CONFIG } from "#config";
 import { logger } from "#logger";
 
-// ── Tunables ──────────────────────────────────────────────────────────────────
+// ── Per-level profiles ───────────────────────────────────────────────────────
 
-const GLOBAL_MSG_PER_SEC = 5;
-const CHAT_COOLDOWN_MS   = 150;
-const JITTER_MS          = { min: 50, max: 200 };
+interface SecurityProfile {
+  globalMsgPerSec:     number;
+  chatCooldownMs:      number;
+  jitterMs:            { min: number; max: number };
+  concurrency:         number; // max chats answered at the same time, globally
+  editIntervalMs:      { min: number; max: number };
+  maxEditsPerMessage:  number;
+}
+
+const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
+  low: {
+    globalMsgPerSec:    8,
+    chatCooldownMs:     100,
+    jitterMs:           { min: 30, max: 120 },
+    concurrency:        Infinity,
+    editIntervalMs:     { min: 800, max: 2000 },
+    maxEditsPerMessage: 20,
+  },
+  medium: {
+    globalMsgPerSec:    5,
+    chatCooldownMs:     150,
+    jitterMs:           { min: 50, max: 200 },
+    concurrency:        2,
+    editIntervalMs:     { min: 1200, max: 3000 },
+    maxEditsPerMessage: 12,
+  },
+  high: {
+    globalMsgPerSec:    2,
+    chatCooldownMs:     400,
+    jitterMs:           { min: 150, max: 500 },
+    concurrency:        1,
+    editIntervalMs:     { min: 2000, max: 5000 },
+    maxEditsPerMessage: 6,
+  },
+};
+
+function currentProfile(): SecurityProfile {
+  const level = CONFIG.SECURITY_LEVEL as keyof typeof PROFILES;
+  return PROFILES[level] ?? PROFILES.medium;
+}
+
 const TYPING_CPS          = 90;
 const TYPING_MAX_MS       = 2000;
 const MEDIA_INDICATOR_MS  = { min: 400, max: 1000 };
 
 // ── Global token bucket ───────────────────────────────────────────────────────
+// Refill rate follows the active profile, re-read on every call so a
+// SECURITY_LEVEL change via reloadConfig() takes effect immediately.
 
-const MS_PER_TOKEN = 1000 / GLOBAL_MSG_PER_SEC;
-let tokens         = GLOBAL_MSG_PER_SEC;
-let lastRefill     = Date.now();
+let tokens     = PROFILES.medium.globalMsgPerSec;
+let lastRefill = Date.now();
 
 function consumeGlobalToken(): number {
-  const now     = Date.now();
-  const elapsed = now - lastRefill;
-  tokens        = Math.min(GLOBAL_MSG_PER_SEC, tokens + elapsed / MS_PER_TOKEN);
+  const rate       = currentProfile().globalMsgPerSec;
+  const msPerToken = 1000 / rate;
+  const now        = Date.now();
+  const elapsed    = now - lastRefill;
+  tokens        = Math.min(rate, tokens + elapsed / msPerToken);
   lastRefill    = now;
   if (tokens >= 1) { tokens -= 1; return 0; }
-  return Math.ceil((1 - tokens) * MS_PER_TOKEN);
+  return Math.ceil((1 - tokens) * msPerToken);
 }
 
 // ── Per-chat cooldown ─────────────────────────────────────────────────────────
@@ -44,7 +95,7 @@ function consumeGlobalToken(): number {
 const lastSentAt = new Map<string, number>();
 
 function chatCooldownMs(jid: string): number {
-  const wait = (lastSentAt.get(jid) ?? 0) + CHAT_COOLDOWN_MS - Date.now();
+  const wait = (lastSentAt.get(jid) ?? 0) + currentProfile().chatCooldownMs - Date.now();
   return wait > 0 ? wait : 0;
 }
 
@@ -56,8 +107,8 @@ function recordSend(jid: string): void {
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-function randomJitter(): number {
-  return JITTER_MS.min + Math.random() * (JITTER_MS.max - JITTER_MS.min);
+function randomBetween(range: { min: number; max: number }): number {
+  return range.min + Math.random() * (range.max - range.min);
 }
 
 /**
@@ -75,8 +126,95 @@ export function typingDuration(text: string): number {
  * @returns {number} ms
  */
 export function mediaDuration(): number {
-  return MEDIA_INDICATOR_MS.min
-    + Math.random() * (MEDIA_INDICATOR_MS.max - MEDIA_INDICATOR_MS.min);
+  return randomBetween(MEDIA_INDICATOR_MS);
+}
+
+// ── Chat-concurrency gate ─────────────────────────────────────────────────────
+// Caps how many DIFFERENT chats can be actively answered at once, globally
+// (not per-chat — messageHandler.ts already serializes a single chat's own
+// messages). high=1 effectively locks the bot to one chat at a time,
+// medium=2, low=unlimited. FIFO queue for anything past the cap.
+
+let activeSlots = 0;
+const slotWaiters: Array<() => void> = [];
+
+function releaseChatSlot(): void {
+  activeSlots--;
+  const next = slotWaiters.shift();
+  if (next) next();
+}
+
+/**
+ * Acquire a global chat-concurrency slot before processing a message for
+ * `jid`. Resolves once a slot is free. Always call the returned release
+ * function (e.g. in a `finally`) or the pool leaks.
+ * @param {string} jid — kept for logging/debugging, not used for scoping
+ * @returns {Promise<() => void>} release function
+ */
+export async function acquireChatSlot(jid: string): Promise<() => void> {
+  const max = currentProfile().concurrency;
+
+  if (activeSlots < max) {
+    activeSlots++;
+    return releaseChatSlot;
+  }
+
+  logger.debug(`[sendGuard] chat-concurrency gate full — queuing ${jid}`);
+  return new Promise<() => void>(resolve => {
+    slotWaiters.push(() => {
+      activeSlots++;
+      resolve(releaseChatSlot);
+    });
+  });
+}
+
+// ── Edit throttle ─────────────────────────────────────────────────────────────
+// Jittered minimum gap between edits of the same message, plus a hard cap
+// on total edits — prevents fixed-interval edit loops (e.g. loading
+// animations) from producing a uniform-timing signature.
+
+interface EditState {
+  lastEditAt: number;
+  count:      number;
+}
+
+const editState = new Map<string, EditState>();
+const EDIT_STATE_STALE_MS = 10 * 60 * 1000;
+
+function cleanupEditState(now: number): void {
+  for (const [id, s] of editState) {
+    if (now - s.lastEditAt > EDIT_STATE_STALE_MS) editState.delete(id);
+  }
+}
+
+/**
+ * Waits for a safe edit slot for `messageId`, applying a jittered minimum
+ * gap since its last edit. Returns false once the message has hit its
+ * per-level edit cap — callers should skip the edit silently in that case.
+ * @param {string} messageId
+ * @returns {Promise<boolean>} true if the edit may proceed
+ */
+export async function waitForEditSlot(messageId: string): Promise<boolean> {
+  const now = Date.now();
+  cleanupEditState(now);
+
+  const profile = currentProfile();
+  const s = editState.get(messageId) ?? { lastEditAt: 0, count: 0 };
+
+  if (s.count >= profile.maxEditsPerMessage) {
+    editState.set(messageId, s);
+    logger.debug(`[sendGuard] edit cap reached for ${messageId}`);
+    return false;
+  }
+
+  const minGap = randomBetween(profile.editIntervalMs);
+  const wait   = s.lastEditAt + minGap - Date.now();
+  if (wait > 0) await sleep(wait);
+
+  s.lastEditAt = Date.now();
+  s.count += 1;
+  editState.set(messageId, s);
+  return true;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -105,7 +243,7 @@ export async function waitForSendSlot(jid: string, { cooldown = true, jitter = t
     }
   }
 
-  if (jitter) await sleep(randomJitter());
+  if (jitter) await sleep(randomBetween(currentProfile().jitterMs));
 
   recordSend(jid);
 }

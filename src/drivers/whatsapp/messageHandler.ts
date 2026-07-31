@@ -13,11 +13,14 @@
  */
 
 import type { WAProtoMsg, WASocket, WAStore, WAChat } from "#types";
-import { CHATS }              from "#config";
+import { CHATS, EXCLUDE_CHATS } from "#config";
 import { buildApi,
-         buildChatFromMsg }  from "./api/index.js";
+         buildChatFromMsg,
+         buildMessageContext } from "./api/index.js";
 import { pluginRegistry }     from "#kernel/pluginLoader.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
+import { acquireChatSlot }    from "#sendguard";
+import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid, toPresenceCapable } from "./sdk/baileysSock.js";
 
 const INCOMING_DEBOUNCE_MS = 0;
@@ -61,6 +64,10 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
     return;
   }
 
+  if (EXCLUDE_CHATS.includes(jid)) {
+    return;
+  }
+
   if (alreadyProcessed(msg.key.id)) {
     return;
   }
@@ -83,6 +90,29 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
   // Build a WAChat adapter from the message metadata
   const chat: WAChat = await buildChatFromMsg(msg, store, sock);
 
+  // Gradual contact-saving (best-effort, never blocks message handling)
+  const msgCtx = buildMessageContext(msg, sock, store);
+  const isGroup = jid.endsWith("@g.us");
+  trackIncomingForContactSave(sock, msg, msgCtx.sender, isGroup, msgCtx.hasPrefix)
+    .catch(() => {});
+
+  // Caps how many chats get answered at the same time — see SECURITY_LEVEL.
+  const releaseChatSlot = await acquireChatSlot(jid);
+
+  try {
+    await runPluginsForMessage(msg, chat, sock, store, rawJid);
+  } finally {
+    releaseChatSlot();
+  }
+}
+
+async function runPluginsForMessage(
+  msg: WAProtoMsg,
+  chat: WAChat,
+  sock: WASocket,
+  store: WAStore,
+  rawJid: string
+): Promise<void> {
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
