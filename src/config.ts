@@ -229,6 +229,38 @@ PHONE_NUMBER  = ""
 # but reduce the risk of WhatsApp flagging the account.
 SECURITY_LEVEL = "medium"
 
+# ── Local alerts (critical warnings, update notices) ──────────────────────
+# Phone number (or full JID) that receives WhatsApp alerts when the bot
+# itself is up — e.g. "5511999999999" or "5511999999999@s.whatsapp.net".
+# Leave blank to disable this sink (the log file and OS notification still
+# work even if the bot is down or restricted).
+ADMIN_JID = ""
+
+# SMTP is optional — leave SMTP_HOST blank to disable the email sink.
+# SMTP_SEC: "starttls" (port 587, upgrades after connecting — most
+# providers), "ssl" (port 465, encrypted from the start), or "none".
+SMTP_HOST = ""
+SMTP_PORT = 587
+SMTP_SEC  = "starttls"
+SMTP_USER = ""
+SMTP_PASS = ""
+SMTP_FROM = ""
+SMTP_TO   = ""
+# Skip TLS certificate validation. Needed for local SMTP proxies with a
+# self-signed cert — e.g. Proton Mail Bridge (127.0.0.1), Mailhog,
+# Mailpit. Leave false for a real remote mail provider.
+SMTP_INSECURE = false
+
+# Checks npm for a newer manybot version: on startup, then every
+# UPDATE_CHECK_INTERVAL_HOURS.
+UPDATE_CHECK_ENABLED       = true
+UPDATE_CHECK_INTERVAL_HOURS = 24
+
+# "Possible attack" alert fires when this many flood-guard trips happen
+# within FLOOD_ATTACK_WINDOW_MIN minutes. Lower = more sensitive.
+FLOOD_ATTACK_THRESHOLD   = 5
+FLOOD_ATTACK_WINDOW_MIN  = 10
+
 # How to connect the first time: "qr" (scan with WhatsApp on your phone)
 # or "phone" (receive a pairing code on the number set in PHONE_NUMBER).
 # Leave blank to choose interactively on first run — the choice is then
@@ -251,6 +283,40 @@ PHONE_NUMBER  = ""
 # Níveis mais altos deixam o bot mais lento (menos chats simultâneos, atrasos
 # maiores), mas reduzem o risco do WhatsApp sinalizar a conta.
 SECURITY_LEVEL = "medium"
+
+# ── Avisos locais (alertas críticos, aviso de update) ──────────────────────
+# Número de telefone (ou JID completo) que recebe alertas via WhatsApp
+# quando o bot está de pé — ex. "5511999999999" ou
+# "5511999999999@s.whatsapp.net". Deixe em branco pra desligar esse canal
+# (o log e a notificação do SO continuam funcionando mesmo com o bot
+# caído ou restrito).
+ADMIN_JID = ""
+
+# SMTP é opcional — deixe SMTP_HOST em branco pra desligar o canal de e-mail.
+# SMTP_SEC: "starttls" (porta 587, atualiza a conexão depois de
+# conectar — maioria dos provedores), "ssl" (porta 465, criptografado
+# desde o início), ou "none".
+SMTP_HOST = ""
+SMTP_PORT = 587
+SMTP_SEC  = "starttls"
+SMTP_USER = ""
+SMTP_PASS = ""
+SMTP_FROM = ""
+SMTP_TO   = ""
+# Pula a validação do certificado TLS. Necessário pra proxies SMTP
+# locais com certificado autoassinado — ex. Proton Mail Bridge
+# (127.0.0.1), Mailhog, Mailpit. Deixe false pra um provedor remoto real.
+SMTP_INSECURE = false
+
+# Checa no npm se tem versão nova do manybot: ao iniciar, e depois a cada
+# UPDATE_CHECK_INTERVAL_HOURS.
+UPDATE_CHECK_ENABLED       = true
+UPDATE_CHECK_INTERVAL_HOURS = 24
+
+# Alerta de "possível ataque" dispara quando esse número de flood-trips
+# acontece dentro de FLOOD_ATTACK_WINDOW_MIN minutos. Menor = mais sensível.
+FLOOD_ATTACK_THRESHOLD   = 5
+FLOOD_ATTACK_WINDOW_MIN  = 10
 
 # Como conectar pela primeira vez: "qr" (escaneie com o WhatsApp no celular)
 # ou "phone" (recebe um código de pareamento no número definido em
@@ -317,6 +383,21 @@ export interface Config {
   PHONE_NUMBER:  string | null;
   PLATFORM:      string;
   LOGIN_METHOD:  "phone" | "qr" | null;
+
+  ADMIN_JID: string;
+  SMTP_HOST: string;
+  SMTP_PORT: number;
+  SMTP_SEC:  "starttls" | "ssl" | "none";
+  SMTP_USER: string;
+  SMTP_PASS: string;
+  SMTP_FROM: string;
+  SMTP_TO:   string;
+  SMTP_INSECURE: boolean;
+
+  UPDATE_CHECK_ENABLED:        boolean;
+  UPDATE_CHECK_INTERVAL_HOURS: number;
+  FLOOD_ATTACK_THRESHOLD:      number;
+  FLOOD_ATTACK_WINDOW_MIN:     number;
   [key: string]: unknown;
 }
 
@@ -331,6 +412,19 @@ const DEFAULTS: Config = {
   PHONE_NUMBER:  null,
   PLATFORM:      "whatsapp",
   LOGIN_METHOD:  null,
+  ADMIN_JID: "",
+  SMTP_HOST: "",
+  SMTP_PORT: 587,
+  SMTP_SEC:  "starttls",
+  SMTP_USER: "",
+  SMTP_PASS: "",
+  SMTP_FROM: "",
+  SMTP_TO:   "",
+  SMTP_INSECURE: false,
+  UPDATE_CHECK_ENABLED:        true,
+  UPDATE_CHECK_INTERVAL_HOURS: 24,
+  FLOOD_ATTACK_THRESHOLD:      5,
+  FLOOD_ATTACK_WINDOW_MIN:     10,
 };
 
 function normalize(cfg: Config): Config {
@@ -348,6 +442,20 @@ function normalize(cfg: Config): Config {
   if (!["low", "medium", "high"].includes(cfg.SECURITY_LEVEL)) {
     cfg.SECURITY_LEVEL = "medium";
   }
+
+  // Legacy .conf values arrive as strings; TOML gives real types already —
+  // Number()/coercion here is a no-op for the TOML path.
+  cfg.SMTP_PORT = Number(cfg.SMTP_PORT) || 587;
+  if (!["starttls", "ssl", "none"].includes(cfg.SMTP_SEC)) {
+    cfg.SMTP_SEC = "starttls";
+  }
+  const rawUpdateEnabled = cfg.UPDATE_CHECK_ENABLED as unknown;
+  cfg.UPDATE_CHECK_ENABLED = rawUpdateEnabled !== false && rawUpdateEnabled !== "false";
+  const rawSmtpInsecure = cfg.SMTP_INSECURE as unknown;
+  cfg.SMTP_INSECURE = rawSmtpInsecure === true || rawSmtpInsecure === "true";
+  cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
+  cfg.FLOOD_ATTACK_THRESHOLD = Number(cfg.FLOOD_ATTACK_THRESHOLD) || 5;
+  cfg.FLOOD_ATTACK_WINDOW_MIN = Number(cfg.FLOOD_ATTACK_WINDOW_MIN) || 10;
 
   return cfg;
 }
@@ -396,6 +504,19 @@ export const LANGUAGE      = CONFIG.LANGUAGE;
 export const PHONE_NUMBER  = CONFIG.PHONE_NUMBER;
 export const PLATFORM      = CONFIG.PLATFORM;
 export const LOGIN_METHOD  = CONFIG.LOGIN_METHOD;
+export const ADMIN_JID                   = CONFIG.ADMIN_JID;
+export const SMTP_HOST                   = CONFIG.SMTP_HOST;
+export const SMTP_PORT                   = CONFIG.SMTP_PORT;
+export const SMTP_SEC                    = CONFIG.SMTP_SEC;
+export const SMTP_USER                   = CONFIG.SMTP_USER;
+export const SMTP_PASS                   = CONFIG.SMTP_PASS;
+export const SMTP_FROM                   = CONFIG.SMTP_FROM;
+export const SMTP_TO                     = CONFIG.SMTP_TO;
+export const SMTP_INSECURE               = CONFIG.SMTP_INSECURE;
+export const UPDATE_CHECK_ENABLED        = CONFIG.UPDATE_CHECK_ENABLED;
+export const UPDATE_CHECK_INTERVAL_HOURS = CONFIG.UPDATE_CHECK_INTERVAL_HOURS;
+export const FLOOD_ATTACK_THRESHOLD      = CONFIG.FLOOD_ATTACK_THRESHOLD;
+export const FLOOD_ATTACK_WINDOW_MIN     = CONFIG.FLOOD_ATTACK_WINDOW_MIN;
 
 /**
  * Writes a single value back to manybot.toml without rewriting the whole

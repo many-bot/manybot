@@ -34,7 +34,8 @@
     "reconnectHalted": "Desisti de reconectar após {{attempts}} tentativas — chame connect() manualmente para tentar de novo. Loops de reconexão repetidos podem prolongar uma restrição do WhatsApp.",
     "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando...",
     "cacheLoaded": "{{count}} conversa(s) carregada(s) do cache.",
-    "cacheLoadedStale": "{{count}} conversa(s) carregada(s) do cache (desatualizado)."
+    "cacheLoadedStale": "{{count}} conversa(s) carregada(s) do cache (desatualizado).",
+    "floodGuardMuted": "Mensagens rápidas demais em pouco tempo — fico quieto aqui por {{minutes}} min pra proteger a conta. Se foi engano, peça a um admin pra desativar essa proteção temporariamente neste chat."
   },
   "errors": {
     "stack": "Stack",

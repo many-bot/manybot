@@ -34,7 +34,8 @@
     "reconnectHalted": "Gave up reconnecting after {{attempts}} attempts — call connect() manually to retry. Repeated reconnect loops can make a WhatsApp restriction last longer.",
     "sessionExpired": "Session expired or logged out — removing local session and restarting...",
     "cacheLoaded": "{{count}} chat(s) loaded from cache.",
-    "cacheLoadedStale": "{{count}} chat(s) loaded from cache (stale)."
+    "cacheLoadedStale": "{{count}} chat(s) loaded from cache (stale).",
+    "floodGuardMuted": "Too many messages too fast — staying quiet here for {{minutes}} min to protect the account. If this was a mistake, ask an admin to temporarily disable this protection in this chat."
   },
   "errors": {
     "stack": "Stack",

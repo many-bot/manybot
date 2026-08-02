@@ -176,6 +176,38 @@ export function normalizeJid(jid: string): string {
 }
 
 /**
+ * Reverses normalizeJid()'s "@c.us" substitution. store.contacts is keyed
+ * by whatever raw JID Baileys handed the store ("...@s.whatsapp.net" for
+ * a normal DM), never run through normalizeJid — so a plain
+ * store.contacts[normalizedId] lookup misses for any non-@lid contact.
+ * @param {string} jid
+ */
+export function denormalizeJid(jid: string): string {
+  return jid.replace(/@c\.us$/, "@s.whatsapp.net");
+}
+
+/**
+ * Normalize any identifier to the wire JID format WhatsApp's servers and
+ * protocol actually expect ("...@s.whatsapp.net"). Use this anywhere a
+ * JID is handed straight to Baileys (addOrEditContact, removeContact,
+ * groupParticipantsUpdate, message mentions, etc.) — passing this
+ * framework's own normalized "@c.us" form instead usually doesn't throw,
+ * it just silently no-ops (nothing tagged, no contact created), so it
+ * looks fine until you check.
+ * Handles this framework's own "@c.us" form, a bare phone number (with
+ * or without "+", spaces or dashes), and already-valid wire JIDs
+ * ("@s.whatsapp.net", "@lid", "@g.us"), which pass through unchanged.
+ * @param {string} id
+ */
+export function toWireJid(id: string): string {
+  const trimmed = id.trim();
+  if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed)) return trimmed;
+  if (trimmed.endsWith("@c.us")) return denormalizeJid(trimmed);
+  const digits = trimmed.replace(/\D/g, "");
+  return `${digits}@s.whatsapp.net`;
+}
+
+/**
  * Minimal PresenceCapable view over a raw socket. Transitional shim used
  * by kernel code that still works with a raw sock instead of a full
  * PlatformAdapter — goes away once that code is migrated.

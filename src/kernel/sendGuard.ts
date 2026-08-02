@@ -34,6 +34,7 @@ interface SecurityProfile {
   concurrency:         number; // max chats answered at the same time, globally
   editIntervalMs:      { min: number; max: number };
   maxEditsPerMessage:  number;
+  typingMaxMs:         number; // cap on the "typing..." indicator, regardless of text length
 }
 
 const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
@@ -44,6 +45,7 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     concurrency:        Infinity,
     editIntervalMs:     { min: 800, max: 2000 },
     maxEditsPerMessage: 20,
+    typingMaxMs:        2000,
   },
   medium: {
     globalMsgPerSec:    5,
@@ -52,6 +54,7 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     concurrency:        2,
     editIntervalMs:     { min: 1200, max: 3000 },
     maxEditsPerMessage: 12,
+    typingMaxMs:        4000,
   },
   high: {
     globalMsgPerSec:    2,
@@ -60,6 +63,7 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     concurrency:        1,
     editIntervalMs:     { min: 2000, max: 5000 },
     maxEditsPerMessage: 6,
+    typingMaxMs:        8000,
   },
 };
 
@@ -69,7 +73,6 @@ function currentProfile(): SecurityProfile {
 }
 
 const TYPING_CPS          = 90;
-const TYPING_MAX_MS       = 2000;
 const MEDIA_INDICATOR_MS  = { min: 400, max: 1000 };
 
 // ── Global token bucket ───────────────────────────────────────────────────────
@@ -113,20 +116,27 @@ function randomBetween(range: { min: number; max: number }): number {
 
 /**
  * How long the typing indicator should appear before sending text.
+ * Capped by the active profile's `typingMaxMs` — higher SECURITY_LEVELs
+ * tolerate a longer "typing..." for long messages instead of flatlining.
  * @param {string} text
  * @returns {number} ms
  */
 export function typingDuration(text: string): number {
   if (typeof text !== "string" || text.length === 0) return 0;
-  return Math.min((text.length / TYPING_CPS) * 1000, TYPING_MAX_MS);
+  return Math.min((text.length / TYPING_CPS) * 1000, currentProfile().typingMaxMs);
 }
 
 /**
- * A human-feeling duration for media "processing" indicator.
+ * A human-feeling duration for media "processing" indicator. If a caption
+ * is given, adds its own typing time on top (same per-profile cap as
+ * typingDuration) so a media message with a long caption doesn't look
+ * instant.
+ * @param {string} [caption]
  * @returns {number} ms
  */
-export function mediaDuration(): number {
-  return randomBetween(MEDIA_INDICATOR_MS);
+export function mediaDuration(caption?: string): number {
+  const base = randomBetween(MEDIA_INDICATOR_MS);
+  return caption ? base + typingDuration(caption) : base;
 }
 
 // ── Chat-concurrency gate ─────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
 import { initializeSelectedDriver }   from "#drivers/index.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
+import { sendAlert }                  from "#kernel/alerts.js";
 import { logger }                     from "#logger";
 import { t }                          from "#i18n";
 
@@ -27,6 +28,16 @@ async function shutdown(reason: string, isError = false) {
 
   if (isError) {
     logger.error(`${t("bot.error.uncaught")}: ${reason}`);
+    try {
+      await sendAlert({
+        level:   "critical",
+        title:   "manybot crashed",
+        message: reason,
+      });
+    } catch {
+      // sendAlert already swallows sink failures internally; this is only
+      // a final safety net so a crash alert never blocks shutdown itself.
+    }
   } else {
     logger.warn(t("bot.signal.sigterm", { signal: reason }));
   }

@@ -9,20 +9,34 @@
  * clients resolve @mentions to a name instead of raw digits.
  *
  * Rules:
- *  - DMs: every message from the sender counts toward the threshold.
- *  - Groups: only messages that actually invoke the bot (hasPrefix) count,
- *    so silent group members are never auto-added.
- *  - The threshold itself is randomized per sender (not fixed), so the
- *    save timing doesn't look scripted.
+ *  - DMs: every message from the sender counts toward the DM threshold.
+ *  - Groups: only messages that actually invoke the bot (hasPrefix) count
+ *    toward the group threshold, so silent group members are never
+ *    auto-added.
+ *  - DM and group progress are tracked as two SEPARATE counters per
+ *    sender, each with its own randomized target — a person who first
+ *    messages in a group and later DMs the bot doesn't get to skip the
+ *    (deliberately higher) group threshold via their DM count, or vice
+ *    versa. Saving happens as soon as EITHER counter reaches its target.
+ *  - The thresholds are randomized per sender (not fixed), so the save
+ *    timing doesn't look scripted.
  *  - Saves happen one at a time, paced naturally by how often people
  *    actually talk to the bot — never a bulk import.
+ *  - If the actual contact-save call fails (e.g. transient error), the
+ *    sender is NOT marked as saved — the next qualifying message retries
+ *    automatically, rather than waiting for the 30-day refresh cycle.
  *  - Refresh: occasionally, a small random sample of long-saved contacts
  *    get removed and are transparently re-added on their next message,
  *    picking up pushName changes instead of keeping a stale name forever.
+ *
+ * Storage: each sender is its own key (not one shared blob) so that a
+ * slow contact-save call for one sender can never cause a concurrent
+ * update for a different sender to be silently lost — see setSenderState.
  */
 
 import type { WASocket, WAProtoMsg } from "#types";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
+import { toWireJid } from "#drivers/whatsapp/sdk/baileysSock.js";
 import { logger } from "#logger";
 
 const DM_THRESHOLD_RANGE    = { min: 3, max: 6 };
@@ -32,41 +46,72 @@ const REFRESH_MIN_AGE_MS   = 30 * 24 * 60 * 60 * 1000; // re-check after 30 days
 const REFRESH_SWEEP_SAMPLE = 2; // stale contacts touched per sweep, not all at once
 
 interface SenderState {
-  target:          number; // messages needed before saving (randomized once)
-  count:           number;
-  saved:           boolean;
-  savedAt:         number;
-  pendingRefresh:  boolean;
+  dmTarget:       number; // DM messages needed before saving (randomized once)
+  groupTarget:    number; // bot-invoking group messages needed before saving (randomized once)
+  dmCount:        number;
+  groupCount:     number;
+  saved:          boolean;
+  savedAt:        number;
+  pendingRefresh: boolean;
 }
 
-type StateMap = Record<string, SenderState>;
-
-// One JSON blob under a reserved plugin namespace — not chat-scoped, since
-// a saved contact is a bot-wide fact, not a per-chat one.
+// Reserved plugin namespace — not chat-scoped, since a saved contact is a
+// bot-wide fact, not a per-chat one. Each sender gets its own key
+// ("sender:<jid>") rather than one shared JSON blob, so concurrent
+// updates for different senders (normal — different chats run
+// concurrently) never clobber each other.
 const store = buildSettingsApi("__contactAutoSave__", "_global").global;
+const SENDER_KEY_PREFIX = "sender:";
 
-function loadState(): StateMap {
-  return (store.get("state", {}) as StateMap) ?? {};
+function senderKey(jid: string): string {
+  return `${SENDER_KEY_PREFIX}${jid}`;
 }
 
-function saveState(state: StateMap): void {
-  store.set("state", state);
+function getSenderState(jid: string): SenderState | undefined {
+  return store.get(senderKey(jid)) as SenderState | undefined;
+}
+
+function setSenderState(jid: string, s: SenderState): void {
+  store.set(senderKey(jid), s);
+}
+
+function getAllSenderStates(): Record<string, SenderState> {
+  const all = store.getAll();
+  const result: Record<string, SenderState> = {};
+  for (const [key, value] of Object.entries(all)) {
+    if (key.startsWith(SENDER_KEY_PREFIX)) {
+      result[key.slice(SENDER_KEY_PREFIX.length)] = value as SenderState;
+    }
+  }
+  return result;
 }
 
 function randomInt(min: number, max: number): number {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-async function addContact(sock: WASocket, jid: string, name: string): Promise<void> {
+/**
+ * @returns whether the contact was actually saved. Callers must not mark
+ * a sender as "saved" unless this returns true — otherwise a transient
+ * failure would be mistaken for a real save and never retried.
+ */
+async function addContact(sock: WASocket, jid: string, name: string): Promise<boolean> {
+  // `jid` here is this framework's internal "@c.us" form (see
+  // getMsgSender()/normalizeJid()) — Baileys needs the real wire JID or
+  // it silently no-ops instead of throwing, which is exactly how this
+  // went unnoticed before.
+  const wireJid = toWireJid(jid);
   try {
-    await sock.addOrEditContact(jid, {
+    await sock.addOrEditContact(wireJid, {
       fullName:  name,
       firstName: name,
       saveOnPrimaryAddressbook: true,
     });
-    logger.debug(`[contactAutoSave] saved contact ${jid} as "${name}"`);
+    logger.debug(`[contactAutoSave] saved contact ${wireJid} as "${name}"`);
+    return true;
   } catch (e) {
-    logger.debug(`[contactAutoSave] failed to save contact ${jid}: ${(e as Error).message}`);
+    logger.debug(`[contactAutoSave] failed to save contact ${wireJid}: ${(e as Error).message}`);
+    return false;
   }
 }
 
@@ -93,19 +138,22 @@ export async function trackIncomingForContactSave(
     const pushName = msg.pushName?.trim();
     if (!pushName || senderJid.endsWith("@g.us")) return;
 
-    const state = loadState();
-    let s = state[senderJid];
+    let s = getSenderState(senderJid);
 
     // Completing a refresh takes priority over new-save logic, but in
     // groups it still only fires on messages that invoke the bot — same
     // rule as the initial save, so a refresh never re-adds someone based
     // on a silent group message.
     if (s?.pendingRefresh && (!isGroup || triggeredBot)) {
-      await addContact(sock, senderJid, pushName);
-      s.pendingRefresh = false;
-      s.savedAt = Date.now();
-      state[senderJid] = s;
-      saveState(state);
+      const ok = await addContact(sock, senderJid, pushName);
+      if (ok) {
+        // Re-read rather than reuse `s` — another concurrent message from
+        // this same sender may have updated the record while we awaited.
+        const latest = getSenderState(senderJid) ?? s;
+        latest.pendingRefresh = false;
+        latest.savedAt = Date.now();
+        setSenderState(senderJid, latest);
+      }
       return;
     }
 
@@ -114,20 +162,37 @@ export async function trackIncomingForContactSave(
     if (isGroup && !triggeredBot) return; // groups: only count messages that invoke the bot
 
     if (!s) {
-      const range = isGroup ? GROUP_THRESHOLD_RANGE : DM_THRESHOLD_RANGE;
-      s = { target: randomInt(range.min, range.max), count: 0, saved: false, savedAt: 0, pendingRefresh: false };
+      s = {
+        dmTarget:    randomInt(DM_THRESHOLD_RANGE.min, DM_THRESHOLD_RANGE.max),
+        groupTarget: randomInt(GROUP_THRESHOLD_RANGE.min, GROUP_THRESHOLD_RANGE.max),
+        dmCount:     0,
+        groupCount:  0,
+        saved:          false,
+        savedAt:        0,
+        pendingRefresh: false,
+      };
     }
 
-    s.count += 1;
+    if (isGroup) s.groupCount += 1; else s.dmCount += 1;
 
-    if (s.count >= s.target) {
-      await addContact(sock, senderJid, pushName);
-      s.saved   = true;
-      s.savedAt = Date.now();
+    // Persist the increment right away, with no await in between — so a
+    // slow addContact() call below never leaves this sender's counter
+    // based on stale data for longer than necessary.
+    setSenderState(senderJid, s);
+
+    const reachedTarget = s.dmCount >= s.dmTarget || s.groupCount >= s.groupTarget;
+
+    if (reachedTarget) {
+      const ok = await addContact(sock, senderJid, pushName);
+      if (ok) {
+        const latest = getSenderState(senderJid) ?? s;
+        latest.saved   = true;
+        latest.savedAt = Date.now();
+        setSenderState(senderJid, latest);
+      }
+      // If it failed, `saved` stays false — the next qualifying message
+      // will see the target already reached and retry automatically.
     }
-
-    state[senderJid] = s;
-    saveState(state);
   } catch (e) {
     logger.debug(`[contactAutoSave] tracking failed (non-fatal): ${(e as Error).message}`);
   }
@@ -143,10 +208,10 @@ export async function trackIncomingForContactSave(
  * @param {WASocket} sock
  */
 export async function runContactRefreshSweep(sock: WASocket): Promise<void> {
-  const state = loadState();
   const now = Date.now();
+  const all = getAllSenderStates();
 
-  const due = Object.entries(state)
+  const due = Object.entries(all)
     .filter(([, s]) => s.saved && !s.pendingRefresh && now - s.savedAt > REFRESH_MIN_AGE_MS)
     .sort(() => Math.random() - 0.5)
     .slice(0, REFRESH_SWEEP_SAMPLE);
@@ -155,14 +220,12 @@ export async function runContactRefreshSweep(sock: WASocket): Promise<void> {
 
   for (const [jid, s] of due) {
     try {
-      await sock.removeContact(jid);
+      await sock.removeContact(toWireJid(jid));
       s.pendingRefresh = true;
-      state[jid] = s;
+      setSenderState(jid, s);
       logger.debug(`[contactAutoSave] queued refresh for ${jid}`);
     } catch (e) {
       logger.debug(`[contactAutoSave] failed to remove contact ${jid} for refresh: ${(e as Error).message}`);
     }
   }
-
-  saveState(state);
 }

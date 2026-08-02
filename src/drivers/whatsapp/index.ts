@@ -14,10 +14,12 @@
 import { createSocket, normalizeJid, sessionDir, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { handleMessage } from "./messageHandler.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
-import { registerIncoming, floodKey, MUTE_MS } from "#kernel/floodGuard.js";
+import { registerIncoming, floodKey, MUTE_MS, recentTripCount, isFloodGuardDisabled } from "#kernel/floodGuard.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
+import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
+import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
 import { logger } from "#logger";
-import { PLUGINS, CLIENT_ID } from "#config";
+import { PLUGINS, CLIENT_ID, FLOOD_ATTACK_THRESHOLD, FLOOD_ATTACK_WINDOW_MIN } from "#config";
 import { t } from "#i18n";
 import { printBanner } from "#client/banner.js";
 import { createStore } from "#client/store.js";
@@ -41,6 +43,9 @@ let halted = false;
 let cacheHydrated = false;
 let cacheSaveTimer: NodeJS.Timeout | null = null;
 let contactRefreshTimer: NodeJS.Timeout | null = null;
+let lastAttackAlertAt = 0;
+
+registerAlertSockProvider(() => currentSock);
 
 // ── Per-chat message queue ──────────────────────────────────────────────────
 // Messages from the same chat are processed one at a time (in order), but
@@ -88,6 +93,9 @@ const RECONNECT_MAX_MS  = 60000;
 // Reaction used to signal a sender got muted by the flood guard — cleared
 // automatically once the mute lifts (see MUTE_MS import from floodGuard).
 const MUTE_REACTION_EMOJI = "🔇";
+// Media/stickers in groups arrive in normal bursts (forwards, sticker packs)
+// — count them for less toward the flood guard's window limit.
+const FLOOD_MEDIA_WEIGHT = 0.5;
 // Circuit breaker: after this many consecutive failed reconnects, stop
 // retrying automatically instead of hammering the connection forever.
 // Rapid repeated attempts are themselves a ban signal (WhatsApp's abuse
@@ -207,6 +215,7 @@ async function startBot() {
       }
       startCacheAutosave(store);
       startContactRefreshSweep(sock);
+      startUpdateCheckSchedule();
 
       // buffer anti-replay / sync ghost messages
       setTimeout(() => { state = "READY"; }, 2000);
@@ -231,6 +240,11 @@ async function startBot() {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
           halted = true;
           logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
+          sendAlert({
+            level:   "critical",
+            title:   "manybot parou de tentar reconectar",
+            message: `Desisti após ${reconnectAttempts} tentativas — possível restrição de conta. Rode connect() manualmente pra tentar de novo.`,
+          }).catch(() => {});
           return;
         }
         const delay = nextBackoffMs();
@@ -256,14 +270,48 @@ async function startBot() {
 
       const jid = normalizeJid(m.key.remoteJid ?? "");
 
+      // The bot's own sends (e.g. command replies) come back through this
+      // same event with no `participant` set in groups, which used to fall
+      // back to the chatJid key and get miscounted as incoming flood.
+      if (m.key.fromMe) {
+        enqueueForChat(jid, () => handleMessage(m, sock, store));
+        continue;
+      }
+
       const sender = m.key.participant ? normalizeJid(m.key.participant) : undefined;
-      const floodStatus = registerIncoming(floodKey(jid, sender));
+
+      if (isFloodGuardDisabled(jid)) {
+        enqueueForChat(jid, () => handleMessage(m, sock, store));
+        continue;
+      }
+
+      const isGroup = jid.endsWith("@g.us");
+      // Groups get bursts of media/stickers as a normal usage pattern —
+      // count them for less so that alone doesn't trip the guard.
+      const weight = isGroup && msgHasMediaQuick(m) ? FLOOD_MEDIA_WEIGHT : 1;
+      const floodStatus = registerIncoming(floodKey(jid, sender), weight);
 
       if (floodStatus === "tripped") {
+        const now = Date.now();
         sock.sendMessage(jid, { react: { text: MUTE_REACTION_EMOJI, key: m.key } }).catch(() => {});
+        sock.sendMessage(
+          jid,
+          { text: t("system.floodGuardMuted", { minutes: Math.round(MUTE_MS / 60000) }) },
+          { quoted: m }
+        ).catch(() => {});
         setTimeout(() => {
           sock.sendMessage(jid, { react: { text: "", key: m.key } }).catch(() => {});
         }, MUTE_MS);
+
+        const windowMs = FLOOD_ATTACK_WINDOW_MIN * 60 * 1000;
+        if (recentTripCount(windowMs) >= FLOOD_ATTACK_THRESHOLD && now - lastAttackAlertAt > windowMs) {
+          lastAttackAlertAt = now;
+          sendAlert({
+            level:   "critical",
+            title:   "Possível ataque de flood",
+            message: `${FLOOD_ATTACK_THRESHOLD}+ flood-trips nos últimos ${FLOOD_ATTACK_WINDOW_MIN}min. Ajuste FLOOD_ATTACK_THRESHOLD/FLOOD_ATTACK_WINDOW_MIN no manybot.toml se for falso positivo.`,
+          }).catch(() => {});
+        }
       }
       if (floodStatus !== "allow") continue;
 
@@ -307,6 +355,7 @@ export const whatsappDriver: BotDriver = {
     }
     stopCacheAutosave();
     stopContactRefreshSweep();
+    stopUpdateCheckSchedule();
     if (currentStore) await saveChatCache(currentStore);
     teardownSock(currentSock);
     currentSock = null;

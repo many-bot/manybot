@@ -18,19 +18,10 @@ import { t, createPluginT,
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { enqueue }                   from "#download";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
+import { disableFloodGuard, enableFloodGuard, isFloodGuardDisabled } from "#kernel/floodGuard.js";
 import { emptyFolder }               from "#utils/file.js";
-import { normalizeJid, toPresenceCapable } from "../sdk/baileysSock.js";
+import { normalizeJid, denormalizeJid, toWireJid, toPresenceCapable } from "../sdk/baileysSock.js";
 
-// store.contacts is keyed by whatever raw JID Baileys handed the store
-// (e.g. "...@s.whatsapp.net" for a normal DM) — never run through
-// normalizeJid. Every lookup here works in normalized ("...@c.us") form,
-// so a plain `store.contacts[normalizedId]` misses for any non-@lid
-// contact. @lid contacts don't hit this: normalizeJid doesn't touch
-// "@lid", so the raw store key already matches. Used as a fallback key
-// alongside the normalized one wherever we read store.contacts directly.
-function denormalizeJid(jid: string): string {
-  return jid.replace(/@c\.us$/, "@s.whatsapp.net");
-}
 import { mkdirSync }                 from "fs";
 import { readFile, writeFile, unlink, mkdtemp, rm } from "fs/promises";
 import { readFileSync }              from "fs";
@@ -1203,7 +1194,7 @@ function makeSender(
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
         const buffer = await resolveMediaBuffer(source);
         // viewOnce/mentions are part of the message CONTENT — see note above.
         const messageContent: any = { image: buffer, caption };
@@ -1222,7 +1213,7 @@ function makeSender(
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
         const buffer = await resolveMediaBuffer(source);
         // viewOnce/mentions are part of the message CONTENT — see note above.
         const messageContent: any = { video: buffer, caption };
@@ -1249,7 +1240,7 @@ function makeSender(
         const quotedMsg = await resolveQuoted();
         const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
         const buffer = needsGifConversion(source)
           ? await gifToMp4(source)
           : await resolveMediaBuffer(source);
@@ -1437,29 +1428,6 @@ function buildEventsApi(sock: WASocket, pluginName: string) {
  * @param {WASocket}     sock
  * @param {string|null}  chatJid — raw JID of the current group (null in setup context)
  */
-/**
- * Normalize any identifier to the wire JID format WhatsApp's servers and
- * protocol actually expect (`...@s.whatsapp.net`). Used anywhere a JID is
- * handed straight to Baileys — `groupParticipantsUpdate()` and message
- * `mentions` — both of which silently misbehave otherwise: a malformed
- * group-update JID gets the whole IQ query rejected ("bad-request"), and
- * a malformed mentions entry just doesn't tag/notify anyone (the message
- * still sends fine, so it looks like nothing is wrong until you check).
- * Handles this framework's own normalized `@c.us` form (`contact.id`,
- * `getMsgSender()`'s output — see normalizeJid()/denormalizeJid()), a bare
- * phone number (with or without "+", spaces or dashes), and already-valid
- * wire JIDs (`@s.whatsapp.net`, `@lid`, `@g.us`), which pass through
- * unchanged.
- * @param {string} id
- */
-function toWireJid(id: string): string {
-  const trimmed = id.trim();
-  if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed)) return trimmed;
-  if (trimmed.endsWith("@c.us")) return denormalizeJid(trimmed);
-  const digits = trimmed.replace(/\D/g, "");
-  return `${digits}@s.whatsapp.net`;
-}
-
 /**
  * Resolve mentions to the exact JID form the destination group uses for
  * that participant — not whatever store.resolveJid() happens to have
@@ -2161,6 +2129,20 @@ export function buildApi({
       /** Clear all messages in this chat — not supported in Baileys. */
       async clearMessages() {
         logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
+      },
+
+      /** Temporarily disable/re-enable the flood guard for this chat. */
+      floodGuard: {
+        /** @param {number} [durationMs] — omit to disable until .enable() is called */
+        disable(durationMs?: number) {
+          disableFloodGuard(rawJid, durationMs);
+        },
+        enable() {
+          enableFloodGuard(rawJid);
+        },
+        get disabled(): boolean {
+          return isFloodGuardDisabled(rawJid);
+        },
       },
     },
 
