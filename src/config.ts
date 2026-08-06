@@ -270,20 +270,15 @@ STATUS_PORT    = 8080
 # ── Driver selection (advanced) ────────────────────────────────────────────
 # ManyBot can fall back from a primary driver to a secondary one when the
 # primary fails to confirm a send. Today only Baileys is wired in; leave
-# whatsmeow.enabled = false to disable the fallback entirely (no extra
-# processes are spawned, no sockets are opened).
-[drivers]
-primary             = "baileys"
-fallbackCooldownMs  = 60000
-verifyWindowMs      = [500, 1000, 1500, 2500, 5000]
-
-[drivers.baileys]
-enabled = true
-
-[drivers.whatsmeow]
-enabled     = false
-grpcAddress = "localhost:50051"
-binaryPath  = ""
+# driver_whatsmeow_enabled = false to disable the fallback entirely (no
+# extra processes are spawned, no sockets are opened).
+driver_primary = "baileys"
+driver_fallback_cooldown_ms = 60000
+driver_verify_window_ms = [500, 1000, 1500, 2500, 5000]
+driver_baileys_enabled = true
+driver_whatsmeow_enabled = false
+driver_whatsmeow_grpc_address = "localhost:50051"
+driver_whatsmeow_binary_path = ""
 `;
 
 const DEFAULT_TOML_PT =
@@ -345,20 +340,15 @@ STATUS_PORT    = 8080
 # ── Seleção de driver (avançado) ───────────────────────────────────────────
 # ManyBot pode cair de um driver primário pra um secundário quando o
 # primário não confirma um envio. Hoje só Baileys está ligado; deixe
-# whatsmeow.enabled = false pra desligar o fallback por completo (nenhum
-# processo extra é spawnado, nenhum socket é aberto).
-[drivers]
-primary             = "baileys"
-fallbackCooldownMs  = 60000
-verifyWindowMs      = [500, 1000, 1500, 2500, 5000]
-
-[drivers.baileys]
-enabled = true
-
-[drivers.whatsmeow]
-enabled     = false
-grpcAddress = "localhost:50051"
-binaryPath  = ""
+# driver_whatsmeow_enabled = false pra desligar o fallback por completo
+# (nenhum processo extra é spawnado, nenhum socket é aberto).
+driver_primary = "baileys"
+driver_fallback_cooldown_ms = 60000
+driver_verify_window_ms = [500, 1000, 1500, 2500, 5000]
+driver_baileys_enabled = true
+driver_whatsmeow_enabled = false
+driver_whatsmeow_grpc_address = "localhost:50051"
+driver_whatsmeow_binary_path = ""
 `;
 
 const DEFAULT_TOML =detectSystemLang() === "pt" ? DEFAULT_TOML_PT : DEFAULT_TOML_EN;
@@ -440,6 +430,11 @@ export interface Config {
   // driver registered with the DriverManager is the fallback. Drivers not
   // enabled here are not registered at all — no process is spawned, no
   // socket is opened, the bot simply runs on whatever remains.
+  //
+  // The TOML surface is flat lowercase keys (driver_primary,
+  // driver_baileys_enabled, driver_whatsmeow_*, …) — same style as the
+  // rest of this file. `normalize()` rebuilds the nested object below
+  // from those flat keys so callers use `CONFIG.drivers.*`.
   drivers: {
     primary:             "baileys" | "whatsmeow";
     fallbackCooldownMs:  number;
@@ -517,10 +512,14 @@ function normalize(cfg: Config): Config {
   cfg.STATUS_PORT = Number(cfg.STATUS_PORT) || 8080;
 
   // drivers.* — the fallback guard and DriverManager read these at every
-  // send. Coerce strings (legacy .conf arrives as strings) and reject
-  // anything that isn't a recognized driver name, so a typo in TOML
-  // falls back to the safe default rather than crashing at boot.
-  const drv = (cfg.drivers ?? {}) as Partial<Config["drivers"]> & Record<string, unknown>;
+  // send. The TOML surface is flat lowercase keys (driver_primary,
+  // driver_baileys_enabled, driver_whatsmeow_*, …) so it matches the
+  // rest of the file; the nested `cfg.drivers` object is rebuilt here
+  // from those flat keys so callers (main.ts, sendFallbackGuard.ts,
+  // supervisor.ts, client.ts) keep using `CONFIG.drivers.*`.
+  // Coerce strings (legacy .conf arrives as strings) and reject anything
+  // that isn't a recognized driver name, so a typo in TOML falls back
+  // to the safe default rather than crashing at boot.
   const isTruthy = (v: unknown) => v === true || v === "true";
   const coerceEnabled = (v: unknown, fallback: boolean): boolean => {
     if (v === true || v === false) return v;
@@ -528,26 +527,47 @@ function normalize(cfg: Config): Config {
     if (v === "false") return false;
     return fallback;
   };
+  // Allow either the new flat keys or (for backward compatibility) the
+  // old nested `[drivers]` block. Flat keys take precedence.
+  const nestedDrv = (cfg.drivers ?? {}) as Partial<Config["drivers"]> & Record<string, unknown>;
+  const flatPrimary           = cfg.driver_primary           ?? nestedDrv.primary;
+  const flatCooldown          = cfg.driver_fallback_cooldown_ms ?? nestedDrv.fallbackCooldownMs;
+  const flatVerify            = cfg.driver_verify_window_ms   ?? nestedDrv.verifyWindowMs;
+  const flatBaileysEnabled    = cfg.driver_baileys_enabled    ?? nestedDrv.baileys?.enabled;
+  const flatWhatsmeowEnabled  = cfg.driver_whatsmeow_enabled  ?? nestedDrv.whatsmeow?.enabled;
+  const flatWhatsmeowGrpc     = cfg.driver_whatsmeow_grpc_address ?? nestedDrv.whatsmeow?.grpcAddress;
+  const flatWhatsmeowBinary   = cfg.driver_whatsmeow_binary_path  ?? nestedDrv.whatsmeow?.binaryPath;
   cfg.drivers = {
-    primary:            drv.primary === "whatsmeow" ? "whatsmeow" : "baileys",
-    fallbackCooldownMs: Number(drv.fallbackCooldownMs) || 60000,
-    verifyWindowMs:     Array.isArray(drv.verifyWindowMs) && drv.verifyWindowMs.length
-      ? drv.verifyWindowMs.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0)
+    primary:            flatPrimary === "whatsmeow" ? "whatsmeow" : "baileys",
+    fallbackCooldownMs: Number(flatCooldown) || 60000,
+    verifyWindowMs:     Array.isArray(flatVerify) && flatVerify.length
+      ? (flatVerify as unknown[]).map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0)
       : [500, 1000, 1500, 2500, 5000],
     baileys: {
-      enabled: coerceEnabled(drv.baileys?.enabled, true),
+      enabled: coerceEnabled(flatBaileysEnabled, true),
     },
     whatsmeow: {
       // MANYBOT_SMOKE=1 force-enables whatsmeow regardless of the TOML
       // value — used by scripts/smoke-whatsmeow-supervisor.mjs so the
       // smoke test doesn't depend on the local manybot.toml already
-      // having whatsmeow.enabled=true. Not a documented user-facing
-      // setting; TOML remains the source of truth outside smoke runs.
-      enabled:     process.env.MANYBOT_SMOKE === "1" ? true : isTruthy(drv.whatsmeow?.enabled),
-      grpcAddress: typeof drv.whatsmeow?.grpcAddress === "string" ? drv.whatsmeow.grpcAddress : "localhost:50051",
-      binaryPath:  typeof drv.whatsmeow?.binaryPath  === "string" ? drv.whatsmeow.binaryPath  : "",
+      // having driver_whatsmeow_enabled = true. Not a documented
+      // user-facing setting; TOML remains the source of truth outside
+      // smoke runs.
+      enabled:     process.env.MANYBOT_SMOKE === "1" ? true : isTruthy(flatWhatsmeowEnabled),
+      grpcAddress: typeof flatWhatsmeowGrpc === "string" ? flatWhatsmeowGrpc : "localhost:50051",
+      binaryPath:  typeof flatWhatsmeowBinary === "string" ? flatWhatsmeowBinary : "",
     },
   };
+  // Drop the flat keys from the merged object so they don't leak as
+  // loose top-level Config keys (the `Config` interface exposes only
+  // the nested `drivers` block).
+  delete (cfg as Record<string, unknown>).driver_primary;
+  delete (cfg as Record<string, unknown>).driver_fallback_cooldown_ms;
+  delete (cfg as Record<string, unknown>).driver_verify_window_ms;
+  delete (cfg as Record<string, unknown>).driver_baileys_enabled;
+  delete (cfg as Record<string, unknown>).driver_whatsmeow_enabled;
+  delete (cfg as Record<string, unknown>).driver_whatsmeow_grpc_address;
+  delete (cfg as Record<string, unknown>).driver_whatsmeow_binary_path;
 
   return cfg;
 }

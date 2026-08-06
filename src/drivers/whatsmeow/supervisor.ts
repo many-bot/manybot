@@ -21,7 +21,8 @@
  * matches — `enabled=true` without a binary is a setup bug, not a
  * silent degradation.
  *
- * `config.drivers.whatsmeow.enabled = false` ⇒ no supervisor at all
+ * `config.drivers.whatsmeow.enabled = false` (TOML:
+ * `driver_whatsmeow_enabled = false`) ⇒ no supervisor at all
  * (`null` return from `startWhatsmeowSupervisor`); the rest of the
  * codebase is unaware anything is missing — it just never sees a
  * ready whatsmeow.
@@ -204,15 +205,15 @@ async function waitMs(ms: number): Promise<void> {
  */
 export async function startWhatsmeowSupervisor(): Promise<WhatsmeowSupervisor | null> {
   if (!CONFIG.drivers.whatsmeow.enabled) {
-    logger.info("[supervisor] disabled by config (drivers.whatsmeow.enabled = false)");
+    logger.info("[supervisor] disabled by config (driver_whatsmeow_enabled = false)");
     return null;
   }
 
   const binary = resolveBinaryPath();
   if (!binary) {
     logger.error(
-      "[supervisor] whatsmeow-service binary not found. Set `binaryPath` in manybot.toml " +
-      "under [drivers.whatsmeow], set env WM_BINARY_PATH, or place the binary at " +
+      "[supervisor] whatsmeow-service binary not found. Set `driver_whatsmeow_binary_path` in manybot.toml, " +
+      "set env WM_BINARY_PATH, or place the binary at " +
       "whatsmeow-service/bin/whatsmeow-service relative to cwd. Bot will run on Baileys only."
     );
     return null;
