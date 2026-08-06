@@ -177,3 +177,53 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
     notifyEmail(event),
   ]);
 }
+
+/**
+ * Fire-and-forget alert by semantic kind. Thin wrapper over sendAlert
+ * for callers that just want to say "this kind of bad thing happened"
+ * without building a full AlertEvent each time. Unknown kinds fall
+ * through as a warning with the kind name as the title and the details
+ * object stringified into the message — so a future kind added in one
+ * place but not yet mapped here still surfaces in the log instead of
+ * silently disappearing.
+ *
+ * Mapped kinds (CLAUDE.md §18):
+ *   send_failed_no_fallback   — primary failed, no secondary available
+ *   send_failed_both_drivers  — both primary and secondary failed
+ */
+export type AlertKind =
+  | "send_failed_no_fallback"
+  | "send_failed_both_drivers"
+  | "whatsmeow_subprocess_halted"
+  | (string & {}); // open for future kinds without breaking the union
+
+export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}): void {
+  let event: AlertEvent;
+  if (kind === "send_failed_no_fallback") {
+    event = {
+      level:   "critical",
+      title:   "manybot: sem driver de fallback",
+      message: `jid=${details.jid} primary=${details.primary}`,
+    };
+  } else if (kind === "send_failed_both_drivers") {
+    event = {
+      level:   "critical",
+      title:   "manybot: envio falhou nos dois drivers",
+      message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
+               (details.error ? ` error=${String(details.error)}` : ""),
+    };
+  } else if (kind === "whatsmeow_subprocess_halted") {
+    event = {
+      level:   "critical",
+      title:   "manybot: subprocesso whatsmeow halted",
+      message: `fallback indisponível: ${details.reason ?? "unknown"} — bot segue só com Baileys`,
+    };
+  } else {
+    event = {
+      level:   "warning",
+      title:   kind,
+      message: JSON.stringify(details),
+    };
+  }
+  void sendAlert(event);
+}

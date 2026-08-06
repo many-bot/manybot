@@ -8,10 +8,21 @@
  *   - chat names (for display and for building WAChat adapters)
  *   - contact names / notify (pushname) (for ctx.contacts)
  *   - messages by JID + ID (for poll vote decryption)
+ *
+ * PR1 of the whatsmeow-fallback refactor (see AUDIT_BAILEYS_LEAK.md):
+ * this module no longer imports from `@whiskeysockets/baileys`. The
+ * Baileys-specific shapes (WAMessage, Chat, Contact) are re-exported
+ * from src/drivers/baileys/sdk/baileysSock.ts as the driver-local
+ * aliases RawMessage, RawChat, RawContact — the rest of the codebase
+ * (this module included) sees only those neutral names, so the
+ * @whiskeysockets/baileys import line never leaks past the driver
+ * boundary.
  */
 
-import type { WASocket, WAProtoMsg, WAStoreContact } from "#types";
-import type { Chat, Contact } from "@whiskeysockets/baileys";
+import type {
+  RawMessage, RawChat, RawContact, RawStoreContact,
+  RawEventEmitter,
+} from "#drivers/baileys/sdk/baileysSock.js";
 
 // ── Store types ───────────────────────────────────────────────────────────────
 
@@ -27,7 +38,7 @@ export interface StoreChat {
  */
 export interface StoreSnapshot {
   chats:    StoreChat[];
-  contacts: Record<string, WAStoreContact>;
+  contacts: Record<string, RawStoreContact>;
   lidMap:   [string, string][];
 }
 
@@ -38,12 +49,12 @@ export interface BotStore {
     all(): StoreChat[];
   };
   /** Plain record of JID → contact metadata */
-  readonly contacts: Record<string, WAStoreContact>;
+  readonly contacts: Record<string, RawStoreContact>;
   /**
    * Messages stored per JID.
    * Access: `store.messages.get(jid)?.get(msgId)`
    */
-  readonly messages: Map<string, Map<string, WAProtoMsg>>;
+  readonly messages: Map<string, Map<string, RawMessage>>;
   /**
    * Resolve a `@lid` JID to the traditional `@s.whatsapp.net` JID when a
    * mapping has been learned (from contacts or message keys). Returns the
@@ -69,15 +80,19 @@ export interface BotStore {
    */
   forgetLid(lid: string): void;
   /**
-   * Bind the store to a socket event emitter.
+   * Bind the store to a driver's event emitter.
    * Must be called immediately after socket creation.
    */
-  bind(ev: WASocket["ev"]): void;
+  bind(ev: RawEventEmitter): void;
   /** Plain-data snapshot for persisting to disk (client/cache.ts). */
   toJSON(): StoreSnapshot;
   /** Merge a previously-saved snapshot into this store. */
   hydrate(snapshot: StoreSnapshot): void;
 }
+
+// Re-export driver-local shapes so consumers (including src/types.ts)
+// don't have to import from src/drivers/baileys/ directly.
+export type { RawMessage, RawChat, RawContact, RawStoreContact, RawEventEmitter };
 
 // ── Factory ───────────────────────────────────────────────────────────────────
 
@@ -87,8 +102,8 @@ export interface BotStore {
  */
 export function createStore(): BotStore {
   const chatsMap    = new Map<string, StoreChat>();
-  const contacts: Record<string, WAStoreContact> = {};
-  const messages    = new Map<string, Map<string, WAProtoMsg>>();
+  const contacts: Record<string, RawStoreContact> = {};
+  const messages    = new Map<string, Map<string, RawMessage>>();
   // @lid JID → traditional @s.whatsapp.net JID, learned from contact and
   // message-key pairs (Baileys exposes both forms during the LID rollout).
   const lidMap      = new Map<string, string>();
@@ -109,13 +124,13 @@ export function createStore(): BotStore {
   // Max messages kept per chat (prevents unbounded memory growth)
   const MAX_MSGS_PER_CHAT = 200;
 
-  function upsertChat(chat: Chat) {
+  function upsertChat(chat: RawChat) {
     if (!chat.id) return;
     const name = (chat as unknown as { name?: string }).name ?? chat.id.split("@")[0];
     chatsMap.set(chat.id, { id: chat.id, name });
   }
 
-  function upsertContact(contact: Contact) {
+  function upsertContact(contact: RawContact) {
     // Don't let a later, poorer sync round (e.g. a bare history-sync stub)
     // blank out a name/notify/verifiedName we already learned from an
     // earlier, richer one (e.g. a live message's pushName) — only accept
@@ -134,7 +149,7 @@ export function createStore(): BotStore {
     learnLid(contact.id, lidField);
   }
 
-  function storeMessage(msg: WAProtoMsg) {
+  function storeMessage(msg: RawMessage) {
     const jid = msg.key.remoteJid;
     const id  = msg.key.id;
     if (!jid || !id) return;
@@ -156,7 +171,7 @@ export function createStore(): BotStore {
   // who never messaged and isn't a saved contact. Shared by both
   // "messages.upsert" (live) and "messaging-history.set" (backfill on
   // connect), since history-sync messages carry the same field.
-  function capturePushNames(msgs: WAProtoMsg[]) {
+  function capturePushNames(msgs: RawMessage[]) {
     for (const msg of msgs) {
       const key = msg.key as unknown as { participant?: string; participantAlt?: string; remoteJid?: string; remoteJidAlt?: string };
       learnLid(key.participantAlt, key.participant);
@@ -173,13 +188,13 @@ export function createStore(): BotStore {
     }
   }
 
-  function bind(ev: WASocket["ev"]) {
+  function bind(ev: RawEventEmitter) {
     ev.on("messaging-history.set", ({ chats, contacts, messages }) => {
       for (const chat of chats) upsertChat(chat);
       for (const contact of contacts) upsertContact(contact);
       // Backfilled messages carry pushName too — was previously dropped,
       // leaving contacts unresolved until they next messaged live.
-      if (messages?.length) capturePushNames(messages as unknown as WAProtoMsg[]);
+      if (messages?.length) capturePushNames(messages as unknown as RawMessage[]);
     });
 
     ev.on("chats.upsert", (newChats) => {
@@ -230,7 +245,7 @@ export function createStore(): BotStore {
           merged.pollUpdates = [...prior, ...incoming];
         }
 
-        messages.get(key.remoteJid)!.set(key.id, merged as unknown as WAProtoMsg);
+        messages.get(key.remoteJid)!.set(key.id, merged as unknown as RawMessage);
       }
     });
   }

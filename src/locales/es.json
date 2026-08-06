@@ -35,7 +35,8 @@
     "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando...",
     "cacheLoaded": "{{count}} chat(s) cargado(s) desde la caché.",
     "cacheLoadedStale": "{{count}} chat(s) cargado(s) desde la caché (desactualizada).",
-    "floodGuardMuted": "Demasiados mensajes muy rápido — me quedo callado aquí por {{minutes}} min para proteger la cuenta. Si fue un error, pide a un admin que desactive esta protección temporalmente en este chat."
+    "sendFailedNoFallback": "manybot: no hay driver de respaldo disponible (jid={{jid}}, primario={{driver}})",
+    "sendFailedBothDrivers": "manybot: envío falló en ambos drivers (jid={{jid}}, se probó {{primary}} y luego {{secondary}})"
   },
   "errors": {
     "stack": "Stack",

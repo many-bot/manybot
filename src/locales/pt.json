@@ -35,7 +35,8 @@
     "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando...",
     "cacheLoaded": "{{count}} conversa(s) carregada(s) do cache.",
     "cacheLoadedStale": "{{count}} conversa(s) carregada(s) do cache (desatualizado).",
-    "floodGuardMuted": "Mensagens rápidas demais em pouco tempo — fico quieto aqui por {{minutes}} min pra proteger a conta. Se foi engano, peça a um admin pra desativar essa proteção temporariamente neste chat."
+    "sendFailedNoFallback": "manybot: nenhum driver de fallback disponível (jid={{jid}}, primário={{driver}})",
+    "sendFailedBothDrivers": "manybot: envio falhou nos dois drivers (jid={{jid}}, tentou {{primary}} depois {{secondary}})"
   },
   "errors": {
     "stack": "Stack",

@@ -1,5 +1,5 @@
 /**
- * drivers/whatsapp/messageHandler.ts
+ * drivers/baileys/messageHandler.ts
  *
  * WhatsApp message pipeline.
  * Moved from kernel/messageHandler.ts to keep all WhatsApp logic together.
@@ -12,7 +12,9 @@
  * Each plugin decides whether to act or ignore.
  */
 
-import type { WAProtoMsg, WASocket, WAStore, WAChat } from "#types";
+import type { BotMessage } from "#drivers/types.js";
+import type { WaContract } from "#kernel/waContract.js";
+import type { BotStore } from "#client/store.js";
 import { CHATS, EXCLUDE_CHATS } from "#config";
 import { buildApi,
          buildChatFromMsg,
@@ -21,7 +23,7 @@ import { pluginRegistry }     from "#kernel/pluginLoader.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
-import { normalizeJid, toPresenceCapable } from "./sdk/baileysSock.js";
+import { normalizeJid } from "#drivers/jid.js";
 
 const INCOMING_DEBOUNCE_MS = 0;
 const lastProcessedAt = new Map<string, number>();
@@ -52,13 +54,13 @@ function alreadyProcessed(id: string | null | undefined): boolean {
 }
 
 /**
- * @param {WAProtoMsg} msg   - raw Baileys message
- * @param {WASocket}   sock
- * @param {WAStore}    store
+ * @param {BotMessage}   msg       - driver-neutral incoming message envelope
+ * @param {WaContract}   contract  - driver-neutral contract (replaces WASocket)
+ * @param {BotStore}     store     - in-memory store
  */
-export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WAStore): Promise<void> {
-  const rawJid = msg.key.remoteJid ?? "";
-  const jid    = normalizeJid(rawJid);
+export async function handleMessage(msg: BotMessage, contract: WaContract, store: BotStore): Promise<void> {
+  const rawJid = msg.chatId;
+  const jid    = normalizeJid(store.resolveJid(rawJid));
 
   if (CHATS.length > 0 && !CHATS.includes(jid)) {
     return;
@@ -68,12 +70,22 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
     return;
   }
 
-  if (alreadyProcessed(msg.key.id)) {
+  if (alreadyProcessed(msg.id)) {
     return;
   }
 
   // Mark as read/delivered to reduce the chance WhatsApp resends it
-  sock.readMessages?.([msg.key]).catch(() => {});
+  // (`msg.quotedKey`/`fromLid`/`fromPn` carry the LID/PN parts so the
+  // contract can reconstruct a proper key on each driver).
+  const rawKey: BotMessage["quotedKey"] = msg.id ? {
+    id:        msg.id,
+    remoteJid: msg.chatId,
+    fromMe:    false,
+    participant: msg.fromPn ?? msg.fromLid ?? undefined,
+  } : undefined;
+  if (rawKey) {
+    contract.readMessages([rawKey]).catch(() => {});
+  }
 
   // Debounce rapid bursts per chat
   if (INCOMING_DEBOUNCE_MS > 0) {
@@ -88,36 +100,36 @@ export async function handleMessage(msg: WAProtoMsg, sock: WASocket, store: WASt
   }
 
   // Build a WAChat adapter from the message metadata
-  const chat: WAChat = await buildChatFromMsg(msg, store, sock);
+  const chat = await buildChatFromMsg(msg, store, contract);
 
   // Gradual contact-saving (best-effort, never blocks message handling)
-  const msgCtx = buildMessageContext(msg, sock, store);
+  const msgCtx = buildMessageContext(msg, contract, store);
   const isGroup = jid.endsWith("@g.us");
-  trackIncomingForContactSave(sock, msg, msgCtx.sender, isGroup, msgCtx.hasPrefix)
+  trackIncomingForContactSave(contract, msg, msgCtx.sender, isGroup, msgCtx.hasPrefix)
     .catch(() => {});
 
   // Caps how many chats get answered at the same time — see SECURITY_LEVEL.
   const releaseChatSlot = await acquireChatSlot(jid);
 
   try {
-    await runPluginsForMessage(msg, chat, sock, store, rawJid);
+    await runPluginsForMessage(msg, chat, contract, store, rawJid);
   } finally {
     releaseChatSlot();
   }
 }
 
 async function runPluginsForMessage(
-  msg: WAProtoMsg,
-  chat: WAChat,
-  sock: WASocket,
-  store: WAStore,
+  msg: BotMessage,
+  chat: Awaited<ReturnType<typeof buildChatFromMsg>>,
+  contract: WaContract,
+  store: BotStore,
   rawJid: string
 ): Promise<void> {
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
       chat,
-      sock,
+      contract,
       store,
       pluginRegistry,
       pluginName:   plugin.name,
@@ -130,7 +142,7 @@ async function runPluginsForMessage(
     if (useTyping) {
       // Refresh presence every 4s so WhatsApp doesn't auto-clear it
       typingInterval = setInterval(() => {
-        toPresenceCapable(sock).setPresence!(rawJid, "composing").catch(() => {});
+        contract.sendPresenceUpdate("composing", rawJid).catch(() => {});
       }, 4000);
     }
 
@@ -139,7 +151,7 @@ async function runPluginsForMessage(
     } finally {
       if (useTyping) {
         clearInterval(typingInterval);
-        toPresenceCapable(sock).setPresence!(rawJid, "paused").catch(() => {});
+        contract.sendPresenceUpdate("paused", rawJid).catch(() => {});
       }
     }
   }

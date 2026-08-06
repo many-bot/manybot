@@ -256,16 +256,34 @@ SMTP_INSECURE = false
 UPDATE_CHECK_ENABLED       = true
 UPDATE_CHECK_INTERVAL_HOURS = 24
 
-# "Possible attack" alert fires when this many flood-guard trips happen
-# within FLOOD_ATTACK_WINDOW_MIN minutes. Lower = more sensitive.
-FLOOD_ATTACK_THRESHOLD   = 5
-FLOOD_ATTACK_WINDOW_MIN  = 10
-
 # How to connect the first time: "qr" (scan with WhatsApp on your phone)
 # or "phone" (receive a pairing code on the number set in PHONE_NUMBER).
 # Leave blank to choose interactively on first run — the choice is then
 # saved here automatically.
 LOGIN_METHOD = ""
+
+# ── Status page ────────────────────────────────────────────────────────────
+# Local HTTP page showing whether the bot is online or offline.
+STATUS_ENABLED = true
+STATUS_PORT    = 8080
+
+# ── Driver selection (advanced) ────────────────────────────────────────────
+# ManyBot can fall back from a primary driver to a secondary one when the
+# primary fails to confirm a send. Today only Baileys is wired in; leave
+# whatsmeow.enabled = false to disable the fallback entirely (no extra
+# processes are spawned, no sockets are opened).
+[drivers]
+primary             = "baileys"
+fallbackCooldownMs  = 60000
+verifyWindowMs      = [500, 1000, 1500, 2500, 5000]
+
+[drivers.baileys]
+enabled = true
+
+[drivers.whatsmeow]
+enabled     = false
+grpcAddress = "localhost:50051"
+binaryPath  = ""
 `;
 
 const DEFAULT_TOML_PT =
@@ -313,19 +331,37 @@ SMTP_INSECURE = false
 UPDATE_CHECK_ENABLED       = true
 UPDATE_CHECK_INTERVAL_HOURS = 24
 
-# Alerta de "possível ataque" dispara quando esse número de flood-trips
-# acontece dentro de FLOOD_ATTACK_WINDOW_MIN minutos. Menor = mais sensível.
-FLOOD_ATTACK_THRESHOLD   = 5
-FLOOD_ATTACK_WINDOW_MIN  = 10
-
 # Como conectar pela primeira vez: "qr" (escaneie com o WhatsApp no celular)
 # ou "phone" (recebe um código de pareamento no número definido em
 # PHONE_NUMBER). Deixe em branco para escolher interativamente na primeira
 # execução — a escolha é salva aqui automaticamente.
 LOGIN_METHOD = ""
+
+# ── Página de status ────────────────────────────────────────────────────────
+# Página HTTP local mostrando se o bot está online ou offline.
+STATUS_ENABLED = true
+STATUS_PORT    = 8080
+
+# ── Seleção de driver (avançado) ───────────────────────────────────────────
+# ManyBot pode cair de um driver primário pra um secundário quando o
+# primário não confirma um envio. Hoje só Baileys está ligado; deixe
+# whatsmeow.enabled = false pra desligar o fallback por completo (nenhum
+# processo extra é spawnado, nenhum socket é aberto).
+[drivers]
+primary             = "baileys"
+fallbackCooldownMs  = 60000
+verifyWindowMs      = [500, 1000, 1500, 2500, 5000]
+
+[drivers.baileys]
+enabled = true
+
+[drivers.whatsmeow]
+enabled     = false
+grpcAddress = "localhost:50051"
+binaryPath  = ""
 `;
 
-const DEFAULT_TOML = detectSystemLang() === "pt" ? DEFAULT_TOML_PT : DEFAULT_TOML_EN;
+const DEFAULT_TOML =detectSystemLang() === "pt" ? DEFAULT_TOML_PT : DEFAULT_TOML_EN;
 
 await fs.mkdir(CONFIG_DIR, { recursive: true });
 
@@ -381,7 +417,6 @@ export interface Config {
   PLUGINS:       string[];
   LANGUAGE:      string;
   PHONE_NUMBER:  string | null;
-  PLATFORM:      string;
   LOGIN_METHOD:  "phone" | "qr" | null;
 
   ADMIN_JID: string;
@@ -396,8 +431,23 @@ export interface Config {
 
   UPDATE_CHECK_ENABLED:        boolean;
   UPDATE_CHECK_INTERVAL_HOURS: number;
-  FLOOD_ATTACK_THRESHOLD:      number;
-  FLOOD_ATTACK_WINDOW_MIN:     number;
+
+  STATUS_ENABLED: boolean;
+  STATUS_PORT:    number;
+
+  // ── Driver selection (CLAUDE.md §3) ──────────────────────────────────────
+  // `primary` is the driver SendFallbackGuard will try first. The other
+  // driver registered with the DriverManager is the fallback. Drivers not
+  // enabled here are not registered at all — no process is spawned, no
+  // socket is opened, the bot simply runs on whatever remains.
+  drivers: {
+    primary:             "baileys" | "whatsmeow";
+    fallbackCooldownMs:  number;
+    verifyWindowMs:      number[];
+    baileys:             { enabled: boolean };
+    whatsmeow:           { enabled: boolean; grpcAddress: string; binaryPath: string };
+  };
+
   [key: string]: unknown;
 }
 
@@ -410,7 +460,6 @@ const DEFAULTS: Config = {
   PLUGINS:       [],
   LANGUAGE:      "en",
   PHONE_NUMBER:  null,
-  PLATFORM:      "whatsapp",
   LOGIN_METHOD:  null,
   ADMIN_JID: "",
   SMTP_HOST: "",
@@ -423,8 +472,16 @@ const DEFAULTS: Config = {
   SMTP_INSECURE: false,
   UPDATE_CHECK_ENABLED:        true,
   UPDATE_CHECK_INTERVAL_HOURS: 24,
-  FLOOD_ATTACK_THRESHOLD:      5,
-  FLOOD_ATTACK_WINDOW_MIN:     10,
+  STATUS_ENABLED: true,
+  STATUS_PORT:    8080,
+
+  drivers: {
+    primary:            "baileys",
+    fallbackCooldownMs: 60000,
+    verifyWindowMs:     [500, 1000, 1500, 2500, 5000],
+    baileys:            { enabled: true },
+    whatsmeow:          { enabled: false, grpcAddress: "localhost:50051", binaryPath: "" },
+  },
 };
 
 function normalize(cfg: Config): Config {
@@ -454,8 +511,38 @@ function normalize(cfg: Config): Config {
   const rawSmtpInsecure = cfg.SMTP_INSECURE as unknown;
   cfg.SMTP_INSECURE = rawSmtpInsecure === true || rawSmtpInsecure === "true";
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
-  cfg.FLOOD_ATTACK_THRESHOLD = Number(cfg.FLOOD_ATTACK_THRESHOLD) || 5;
-  cfg.FLOOD_ATTACK_WINDOW_MIN = Number(cfg.FLOOD_ATTACK_WINDOW_MIN) || 10;
+
+  const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;
+  cfg.STATUS_ENABLED = rawStatusEnabled !== false && rawStatusEnabled !== "false";
+  cfg.STATUS_PORT = Number(cfg.STATUS_PORT) || 8080;
+
+  // drivers.* — the fallback guard and DriverManager read these at every
+  // send. Coerce strings (legacy .conf arrives as strings) and reject
+  // anything that isn't a recognized driver name, so a typo in TOML
+  // falls back to the safe default rather than crashing at boot.
+  const drv = (cfg.drivers ?? {}) as Partial<Config["drivers"]> & Record<string, unknown>;
+  const isTruthy = (v: unknown) => v === true || v === "true";
+  const coerceEnabled = (v: unknown, fallback: boolean): boolean => {
+    if (v === true || v === false) return v;
+    if (v === "true") return true;
+    if (v === "false") return false;
+    return fallback;
+  };
+  cfg.drivers = {
+    primary:            drv.primary === "whatsmeow" ? "whatsmeow" : "baileys",
+    fallbackCooldownMs: Number(drv.fallbackCooldownMs) || 60000,
+    verifyWindowMs:     Array.isArray(drv.verifyWindowMs) && drv.verifyWindowMs.length
+      ? drv.verifyWindowMs.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0)
+      : [500, 1000, 1500, 2500, 5000],
+    baileys: {
+      enabled: coerceEnabled(drv.baileys?.enabled, true),
+    },
+    whatsmeow: {
+      enabled:     isTruthy(drv.whatsmeow?.enabled),
+      grpcAddress: typeof drv.whatsmeow?.grpcAddress === "string" ? drv.whatsmeow.grpcAddress : "localhost:50051",
+      binaryPath:  typeof drv.whatsmeow?.binaryPath  === "string" ? drv.whatsmeow.binaryPath  : "",
+    },
+  };
 
   return cfg;
 }
@@ -502,7 +589,6 @@ export const SECURITY_LEVEL = CONFIG.SECURITY_LEVEL;
 export const PLUGINS       = CONFIG.PLUGINS;
 export const LANGUAGE      = CONFIG.LANGUAGE;
 export const PHONE_NUMBER  = CONFIG.PHONE_NUMBER;
-export const PLATFORM      = CONFIG.PLATFORM;
 export const LOGIN_METHOD  = CONFIG.LOGIN_METHOD;
 export const ADMIN_JID                   = CONFIG.ADMIN_JID;
 export const SMTP_HOST                   = CONFIG.SMTP_HOST;
@@ -515,8 +601,8 @@ export const SMTP_TO                     = CONFIG.SMTP_TO;
 export const SMTP_INSECURE               = CONFIG.SMTP_INSECURE;
 export const UPDATE_CHECK_ENABLED        = CONFIG.UPDATE_CHECK_ENABLED;
 export const UPDATE_CHECK_INTERVAL_HOURS = CONFIG.UPDATE_CHECK_INTERVAL_HOURS;
-export const FLOOD_ATTACK_THRESHOLD      = CONFIG.FLOOD_ATTACK_THRESHOLD;
-export const FLOOD_ATTACK_WINDOW_MIN     = CONFIG.FLOOD_ATTACK_WINDOW_MIN;
+export const STATUS_ENABLED              = CONFIG.STATUS_ENABLED;
+export const STATUS_PORT                 = CONFIG.STATUS_PORT;
 
 /**
  * Writes a single value back to manybot.toml without rewriting the whole

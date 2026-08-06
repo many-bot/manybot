@@ -5,7 +5,7 @@
  *
  * Why: an already-linked WhatsApp session doesn't get a full history
  * resync on reconnect — only a partial, non-deterministic slice of it
- * (see drivers/whatsapp/index.ts). Each fresh process starts with an
+ * (see drivers/baileys/index.ts). Each fresh process starts with an
  * empty in-memory store, so without a cache, chats seen in a previous
  * run can silently disappear from the current one.
  *

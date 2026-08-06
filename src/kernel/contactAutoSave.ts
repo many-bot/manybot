@@ -3,7 +3,7 @@
  *
  * Gradually saves incoming senders as real contacts (using their pushName)
  * once they've shown they're likely to keep talking, and periodically
- * refreshes stale pushNames. Purely additive to sendGuard/floodGuard's
+ * refreshes stale pushNames. Purely additive to sendGuard's
  * anti-detection posture — a saved contact scores as "known" rather than
  * "stranger" on WhatsApp's contact-graph-distance signal, and mobile
  * clients resolve @mentions to a name instead of raw digits.
@@ -34,9 +34,10 @@
  * update for a different sender to be silently lost — see setSenderState.
  */
 
-import type { WASocket, WAProtoMsg } from "#types";
+import type { BotMessage } from "#drivers/types.js";
+import type { WaContract } from "#kernel/waContract.js";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
-import { toWireJid } from "#drivers/whatsapp/sdk/baileysSock.js";
+import { toWireJid } from "#drivers/jid.js";
 import { logger } from "#logger";
 
 const DM_THRESHOLD_RANGE    = { min: 3, max: 6 };
@@ -95,14 +96,14 @@ function randomInt(min: number, max: number): number {
  * a sender as "saved" unless this returns true — otherwise a transient
  * failure would be mistaken for a real save and never retried.
  */
-async function addContact(sock: WASocket, jid: string, name: string): Promise<boolean> {
+async function addContact(contract: WaContract, jid: string, name: string): Promise<boolean> {
   // `jid` here is this framework's internal "@c.us" form (see
   // getMsgSender()/normalizeJid()) — Baileys needs the real wire JID or
   // it silently no-ops instead of throwing, which is exactly how this
   // went unnoticed before.
   const wireJid = toWireJid(jid);
   try {
-    await sock.addOrEditContact(wireJid, {
+    await contract.addOrEditContact(wireJid, {
       fullName:  name,
       firstName: name,
       saveOnPrimaryAddressbook: true,
@@ -120,16 +121,16 @@ async function addContact(sock: WASocket, jid: string, name: string): Promise<bo
  * both the gradual first-save flow and completing a pending refresh.
  * Best-effort — never throws.
  *
- * @param {WASocket}   sock
- * @param {WAProtoMsg} msg
- * @param {string}     senderJid    — normalized sender JID (never a group JID)
- * @param {boolean}    isGroup      — whether this message came from a group chat
- * @param {boolean}    triggeredBot — true if this message invoked the bot
- *                                    (command prefix). Ignored outside groups.
+ * @param {WaContract}   contract
+ * @param {BotMessage}   msg         — driver-neutral incoming message envelope
+ * @param {string}       senderJid   — normalized sender JID (never a group JID)
+ * @param {boolean}      isGroup     — whether this message came from a group chat
+ * @param {boolean}      triggeredBot — true if this message invoked the bot
+ *                                     (command prefix). Ignored outside groups.
  */
 export async function trackIncomingForContactSave(
-  sock:         WASocket,
-  msg:          WAProtoMsg,
+  contract:     WaContract,
+  msg:          BotMessage,
   senderJid:    string,
   isGroup:      boolean,
   triggeredBot: boolean
@@ -145,7 +146,7 @@ export async function trackIncomingForContactSave(
     // rule as the initial save, so a refresh never re-adds someone based
     // on a silent group message.
     if (s?.pendingRefresh && (!isGroup || triggeredBot)) {
-      const ok = await addContact(sock, senderJid, pushName);
+      const ok = await addContact(contract, senderJid, pushName);
       if (ok) {
         // Re-read rather than reuse `s` — another concurrent message from
         // this same sender may have updated the record while we awaited.
@@ -183,7 +184,7 @@ export async function trackIncomingForContactSave(
     const reachedTarget = s.dmCount >= s.dmTarget || s.groupCount >= s.groupTarget;
 
     if (reachedTarget) {
-      const ok = await addContact(sock, senderJid, pushName);
+      const ok = await addContact(contract, senderJid, pushName);
       if (ok) {
         const latest = getSenderState(senderJid) ?? s;
         latest.saved   = true;
@@ -205,9 +206,9 @@ export async function trackIncomingForContactSave(
  * trackIncomingForContactSave) so a changed pushName doesn't linger.
  *
  * Call this occasionally (e.g. every few hours) from the driver.
- * @param {WASocket} sock
+ * @param {WaContract} contract
  */
-export async function runContactRefreshSweep(sock: WASocket): Promise<void> {
+export async function runContactRefreshSweep(contract: WaContract): Promise<void> {
   const now = Date.now();
   const all = getAllSenderStates();
 
@@ -220,7 +221,7 @@ export async function runContactRefreshSweep(sock: WASocket): Promise<void> {
 
   for (const [jid, s] of due) {
     try {
-      await sock.removeContact(toWireJid(jid));
+      await contract.removeContact(toWireJid(jid));
       s.pendingRefresh = true;
       setSenderState(jid, s);
       logger.debug(`[contactAutoSave] queued refresh for ${jid}`);

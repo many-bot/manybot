@@ -21,7 +21,7 @@
  * the message arrives, so the chat shows "typing..." realistically.
  */
 
-import type { PresenceCapable } from "#core/adapter.js";
+import type { WaContract } from "#kernel/waContract.js";
 import { CONFIG } from "#config";
 import { logger } from "#logger";
 
@@ -260,29 +260,26 @@ export async function waitForSendSlot(jid: string, { cooldown = true, jitter = t
 
 /**
  * Show a presence indicator for `ms` milliseconds, then clear it.
- * No-op on drivers without the "presence" capability. Best-effort —
- * errors are swallowed.
+ * Best-effort — errors are swallowed.
  *
- * @param {PresenceCapable|null}   adapter
+ * @param {WaContract|null}        contract
  * @param {string|null}            chatId
  * @param {number}                 ms
  * @param {"typing"|"recording"}   [state="typing"]
  */
 export async function simulateState(
-  adapter: PresenceCapable | null,
-  chatId:  string | null,
-  ms:      number,
-  state:   "typing" | "recording" = "typing"
+  contract: WaContract | null,
+  chatId:   string | null,
+  ms:       number,
+  state:    "typing" | "recording" = "typing"
 ): Promise<void> {
-  if (!adapter || !chatId || ms <= 0) return;
-  if (!adapter.capabilities.has("presence") || !adapter.setPresence) return;
+  if (!contract || !chatId || ms <= 0) return;
   try {
-    // Adapter contract only knows "composing" — recording is a WhatsApp nuance
-    // collapsed here until a driver needs to distinguish it.
-    await adapter.setPresence(chatId, "composing");
+    await contract.sendPresenceUpdate(state === "recording" ? "recording" : "composing", chatId);
     await sleep(ms);
-    await adapter.setPresence(chatId, "paused");
+    await contract.sendPresenceUpdate("paused", chatId);
   } catch (e) {
     logger.debug(`[sendGuard] presence simulation failed (non-fatal): ${(e as Error).message}`);
   }
 }
+

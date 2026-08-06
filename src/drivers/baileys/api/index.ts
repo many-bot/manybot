@@ -1,5 +1,5 @@
 /**
- * drivers/whatsapp/api/index.ts
+ * drivers/baileys/api/index.ts
  *
  * WhatsApp plugin context builder.
  * Exports buildApi() and buildSetupApi() for the WhatsApp driver.
@@ -10,7 +10,12 @@
  */
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
-import type { WASocket, WAStore, WAProtoMsg, WAChat, WAStoreContact, WAProto } from "#types";
+import type { PluginContext, SetupContext } from "#kernel/pluginApi.js";
+import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
+import type { WaContract } from "#kernel/waContract.js";
+import type { BotStore } from "#client/store.js";
+import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
+import { toBotMessage } from "#drivers/baileys/index.js";
 import { logger }                    from "#logger";
 import { t, createPluginT,
          reloadTranslations,
@@ -18,9 +23,8 @@ import { t, createPluginT,
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { enqueue }                   from "#download";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
-import { disableFloodGuard, enableFloodGuard, isFloodGuardDisabled } from "#kernel/floodGuard.js";
 import { emptyFolder }               from "#utils/file.js";
-import { normalizeJid, denormalizeJid, toWireJid, toPresenceCapable } from "../sdk/baileysSock.js";
+import { normalizeJid, denormalizeJid, toWireJid } from "#drivers/jid.js";
 
 import { mkdirSync }                 from "fs";
 import { readFile, writeFile, unlink, mkdtemp, rm } from "fs/promises";
@@ -32,111 +36,175 @@ import { randomUUID }                from "crypto";
 import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration,
          waitForEditSlot }  from "#sendguard";
+import { sendWithFallback }          from "#kernel/sendFallbackGuard.js";
 import { buildSettingsApi }          from "#settingsdb";
 import WebP                          from "node-webpmux";
-import { downloadMediaMessage,
-         getAggregateVotesInPollMessage,
-         decryptPollVote,
-         jidNormalizedUser,
-         normalizeMessageContent } from "@whiskeysockets/baileys";
+import {
+  getAggregateVotesInPollMessage,
+  decryptPollVote,
+  jidNormalizedUser,
+} from "@whiskeysockets/baileys";
 
-// Baileys' downloadMediaMessage(ctx.logger) expects a pino-shaped logger
-// (level + child() + trace/debug/info/warn/error(obj, msg?)) — our own
-// `logger` from #logger only has console-style (...args) methods and no
-// child(), so passing it directly would throw the moment Baileys' reupload
-// path calls logger.child(...). This shim just satisfies the shape; only
-// warn/error are forwarded to our real logger, trace/debug are noise we
-// don't want.
-const baileysLogger = {
-  level: "silent",
-  child()  { return baileysLogger; },
-  trace()  {},
-  debug()  {},
-  info()   {},
-  warn(obj: unknown, msg?: string)  { logger.warn(`[baileys]`, msg ?? obj); },
-  error(obj: unknown, msg?: string) { logger.error(`[baileys]`, msg ?? obj); },
-};
+// ── Raw-Baileys escape hatch ─────────────────────────────────────────────────
+//
+// This whole file is the Baileys driver's plugin-context builder, so the
+// few operations that don't have a driver-neutral equivalent yet (poll
+// decryption, gif detection, message envelope decoding for the helpers
+// above) need direct access to the underlying WASocket. The WaContract
+// intentionally doesn't expose the raw socket — but the adapter that
+// builds it from a real Baileys socket hangs the socket off a private
+// symbol so we can pull it back here without leaking Baileys types
+// through the kernel/pluginApi surface.
+//
+// Defined as a separate symbol so the rest of the kernel can still
+// import the WaContract without ever knowing this exists.
+const RAW_SOCK = Symbol.for("manybot.baileys.rawSocket");
+interface RawAccess {
+  [RAW_SOCK]?: import("#types").WASocket;
+}
+function rawSocketOf(contract: WaContract): import("#types").WASocket {
+  const sock = (contract as unknown as RawAccess)[RAW_SOCK];
+  if (!sock) {
+    throw new Error("[baileys/api] WaContract has no raw socket attached — only the Baileys adapter provides one.");
+  }
+  return sock;
+}
+
+/**
+ * Pull a Baileys-shaped message envelope off a `BotMessage._raw` when an
+ * api-layer helper needs fields the neutral envelope intentionally
+ * doesn't model (poll enc key, gifPlayback flag, …). The store still
+ * stores the raw `WAMessage` keyed by jid+id, so the common case is
+ * to read it back from there.
+ */
+function rawMsgOf(msg: BotMessage, store: BotStore): import("#types").WAProtoMsg | undefined {
+  const raw = store.messages.get(msg.chatId)?.get(msg.id);
+  return raw as import("#types").WAProtoMsg | undefined;
+}
+
+/**
+ * Convert a `BotMessage` (driver-neutral incoming envelope) into a
+ * `BotQuotedRef` (driver-neutral outgoing reference), used as the
+ * `quoted` argument to the contract's send methods. The fields the
+ * adapter pre-extracts (id, chatId, fromMe, participantAlt/fromLid/
+ * fromPn) are enough for the protocol — no raw Baileys access needed.
+ */
+function quotedRefFromMsg(msg: BotMessage): BotQuotedRef {
+  return {
+    id:          msg.id,
+    remoteJid:   msg.chatId,
+    fromMe:      msg.fromMe,
+    participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+  };
+}
+
+/**
+ * Read the just-sent message off the store after a `contract.sendX()`
+ * call resolves with a `SentMessageRef` (id + chatId + timestamp).
+ * Mirrors the text path's polling window — the driver's own
+ * `messages.upsert` handler writes the freshly-sent WAMessage into
+ * the store keyed by chatId+id, but that write may not have landed
+ * on the very next tick.
+ */
+async function refToBotMessage(ref: { id: string; chatId: string; timestamp: number }, store: BotStore): Promise<BotMessage | undefined> {
+  const deadline = Date.now() + 200;
+  while (Date.now() < deadline) {
+    const stored = store.messages.get(ref.chatId)?.get(ref.id);
+    if (stored) return toBotMessage(stored as WAProtoMsg);
+    await new Promise<void>(r => setTimeout(r, 20));
+  }
+  const final = store.messages.get(ref.chatId)?.get(ref.id);
+  return final ? toBotMessage(final as WAProtoMsg) : undefined;
+}
 
 // ── Message body / type helpers ───────────────────────────────────────────────
+//
+// Helpers read the neutral `BotMessage` envelope. Fields the neutral
+// envelope intentionally doesn't model (poll enc key, gifPlayback,
+// messageSecret) are pulled out of the raw store entry when needed —
+// the adapter fills `BotMessage._raw` with the bits a Baileys-side
+// consumer might need (poll enc key) and leaves the rest on the raw
+// WAMessage in the store.
 
-// WhatsApp wraps media in ephemeralMessage/viewOnceMessage/etc when sent as
-// disappearing or view-once — the actual imageMessage/videoMessage/... sits
-// one level deeper. Reading msg.message directly misses all of that (this
-// was the cause of hasMedia silently returning false for such messages).
-function unwrap(msg: WAProtoMsg): WAProto.IMessage | undefined {
-  return normalizeMessageContent(msg.message) ?? undefined;
+function getMsgBody(msg: BotMessage): string {
+  // The adapter pre-extracts the body into `BotMessage.body`, so the
+  // common path is one field read. Fall back to the raw store entry only
+  // if the body wasn't populated (older code paths that built the
+  // envelope by hand).
+  if (msg.body !== undefined) return msg.body;
+  return msg.body ?? "";
 }
 
-function getMsgBody(msg: WAProtoMsg): string {
-  const m = unwrap(msg);
-  if (!m) return "";
-  return (
-    m.conversation ??
-    m.extendedTextMessage?.text ??
-    m.imageMessage?.caption ??
-    m.videoMessage?.caption ??
-    m.documentMessage?.caption ??
-    m.buttonsResponseMessage?.selectedDisplayText ??
-    m.listResponseMessage?.title ??
-    ""
-  ) as string;
+function getMsgType(msg: BotMessage): string {
+  // body-style text vs extendedTextMessage, buttons vs list response, etc.
+  // — these distinctions live on the raw envelope, since the neutral
+  // `type` only models the high-level kind (text/image/video/...).
+  const raw = (msg._raw as { kind?: string } | undefined)?.kind;
+  if (raw) return raw;
+  switch (msg.type) {
+    case "text":     return "chat";
+    case "image":    return "image";
+    case "video":    return "video";
+    case "audio":    return "audio";
+    case "sticker":  return "sticker";
+    case "document": return "document";
+    default:         return "unknown";
+  }
 }
 
-function getMsgType(msg: WAProtoMsg): string {
-  const m = unwrap(msg);
-  if (!m) return "unknown";
-  if (m.conversation || m.extendedTextMessage)     return "chat";
-  if (m.buttonsResponseMessage || m.listResponseMessage) return "chat";
-  if (m.imageMessage)                              return "image";
-  if (m.videoMessage)                              return "video";
-  if (m.audioMessage)                              return "audio";
-  if (m.stickerMessage)                            return "sticker";
-  if (m.documentMessage)                           return "document";
-  if (m.pollCreationMessage ||
-      m.pollCreationMessageV2 ||
-      m.pollCreationMessageV3)                     return "poll";
-  if (m.locationMessage || m.liveLocationMessage)  return "location";
-  if (m.contactMessage)                            return "vcard";
-  if (m.contactsArrayMessage)                      return "multi_vcard";
-  if (m.protocolMessage?.type === 0)               return "revoked"; // REVOKE
-  return "unknown";
+function msgHasMedia(msg: BotMessage): boolean {
+  return msg.type === "image" || msg.type === "video" || msg.type === "audio" || msg.type === "document" || msg.type === "sticker";
 }
 
-function msgHasMedia(msg: WAProtoMsg): boolean {
-  const m = unwrap(msg);
-  return !!(m?.imageMessage || m?.videoMessage || m?.audioMessage || m?.documentMessage || m?.stickerMessage);
-}
-
-function msgIsGif(msg: WAProtoMsg): boolean {
-  return !!(unwrap(msg)?.videoMessage?.gifPlayback);
+function msgIsGif(msg: BotMessage, store: BotStore): boolean {
+  const raw = rawMsgOf(msg, store);
+  if (!raw) return false;
+  // gifPlayback is a Baileys-specific flag — read it off the raw
+  // WAMessage directly.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return !!(raw.message as any)?.videoMessage?.gifPlayback;
 }
 
 /** Sender JID — group participant or DM remote JID, normalized. */
-function getMsgSender(msg: WAProtoMsg, store: WAStore): string {
-  const raw = normalizeJid(msg.key.participant || msg.key.remoteJid || "");
-  return normalizeJid(store.resolveJid(raw));
+function getMsgSender(msg: BotMessage, store: BotStore): string {
+  // Prefer the @s.whatsapp.net form when we know it (Baileys-advisor split
+  // exposes both forms on incoming messages). The adapter fills
+  // `fromPn` when known; fall back to `chatId` for DMs.
+  const participant = (msg._raw as { key?: { participant?: string } } | undefined)?.key?.participant
+                    ?? msg.fromPn;
+  const raw = participant ?? msg.chatId;
+  return normalizeJid(store.resolveJid(normalizeJid(raw)));
 }
 
-function getContextInfo(msg: WAProtoMsg): WAProto.IContextInfo | null {
-  const m = unwrap(msg);
-  return (
-    m?.extendedTextMessage?.contextInfo ??
-    m?.imageMessage?.contextInfo ??
-    m?.videoMessage?.contextInfo ??
-    m?.audioMessage?.contextInfo ??
-    m?.documentMessage?.contextInfo ??
-    null
-  );
+/** Quoted-message metadata as the rest of the api uses it. */
+function getQuotedContext(msg: BotMessage): BotQuotedRef | null {
+  if (!msg.quotedKey) return null;
+  return {
+    id:          msg.quotedKey.id ?? null,
+    remoteJid:   msg.chatId,
+    fromMe:      false,
+    participant: (msg._raw as { contextInfo?: { participant?: string } } | undefined)?.contextInfo?.participant ?? null,
+  };
+}
+
+function getContextInfo(msg: BotMessage): unknown {
+  // The context info lives on the raw envelope (it carries mentions,
+  // stanzaId, etc.). The adapter doesn't pre-extract it because no
+  // neutral consumer needs it — pull it on demand from the store.
+  const raw = (msg._raw as { contextInfo?: unknown } | undefined)?.contextInfo;
+  return raw ?? null;
 }
 
 /** True if the message has any @mention at all. */
-function hasMention(contextInfo: WAProto.IContextInfo | null): boolean {
-  return !!(contextInfo?.mentionedJid && contextInfo.mentionedJid.length > 0);
+function hasMention(contextInfo: unknown): boolean {
+  const ci = contextInfo as { mentionedJid?: unknown } | null;
+  return !!(ci?.mentionedJid && Array.isArray(ci.mentionedJid) && ci.mentionedJid.length > 0);
 }
 
 /** True if the bot's own JID (PN or LID) is in contextInfo.mentionedJid. */
-function hasBotMention(contextInfo: WAProto.IContextInfo | null, sock: WASocket, store: WAStore): boolean {
-  const mentioned = contextInfo?.mentionedJid;
+function hasBotMention(contextInfo: unknown, sock: import("#types").WASocket, store: BotStore): boolean {
+  const ci = contextInfo as { mentionedJid?: string[] } | null;
+  const mentioned = ci?.mentionedJid;
   if (!mentioned || mentioned.length === 0) return false;
 
   const botLid = (sock.user as unknown as { lid?: string })?.lid;
@@ -152,16 +220,8 @@ function hasBotMention(contextInfo: WAProto.IContextInfo | null, sock: WASocket,
   });
 }
 
-function getMsgMimetype(msg: WAProtoMsg): string {
-  const m = unwrap(msg);
-  return (
-    m?.imageMessage?.mimetype ??
-    m?.videoMessage?.mimetype ??
-    m?.audioMessage?.mimetype ??
-    m?.documentMessage?.mimetype ??
-    m?.stickerMessage?.mimetype ??
-    "application/octet-stream"
-  ) as string;
+function getMsgMimetype(msg: BotMessage): string {
+  return msg.mimetype ?? "application/octet-stream";
 }
 
 // ── Chat adapter builder ──────────────────────────────────────────────────────
@@ -182,22 +242,27 @@ const groupNameCache = new Map<string, { name: string; at: number }>();
 // instead. Cache full metadata with the same TTL pattern as groupNameCache
 // above, and drop the entry as soon as membership/admin state actually
 // changes so a promote/kick/join is visible well before the TTL expires.
-type WAGroupMetadata = Awaited<ReturnType<WASocket["groupMetadata"]>>;
+type WAGroupMetadata = Awaited<ReturnType<import("@whiskeysockets/baileys").WASocket["groupMetadata"]>>;
 const GROUP_META_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupMetaCache = new Map<string, { meta: WAGroupMetadata; at: number }>();
 
-async function getGroupMetadataCached(sock: WASocket, jid: string): Promise<WAGroupMetadata> {
+async function getGroupMetadataCached(contract: WaContract, jid: string): Promise<WAGroupMetadata> {
   const cached = groupMetaCache.get(jid);
   if (cached && Date.now() - cached.at < GROUP_META_CACHE_TTL_MS) return cached.meta;
+  // Go through the raw sock for the Baileys-flavored metadata (carries
+  // pn/phoneNumber which the neutral contract drops). The neutral
+  // contract's groupMetadata is used everywhere the kernel asks for it.
+  const sock = rawSocketOf(contract);
   const meta = await sock.groupMetadata(jid);
   groupMetaCache.set(jid, { meta, at: Date.now() });
   return meta;
 }
 
 let groupMetaInvalidationBound = false;
-function bindGroupMetaInvalidation(sock: WASocket) {
+function bindGroupMetaInvalidation(contract: WaContract) {
   if (groupMetaInvalidationBound) return;
   groupMetaInvalidationBound = true;
+  const sock = rawSocketOf(contract);
   const ev = sock.ev as unknown as NodeJS.EventEmitter;
   ev.on("group-participants.update", (u: { id: string }) => groupMetaCache.delete(u.id));
   ev.on("groups.update", (updates: { id?: string }[]) => {
@@ -206,17 +271,17 @@ function bindGroupMetaInvalidation(sock: WASocket) {
 }
 
 /**
- * Build a WAChat adapter from a Baileys message + store.
+ * Build a WAChat adapter from a BotMessage + store.
  * Exposed for use in messageHandler.ts.
  *
- * @param {WAProtoMsg} msg
- * @param {WAStore}    store
- * @param {WASocket}   sock
+ * @param {BotMessage}  msg
+ * @param {BotStore}    store
+ * @param {WaContract}  contract
  * @returns {Promise<WAChat>}
  */
-export async function buildChatFromMsg(msg: WAProtoMsg, store: WAStore, sock: WASocket): Promise<WAChat> {
-  const rawJid = msg.key.remoteJid ?? "";
-  const jid    = normalizeJid(rawJid);
+export async function buildChatFromMsg(msg: BotMessage, store: BotStore, contract: WaContract): Promise<WAChat> {
+  const rawJid = msg.chatId;
+  const jid    = normalizeJid(store.resolveJid(rawJid));
   const user   = jid.split("@")[0];
   const isGroup = rawJid.endsWith("@g.us");
 
@@ -230,7 +295,7 @@ export async function buildChatFromMsg(msg: WAProtoMsg, store: WAStore, sock: WA
       name = cached.name;
     } else {
       try {
-        const meta = await getGroupMetadataCached(sock, rawJid);
+        const meta = await getGroupMetadataCached(contract, rawJid);
         if (meta?.subject) {
           name = meta.subject;
           groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
@@ -465,14 +530,14 @@ function mentionDisplayName(jid: string): string {
 
 /**
  * Build a normalized contact object from a JID and optional store metadata.
- * isBusiness is resolved via sock.getBusinessProfile(jid) — it resolves to
- * a profile only for WhatsApp Business accounts, undefined otherwise.
- * @param {string}           jid
- * @param {WAStoreContact}   [info]
- * @param {string|null}      [botJid]
- * @param {WASocket}         [sock]
+ * isBusiness is resolved via contract.getBusinessProfile(jid) — it resolves
+ * to a profile only for WhatsApp Business accounts, undefined otherwise.
+ * @param {string}              jid
+ * @param {RawStoreContact}     [info]
+ * @param {string|null}         [botJid]
+ * @param {WaContract}          [contract]
  */
-async function normalizeContact(jid: string, info: WAStoreContact | undefined, botJid: string | null | undefined, sock?: WASocket) {
+async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract?: WaContract) {
   const number = jid.split("@")[0];
   let isBusiness = false;
   // We already have a contact record for this jid (learned from a real
@@ -482,9 +547,9 @@ async function normalizeContact(jid: string, info: WAStoreContact | undefined, b
   // raw @lid we've never resolved to a phone number (returns a false
   // "doesn't exist" instead of throwing).
   let isWAAccount = Boolean(info);
-  if (!isWAAccount && sock && !jid.endsWith("@g.us")) {
+  if (!isWAAccount && contract && !jid.endsWith("@g.us")) {
     try {
-      const results = await sock.onWhatsApp(jid);
+      const results = await contract.onWhatsApp(jid);
       isWAAccount = Boolean(results?.[0]?.exists);
     } catch {
       // Couldn't verify — leave as false rather than claiming certainty.
@@ -496,9 +561,9 @@ async function normalizeContact(jid: string, info: WAStoreContact | undefined, b
   // Matches the old whatsapp-web.js contract: getContactById() threw /
   // resolved to null for an unknown ID instead of returning a hollow object.
   if (!jid.endsWith("@g.us") && !isWAAccount) return null;
-  if (sock && !jid.endsWith("@g.us")) {
+  if (contract && !jid.endsWith("@g.us")) {
     try {
-      isBusiness = Boolean(await sock.getBusinessProfile(jid));
+      isBusiness = Boolean(await contract.getBusinessProfile(jid));
     } catch {
       isBusiness = false;
     }
@@ -524,7 +589,7 @@ async function normalizeContact(jid: string, info: WAStoreContact | undefined, b
 
 // ── Chats API ─────────────────────────────────────────────────────────────────
 
-function buildChatsApi(store: WAStore) {
+function buildChatsApi(store: BotStore) {
   return {
     /**
      * Chats currently known from the in-memory cache (populated from
@@ -542,7 +607,7 @@ function buildChatsApi(store: WAStore) {
 
 // ── Contact API ───────────────────────────────────────────────────────────────
 
-function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null) {
+function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null) {
   return {
     /**
      * Get a normalized contact object by JID.
@@ -571,18 +636,15 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
 
         // 1) Baileys' own protocol-level LID↔PN store — populated as part of
         // real Signal session/identity handling, so it's authoritative when
-        // it has an answer (unlike our own heuristic lidMap). Not part of
-        // the public v6.7 TS surface, hence the cast; guarded with a
-        // typeof check since older/patched Baileys builds may not have it.
-        try {
-          const lidMapping = (sock as unknown as {
-            signalRepository?: { lidMapping?: { getPNForLID?(lid: string): Promise<string | null> } }
-          }).signalRepository?.lidMapping;
-          if (typeof lidMapping?.getPNForLID === "function") {
-            freshPn = await lidMapping.getPNForLID(contactId);
+        // it has an answer (unlike our own heuristic lidMap). Routed through
+        // the contract's optional resolveLid() helper (drivers without one
+        // — e.g. the future whatsmeow client — fall through to step 2).
+        if (contract.resolveLid) {
+          try {
+            freshPn = await contract.resolveLid(contactId);
+          } catch (err) {
+            logger.warn(`[contacts.get] contract.resolveLid cross-check failed for "${contactId}" — ${(err as Error).message}`);
           }
-        } catch (err) {
-          logger.warn(`[contacts.get] signalRepository.lidMapping cross-check failed for "${contactId}" — ${(err as Error).message}`);
         }
 
         // 2) Fall back to live groupMetadata() when we know the group and
@@ -590,7 +652,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
         // the Baileys 6.7.x caveat in the doc comment above.
         if (!freshPn && opts?.groupId) {
           try {
-            const meta = await sock.groupMetadata(opts.groupId);
+            const meta = await getGroupMetadataCached(contract, opts.groupId);
             const participant = meta.participants.find(
               (p) => normalizeJid((p as unknown as { id: string }).id) === normalizeJid(contactId)
             );
@@ -634,17 +696,17 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
       // `undefined` silently clobber a real value already present in raw
       // (or vice versa) — which is how a contact could resolve correctly
       // by id yet still come back with a null pushname/name.
-      const raw      = (store.contacts as Record<string, WAStoreContact>)[contactId]
-                     ?? (store.contacts as Record<string, WAStoreContact>)[denormalizeJid(contactId)];
-      const resolvedInfo = (store.contacts as Record<string, WAStoreContact>)[resolved]
-                     ?? (store.contacts as Record<string, WAStoreContact>)[denormalizeJid(resolved)];
-      const info: WAStoreContact | undefined = (raw || resolvedInfo) ? {
+      const raw      = (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[contactId]
+                     ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(contactId)];
+      const resolvedInfo = (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[resolved]
+                     ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(resolved)];
+      const info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined = (raw || resolvedInfo) ? {
         id:           resolved,
         name:         resolvedInfo?.name ?? raw?.name,
         notify:       resolvedInfo?.notify ?? raw?.notify,
         verifiedName: resolvedInfo?.verifiedName ?? raw?.verifiedName,
       } : undefined;
-      return normalizeContact(resolved, info, botJid, sock);
+      return normalizeContact(resolved, info, botJid, contract);
     },
 
     /**
@@ -655,7 +717,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
     async getPfpUrl(contactId: string) {
       const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
       try {
-        const url = await sock.profilePictureUrl(resolved, "image");
+        const url = await contract.profilePictureUrl(resolved);
         return url ?? null;
       } catch {
         return null;
@@ -691,21 +753,18 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
       // (PN when known) rather than a raw @lid, which it may not accept.
       const resolved = normalizeJid(store.resolveJid(normalizeJid(contactId)));
       try {
-        const res = await (sock as unknown as {
-          fetchStatus(jid: string): Promise<
-            { status?: string }
-            | { id: string; status?: { status?: string | null; setAt?: Date } }[]
-            | undefined
-          >
-        }).fetchStatus(resolved);
+        const res = await contract.fetchStatus(resolved);
         // Current Baileys versions return a USync result array
         // (`[{ id, status: { status, setAt } }]`) instead of the legacy
         // single `{ status }` object — handle both shapes.
         if (Array.isArray(res)) {
-          const entry = res.find(r => normalizeJid(r.id) === resolved) ?? res[0];
-          return entry?.status?.status ?? null;
+          const entry = res.find(r => normalizeJid((r as { id: string }).id) === resolved) ?? res[0];
+          return (entry as { status?: { status?: string | null } })?.status?.status ?? null;
         }
-        return res?.status ?? null;
+        if (res && typeof res === "object") {
+          return (res as { status?: string | null }).status ?? null;
+        }
+        return null;
       } catch (err) {
         // Previously swallowed silently, which made "always null" look
         // identical to "no status set" — log so real failures are visible.
@@ -719,9 +778,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * @param {string} contactId
      */
     async block(contactId: string) {
-      return (sock as unknown as {
-        updateBlockStatus(jid: string, action: string): Promise<void>
-      }).updateBlockStatus(contactId, "block");
+      await contract.updateBlockStatus(contactId, "block");
     },
 
     /**
@@ -729,9 +786,7 @@ function buildContactsApi(sock: WASocket, store: WAStore, botJid: string | null)
      * @param {string} contactId
      */
     async unblock(contactId: string) {
-      return (sock as unknown as {
-        updateBlockStatus(jid: string, action: string): Promise<void>
-      }).updateBlockStatus(contactId, "unblock");
+      await contract.updateBlockStatus(contactId, "unblock");
     },
   };
 }
@@ -776,7 +831,7 @@ export interface WAHistoryArray extends Array<WAMessageContext> {
   from(senderId: string): WAHistoryArray;
 }
 
-function makeHistoryArray(entries: WAMessageContext[], store: WAStore): WAHistoryArray {
+function makeHistoryArray(entries: WAMessageContext[], store: BotStore): WAHistoryArray {
   const arr = entries as WAHistoryArray;
   arr.last = (n?: number) =>
     makeHistoryArray(typeof n === "number" ? entries.slice(-n) : entries.slice(), store);
@@ -788,11 +843,12 @@ function makeHistoryArray(entries: WAMessageContext[], store: WAStore): WAHistor
 }
 
 export function buildMessageContext(
-  msg: WAProtoMsg,
-  sock: WASocket,
-  store: WAStore,
+  msg: BotMessage,
+  contract: WaContract,
+  store: BotStore,
   guardOptions: { cooldown?: boolean; jitter?: boolean } = {}
 ): WAMessageContext {
+  const sock = rawSocketOf(contract);
   const body    = getMsgBody(msg);
   const prefix  = CONFIG.CMD_PREFIX as string;
   const rawArgs = body.trim().split(/\s+/);
@@ -800,31 +856,36 @@ export function buildMessageContext(
   const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
-  const rawJid   = msg.key.remoteJid ?? "";
+  const rawJid   = msg.chatId;
   const sender   = getMsgSender(msg, store);
   const cooldown = guardOptions.cooldown ?? true;
   const jitter   = guardOptions.jitter ?? true;
 
   const contextInfo = getContextInfo(msg);
-  const quotedRaw: WAProtoMsg | null = contextInfo?.quotedMessage
+  // Build a synthetic quoted BotMessage when the original envelope carries
+  // a quotedMessage (the adapter pre-decoded it into msg.quotedKey).
+  const quotedRaw: BotMessage | null = msg.quotedKey
     ? {
-        key: {
-          remoteJid:   rawJid,
-          fromMe:      false,
-          id:          contextInfo.stanzaId ?? undefined,
-          participant: contextInfo.participant ?? undefined,
-        },
-        message:  contextInfo.quotedMessage,
-        pushName: null,
+        id:          msg.quotedKey.id ?? "",
+        chatId:      msg.chatId,
+        fromMe:      false,
+        type:        "other",
+        contentHash: "",
+        timestamp:   0,
+        _raw:        (msg._raw as { quotedMessage?: unknown; stanzaId?: string; participant?: string } | undefined) ? {
+          quotedMessage: (msg._raw as { quotedMessage?: unknown }).quotedMessage,
+          stanzaId:      (msg._raw as { stanzaId?: string }).stanzaId,
+          participant:   (msg._raw as { participant?: string }).participant,
+        } : undefined,
       }
     : null;
 
   return {
-    id:         msg.key.id ?? "",
-    timestamp:  Number(msg.messageTimestamp) || 0,
+    id:         msg.id,
+    timestamp:  msg.timestamp || 0,
     body,
     type:       getMsgType(msg),
-    fromMe:     !!(msg.key.fromMe),
+    fromMe:     msg.fromMe,
     sender,
     senderName: msg.pushName ?? sender.replace(/(:\d+)?@.*$/, ""),
     command,
@@ -833,58 +894,70 @@ export function buildMessageContext(
       return hasPrefix && command === cmd.toLowerCase();
     },
     hasMedia: msgHasMedia(msg),
-    isGif:    msgIsGif(msg),
+    isGif:    msgIsGif(msg, store),
 
     async downloadMedia(opts: { asMp4?: boolean } = {}): Promise<{ mimetype: string; data: string } | null> {
       try {
-        // Without reuploadRequest, Baileys can't ask WA to resend media whose
-        // stream needs a fresh fetch (routine for larger/older media) — the
-        // download just throws and this looked like "no media detected".
-        const buffer = await downloadMediaMessage(msg, "buffer", {}, {
-          logger: baileysLogger,
-          reuploadRequest: sock.updateMediaMessage,
-        });
-        if (!buffer || !Buffer.isBuffer(buffer)) return null;
-        const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
+        // contract.downloadMedia handles reupload internally via the
+        // driver's own protocol knowledge (Baileys: sock.updateMediaMessage).
+        const result = await contract.downloadMedia(msg, {});
+        if (!result) return null;
+        const raw = rawMsgOf(msg, store);
+        const isAnimatedSticker = !!((raw?.message as { stickerMessage?: { isAnimated?: boolean } } | undefined)?.stickerMessage?.isAnimated);
         if (opts.asMp4 && isAnimatedSticker) {
-          const mp4 = await stickerToMp4(buffer);
+          const mp4 = await stickerToMp4(result.data);
           return { mimetype: "video/mp4", data: mp4.toString("base64") };
         }
-        return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
+        return { mimetype: result.mimetype, data: result.data.toString("base64") };
       } catch (err) {
         logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
         return null;
       }
     },
 
-    hasReply: !!(contextInfo?.quotedMessage),
+    hasReply: !!(msg.quotedKey),
 
     async getReply(): Promise<WAMessageContext | null> {
       if (!quotedRaw) return null;
-      return buildMessageContext(quotedRaw, sock, store, { cooldown: false, jitter: false });
+      return buildMessageContext(quotedRaw, contract, store, { cooldown: false, jitter: false });
     },
 
     hasMention: hasMention(contextInfo),
     hasBotMention: hasBotMention(contextInfo, sock, store),
 
-    reply: makeSender(sock, store, rawJid, msg, { cooldown, jitter }),
+    reply: makeSender(contract, store, rawJid, msg, { cooldown, jitter }),
 
     async react(emoji: string) {
-      return sock.sendMessage(rawJid, { react: { text: emoji, key: msg.key } });
+      await contract.react(rawJid, {
+        id:          msg.id,
+        remoteJid:   msg.chatId,
+        fromMe:      msg.fromMe,
+        participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+      }, emoji);
     },
 
     async delete(forEveryone = true) {
       if (forEveryone) {
-        return sock.sendMessage(rawJid, { delete: msg.key });
+        await contract.deleteMessage(rawJid, {
+          id:          msg.id,
+          remoteJid:   msg.chatId,
+          fromMe:      msg.fromMe,
+          participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+        }, true);
       }
     },
 
     async edit(text: string) {
-      if (!msg.key.fromMe) {
+      if (!msg.fromMe) {
         throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
       }
-      if (!msg.key.id || !(await waitForEditSlot(msg.key.id))) return;
-      return sock.sendMessage(rawJid, { text, edit: msg.key });
+      if (!msg.id || !(await waitForEditSlot(msg.id))) return;
+      await contract.editMessage(rawJid, {
+        id:          msg.id,
+        remoteJid:   msg.chatId,
+        fromMe:      msg.fromMe,
+        participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+      }, text);
     },
 
     async pin(_duration?: number) {
@@ -898,12 +971,12 @@ export function buildMessageContext(
      * @returns {Promise<object|null>} null if the sender can't be confirmed as a real WhatsApp account.
      */
     async getContact() {
-      const info = (store.contacts as Record<string, WAStoreContact>)[sender]
-                ?? (store.contacts as Record<string, WAStoreContact>)[denormalizeJid(sender)]
-                ?? (store.contacts as Record<string, WAStoreContact>)[store.resolveJid(msg.key.participant ?? "")]
-                ?? (store.contacts as Record<string, WAStoreContact>)[denormalizeJid(store.resolveJid(msg.key.participant ?? ""))];
+      const info = (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[sender]
+                ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(sender)]
+                ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[store.resolveJid(msg.fromPn ?? "")]
+                ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(store.resolveJid(msg.fromPn ?? ""))];
       const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
-      return normalizeContact(sender, info, botJid, sock);
+      return normalizeContact(sender, info, botJid, contract);
     },
   };
 }
@@ -914,30 +987,36 @@ export function buildMessageContext(
 /**
  * Wraps a pending send and exposes chainable post-send actions.
  * Thenable: `await ctx.send.text("hi")` resolves to the message context.
+ *
+ * The wrapped `rawPromise` now resolves to a `BotMessage` (driver-neutral)
+ * instead of a raw `WAMessage` — the driver writes its own sent message
+ * into the in-memory store under jid+id, and the api reads it back as a
+ * BotMessage (built from the adapter's WAMessage→BotMessage translator).
+ * This keeps the rest of the api from depending on Baileys' wire shape.
  */
 class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   private _p: Promise<WAMessageContext | undefined>;
-  private _sock: WASocket;
-  private _store: WAStore;
+  private _contract: WaContract;
+  private _store: BotStore;
   private _jid: string | null = null;
   private _guardOptions: { cooldown?: boolean; jitter?: boolean };
-  public rawPromise: Promise<WAProtoMsg | undefined>;
+  public rawPromise: Promise<BotMessage | undefined>;
 
   constructor(
-    promise: Promise<WAProtoMsg | undefined>,
-    sock: WASocket,
-    store: WAStore,
+    promise: Promise<BotMessage | undefined>,
+    contract: WaContract,
+    store: BotStore,
     guardOptions?: { cooldown?: boolean; jitter?: boolean }
   ) {
     this.rawPromise = promise;
-    this._sock = sock;
+    this._contract = contract;
     this._store = store;
     this._guardOptions = guardOptions ?? {};
 
     this._p = promise.then(msg => {
       if (!msg) return undefined;
-      if (!this._jid) this._jid = msg.key.remoteJid || null;
-      return buildMessageContext(msg, sock, store, guardOptions);
+      if (!this._jid) this._jid = msg.chatId || null;
+      return buildMessageContext(msg, this._contract, store, guardOptions);
     });
   }
 
@@ -968,7 +1047,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
    */
   get reply(): WAMessageSender {
     return makeSender(
-      this._sock,
+      this._contract,
       this._store,
       this._jid || "",
       this.rawPromise,
@@ -984,31 +1063,43 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   /** Delete the sent message. */
   async delete(forEveryone = true) {
     const msg = await this.rawPromise;
-    if (!msg?.key) return;
-    const jid = msg.key.remoteJid!;
+    if (!msg) return;
     if (forEveryone) {
-      return this._sock.sendMessage(jid, { delete: msg.key });
+      await this._contract.deleteMessage(msg.chatId, {
+        id:          msg.id,
+        remoteJid:   msg.chatId,
+        fromMe:      msg.fromMe,
+        participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+      }, true);
     }
   }
 
   /** React to the sent message. */
   async react(emoji: string) {
     const msg = await this.rawPromise;
-    if (!msg?.key) return;
-    return this._sock.sendMessage(msg.key.remoteJid!, {
-      react: { text: emoji, key: msg.key },
-    });
+    if (!msg) return;
+    await this._contract.react(msg.chatId, {
+      id:          msg.id,
+      remoteJid:   msg.chatId,
+      fromMe:      msg.fromMe,
+      participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+    }, emoji);
   }
 
   /** Edit the sent message's text. Only works on the bot's own messages. */
   async edit(text: string) {
     const msg = await this.rawPromise;
-    if (!msg?.key) return;
-    if (!msg.key.fromMe) {
+    if (!msg) return;
+    if (!msg.fromMe) {
       throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
     }
-    if (!msg.key.id || !(await waitForEditSlot(msg.key.id))) return;
-    return this._sock.sendMessage(msg.key.remoteJid!, { text, edit: msg.key });
+    if (!msg.id || !(await waitForEditSlot(msg.id))) return;
+    await this._contract.editMessage(msg.chatId, {
+      id:          msg.id,
+      remoteJid:   msg.chatId,
+      fromMe:      msg.fromMe,
+      participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+    }, text);
   }
 }
 
@@ -1141,90 +1232,111 @@ async function stickerToMp4(webpBuffer: Buffer): Promise<Buffer> {
 /**
  * Returns send methods bound to a specific JID.
  *
- * @param {WASocket}                                    sock
- * @param {WAStore}                                     store
- * @param {string}                                      jid         — destination JID (raw, not normalized)
- * @param {WAProtoMsg | Promise<WAProtoMsg | null>}    [quoted]    — message to quote (can be Promise)
- * @param {object}                                      [guard]
+ * @param {WaContract}                                                contract
+ * @param {BotStore}                                                  store
+ * @param {string}                                                    jid         — destination JID (raw, not normalized)
+ * @param {BotMessage | Promise<BotMessage | null | undefined> | null} [quoted]   — message to quote (can be Promise)
+ * @param {object}                                                    [guard]
  */
 function makeSender(
-  sock:   WASocket,
-  store:  WAStore,
-  jid:    string,
-  quoted: WAProtoMsg | Promise<WAProtoMsg | null | undefined> | null = null,
+  contract: WaContract,
+  store:    BotStore,
+  jid:      string,
+  quoted:   BotMessage | Promise<BotMessage | null | undefined> | null = null,
   { cooldown = true, jitter = true } = {}
 ) {
   const normJid = normalizeJid(jid);
 
-  // Helper: resolve quoted message if it's a Promise
-  const resolveQuoted = async () => {
+  // Helper: resolve quoted message if it's a Promise, then turn it into a
+  // BotQuotedRef the contract's send methods accept.
+  const resolveQuoted = async (): Promise<BotQuotedRef | undefined> => {
     if (!quoted) return undefined;
-    if (quoted instanceof Promise) {
-      const result = await quoted;
-      return result || undefined;
-    }
-    return quoted as WAProtoMsg;
+    const msg = quoted instanceof Promise ? (await quoted) || undefined : quoted;
+    return msg ? quotedRefFromMsg(msg) : undefined;
   };
 
   return {
     text(content: string, opts: { linkPreview?: boolean; mentions?: string[] } = {}) {
+      // The text path goes through sendFallbackGuard (CLAUDE.md §4/§15):
+      // try the active driver, verify the message actually landed in the
+      // driver's history, and on failure swap to the other driver. sendMedia
+      // and react below still go straight to the contract on purpose — media
+      // fallback is out of scope for this phase, react is one-shot and
+      // already idempotent at the protocol level.
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
-        // mentions/linkPreview are part of the message CONTENT, not the send
-        // options — Baileys reads contextInfo.mentionedJid off the content
-        // object. Putting them on sendOpts (3rd arg) is silently ignored: the
-        // message sends fine, "@name" shows as plain text, and nobody actually
-        // gets tagged/notified.
-        const messageContent: any = { text: content };
-        if (opts.linkPreview === false) {
-          messageContent.linkPreview = null;
+        const quotedRef = await resolveQuoted();
+        const mentionsResolved = opts.mentions?.length
+          ? await resolveMentionJids(contract, store, jid, opts.mentions)
+          : undefined;
+
+        // Pre-send bookkeeping the Baileys path used to do inline:
+        // waitForSendSlot is already invoked by sendFallbackGuard on the
+        // primary attempt, so we don't repeat it here. simulateState is
+        // best-effort and per-driver, so it stays on this side.
+        await simulateState(contract, jid, typingDuration(content), "typing");
+
+        const ref = await sendWithFallback(jid, content, {
+          quoted: quotedRef ?? undefined,
+          mentions: mentionsResolved,
+        });
+
+        // The guard returns a SentMessageRef (id + chatId + timestamp) but
+        // the rest of the sender API (MessageHandle, buildPollApi's
+        // rawMsg.chatId, etc.) expects the full BotMessage. The driver's
+        // messages.upsert handler stores own sent messages into the store
+        // keyed by jid+id, so we can read it back. Give the store a tiny
+        // window to catch up — a freshly-sent message may not be in the
+        // map yet on the very same tick — and return undefined if it
+        // never lands; downstream code already tolerates that (e.g.
+        // .reply / .delete are no-ops when rawPromise resolves to
+        // undefined).
+        const deadline = Date.now() + 200;
+        while (Date.now() < deadline) {
+          const stored = store.messages.get(ref.chatId)?.get(ref.id);
+          if (stored) return toBotMessage(stored as WAProtoMsg);
+          await new Promise<void>(r => setTimeout(r, 20));
         }
-        if (opts.mentions?.length) {
-          messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
-        }
-        await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, typingDuration(content), "typing");
-        return sock.sendMessage(jid, messageContent, sendOpts);
-      })(), sock, store, { cooldown, jitter });
+        const final = store.messages.get(ref.chatId)?.get(ref.id);
+        return final ? toBotMessage(final as WAProtoMsg) : undefined;
+      })(), contract, store, { cooldown, jitter });
     },
 
     image(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
+        await simulateState(contract, jid, mediaDuration(caption), "typing");
         const buffer = await resolveMediaBuffer(source);
-        // viewOnce/mentions are part of the message CONTENT — see note above.
-        const messageContent: any = { image: buffer, caption };
-        if (opts.viewOnce) {
-          messageContent.viewOnce = true;
-        }
-        if (opts.mentions?.length) {
-          messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
-        }
-        return sock.sendMessage(jid, messageContent, sendOpts);
-      })(), sock, store, { cooldown, jitter });
+        const mentionsResolved = opts.mentions?.length
+          ? await resolveMentionJids(contract, store, jid, opts.mentions)
+          : undefined;
+        const ref = await contract.sendImage(jid, buffer, {
+          caption,
+          quoted:     quotedRef ?? undefined,
+          mentions:   mentionsResolved,
+          viewOnce:   opts.viewOnce,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     video(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
+        await simulateState(contract, jid, mediaDuration(caption), "typing");
         const buffer = await resolveMediaBuffer(source);
-        // viewOnce/mentions are part of the message CONTENT — see note above.
-        const messageContent: any = { video: buffer, caption };
-        if (opts.viewOnce) {
-          messageContent.viewOnce = true;
-        }
-        if (opts.mentions?.length) {
-          messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
-        }
-        return sock.sendMessage(jid, messageContent, sendOpts);
-      })(), sock, store, { cooldown, jitter });
+        const mentionsResolved = opts.mentions?.length
+          ? await resolveMentionJids(contract, store, jid, opts.mentions)
+          : undefined;
+        const ref = await contract.sendVideo(jid, buffer, {
+          caption,
+          quoted:     quotedRef ?? undefined,
+          mentions:   mentionsResolved,
+          viewOnce:   opts.viewOnce,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     /**
@@ -1237,57 +1349,60 @@ function makeSender(
      */
     gif(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(caption), "typing");
+        await simulateState(contract, jid, mediaDuration(caption), "typing");
         const buffer = needsGifConversion(source)
           ? await gifToMp4(source)
           : await resolveMediaBuffer(source);
-        const messageContent: any = { video: buffer, caption, gifPlayback: true };
-        if (opts.viewOnce) {
-          messageContent.viewOnce = true;
-        }
-        if (opts.mentions?.length) {
-          messageContent.mentions = await resolveMentionJids(sock, store, jid, opts.mentions);
-        }
-        return sock.sendMessage(jid, messageContent, sendOpts);
-      })(), sock, store, { cooldown, jitter });
+        const mentionsResolved = opts.mentions?.length
+          ? await resolveMentionJids(contract, store, jid, opts.mentions)
+          : undefined;
+        const ref = await contract.sendVideo(jid, buffer, {
+          caption,
+          quoted:      quotedRef ?? undefined,
+          mentions:    mentionsResolved,
+          viewOnce:    opts.viewOnce,
+          gifPlayback: true,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     audio(source: string | Buffer, { asVoice = true, viewOnce = false } = {}) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const sendOpts: any = quotedMsg ? { quoted: quotedMsg } : {};
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "recording");
+        await simulateState(contract, jid, mediaDuration(), "recording");
         const buffer = await resolveMediaBuffer(source);
-        // viewOnce is part of the message CONTENT — see note above.
-        const messageContent: any = { audio: buffer, mimetype: "audio/mp4", ptt: asVoice };
-        if (viewOnce) {
-          messageContent.viewOnce = true;
-        }
-        return sock.sendMessage(jid, messageContent, sendOpts);
-      })(), sock, store, { cooldown, jitter });
+        const ref = await contract.sendAudio(jid, buffer, {
+          quoted:   quotedRef ?? undefined,
+          viewOnce: viewOnce,
+          ptt:      asVoice,
+          mimetype: "audio/mp4",
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     sticker(source: string | Buffer) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const qOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        await simulateState(contract, jid, mediaDuration(), "typing");
         const buffer = await resolveMediaBuffer(source);
-        return sock.sendMessage(jid, { sticker: buffer }, qOpts);
-      })(), sock, store, { cooldown, jitter });
+        const ref = await contract.sendSticker(jid, buffer, {
+          quoted: quotedRef ?? undefined,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     file(source: string | Buffer, filename?: string) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const qOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        await simulateState(toPresenceCapable(sock), jid, mediaDuration(), "typing");
+        await simulateState(contract, jid, mediaDuration(), "typing");
         const isBuffer = Buffer.isBuffer(source);
         const buffer   = await resolveMediaBuffer(source);
         // With a path we can always infer the mimetype/name from it. With a
@@ -1296,12 +1411,11 @@ function makeSender(
         // a generic octet-stream document named "file".
         const mimetype = filename ? mimeFromPath(filename) : (isBuffer ? "application/octet-stream" : mimeFromPath(source));
         const resolvedFilename = filename ?? (isBuffer ? "file" : path.basename(source));
-        return sock.sendMessage(jid, {
-          document: buffer,
-          mimetype,
-          fileName: resolvedFilename,
-        }, qOpts);
-      })(), sock, store, { cooldown, jitter });
+        const ref = await contract.sendDocument(jid, buffer, resolvedFilename, mimetype, {
+          quoted: quotedRef ?? undefined,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
 
     /**
@@ -1313,17 +1427,16 @@ function makeSender(
      */
     poll(question: string, options: string[], { allowMultipleAnswers = false } = {}) {
       return new MessageHandle((async () => {
-        const quotedMsg = await resolveQuoted();
-        const qOpts = quotedMsg ? { quoted: quotedMsg } : undefined;
+        const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
-        return sock.sendMessage(jid, {
-          poll: {
-            name:            question,
-            values:          options,
-            selectableCount: allowMultipleAnswers ? 0 : 1,
-          },
-        } as Parameters<typeof sock.sendMessage>[1], qOpts);
-      })(), sock, store, { cooldown, jitter });
+        const ref = await contract.sendPoll(jid, {
+          name:            question,
+          values:          options,
+          selectableCount: allowMultipleAnswers ? 0 : 1,
+          quoted:          quotedRef ?? undefined,
+        });
+        return refToBotMessage(ref, store);
+      })(), contract, store, { cooldown, jitter });
     },
   };
 }
@@ -1333,10 +1446,10 @@ export type WAMessageSender = ReturnType<typeof makeSender>;
 
 // ── Send API ──────────────────────────────────────────────────────────────────
 
-function buildSendApi(sock: WASocket, store: WAStore, rawJid: string, guardOptions: Record<string, unknown> = {}) {
+function buildSendApi(contract: WaContract, store: BotStore, rawJid: string, guardOptions: Record<string, unknown> = {}) {
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
-  const current  = makeSender(sock, store, rawJid, null, { cooldown, jitter });
+  const current  = makeSender(contract, store, rawJid, null, { cooldown, jitter });
 
   return {
     send: {
@@ -1353,16 +1466,16 @@ function buildSendApi(sock: WASocket, store: WAStore, rawJid: string, guardOptio
        * Returns a sender bound to another chat.
        * @param {string} targetJid
        */
-      to: (targetJid: string) => makeSender(sock, store, targetJid, null, { cooldown: false, jitter: false }),
+      to: (targetJid: string) => makeSender(contract, store, targetJid, null, { cooldown: false, jitter: false }),
     },
   };
 }
 
 /** Setup send API — no current chat, only .to(). */
-function buildSetupSendApi(sock: WASocket, store: WAStore) {
+function buildSetupSendApi(contract: WaContract, store: BotStore) {
   return {
     send: {
-      to: (targetJid: string) => makeSender(sock, store, targetJid),
+      to: (targetJid: string) => makeSender(contract, store, targetJid),
     },
   };
 }
@@ -1371,7 +1484,8 @@ function buildSetupSendApi(sock: WASocket, store: WAStore) {
 
 const listenerRegistry = new Map<string, Set<{ event: string; handler: (...args: unknown[]) => void }>>();
 
-export function cleanupPluginEvents(pluginName: string, sock: WASocket): void {
+export function cleanupPluginEvents(pluginName: string, contract: WaContract): void {
+  const sock = rawSocketOf(contract);
   const list = listenerRegistry.get(pluginName);
   if (list) {
     for (const { event, handler } of list) {
@@ -1386,10 +1500,11 @@ export function cleanupPluginEvents(pluginName: string, sock: WASocket): void {
 
 
 /**
- * @param {WASocket} sock
- * @param {string}   pluginName
+ * @param {WaContract} contract
+ * @param {string}     pluginName
  */
-function buildEventsApi(sock: WASocket, pluginName: string) {
+function buildEventsApi(contract: WaContract, pluginName: string) {
+  const sock = rawSocketOf(contract);
   return {
     on(event: string, handler: (...args: unknown[]) => void) {
       (sock.ev as unknown as NodeJS.EventEmitter).on(event, handler);
@@ -1438,7 +1553,7 @@ function buildEventsApi(sock: WASocket, pluginName: string) {
  * normalize as before (mentions aren't a real thing in DMs anyway).
  */
 async function resolveMentionJids(
-  sock: WASocket,
+  contract: WaContract,
   store: WAStore,
   jid: string,
   mentions: string[]
@@ -1462,7 +1577,11 @@ async function resolveMentionJids(
 
   let meta;
   try {
-    meta = await getGroupMetadataCached(sock, jid);
+    // getGroupMetadataCached uses the raw sock internally for the
+    // Baileys-flavored participant field shape (admin: "admin" |
+    // "superadmin", etc.); the neutral contract's groupMetadata doesn't
+    // expose that yet.
+    meta = await getGroupMetadataCached(contract, jid);
   } catch {
     return Array.from(new Set(result.filter(Boolean)));
   }
@@ -1482,7 +1601,7 @@ async function resolveMentionJids(
   return Array.from(new Set(result.filter(Boolean)));
 }
 
-function buildAdminApi(sock: WASocket, chatJid: string | null) {
+function buildAdminApi(contract: WaContract, chatJid: string | null) {
   const norm = (v: string | string[]): string[] =>
     (Array.isArray(v) ? v : [v]).map(toWireJid);
 
@@ -1491,15 +1610,15 @@ function buildAdminApi(sock: WASocket, chatJid: string | null) {
   }
 
   async function getGroup(jid: string) {
-    const meta = await sock.groupMetadata(jid);
+    const meta = await contract.groupMetadata(jid);
     if (!meta) throw new Error(`Group not found: ${jid}`);
     return meta;
   }
 
   /**
-   * Baileys' `groupParticipantsUpdate()` resolves normally even when
-   * WhatsApp rejected some (or all) of the requested participants — it
-   * returns an array with a per-participant `status` code (`'200'` =
+   * The contract's `groupParticipantsUpdate()` resolves normally even
+   * when WhatsApp rejected some (or all) of the requested participants —
+   * it returns an array with a per-participant `status` code (`'200'` =
    * success; anything else is a rejection — e.g. `'403'`/`'401'` not
    * authorized, often because the target's privacy settings block being
    * added by a non-contact; `'409'` already a participant; `'408'`
@@ -1524,8 +1643,8 @@ function buildAdminApi(sock: WASocket, chatJid: string | null) {
   }
 
   /**
-   * Thin wrapper around `sock.groupParticipantsUpdate()` that turns an
-   * opaque Boom rejection (e.g. the whole IQ query bounced with
+   * Thin wrapper around `contract.groupParticipantsUpdate()` that turns
+   * an opaque rejection (e.g. the whole IQ query bounced with
    * "bad-request") into an error that names the group/action/participants
    * involved, then still runs the per-participant status check above.
    */
@@ -1536,7 +1655,7 @@ function buildAdminApi(sock: WASocket, chatJid: string | null) {
   ) {
     let results: unknown;
     try {
-      results = await sock.groupParticipantsUpdate(jid, users, action);
+      results = await contract.groupParticipantsUpdate(jid, users, action);
     } catch (err) {
       throw new Error(
         `groupParticipantsUpdate("${action}") falhou para o grupo "${jid}" com participantes [${users.join(", ")}]: ${(err as Error).message}`
@@ -1597,50 +1716,50 @@ function buildAdminApi(sock: WASocket, chatJid: string | null) {
     /** @param {string} name */
     async setSubject(name: string) {
       requireChat();
-      return sock.groupUpdateSubject(chatJid!, name);
+      return contract.groupUpdateSubject(chatJid!, name);
     },
     /** @param {string} text */
     async setDescription(text: string) {
       requireChat();
-      return sock.groupUpdateDescription(chatJid!, text);
+      return contract.groupUpdateDescription(chatJid!, text);
     },
     /** @param {string|Buffer} source */
     async setProfilePic(source: string | Buffer) {
       requireChat();
       const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
-      return sock.updateProfilePicture(chatJid!, buffer);
+      return contract.updateProfilePicture(chatJid!, buffer);
     },
     async getInviteLink(groupId?: string) {
       const jid = groupId ?? chatJid;
       if (!jid) throw new Error("This admin operation requires a runtime group context.");
-      const code = await sock.groupInviteCode(jid);
+      const code = await contract.groupInviteCode(jid);
       return `https://chat.whatsapp.com/${code}`;
     },
     async revokeInvite() {
       requireChat();
-      return sock.groupRevokeInvite(chatJid!);
+      return contract.groupRevokeInvite(chatJid!);
     },
   };
 }
 
 // ── Me API ────────────────────────────────────────────────────────────────────
 
-/** @param {WASocket} sock */
-function buildMeApi(sock: WASocket) {
+/** @param {WaContract} contract */
+function buildMeApi(contract: WaContract) {
   return {
     /** @param {string} name */
     async setName(name: string) {
-      return sock.updateProfileName(name);
+      return contract.updateProfileName(name);
     },
     /** @param {string} text */
     async setAbout(text: string) {
-      return sock.updateProfileStatus(text);
+      return contract.updateProfileStatus(text);
     },
     /** @param {string|Buffer} source */
     async setProfilePic(source: string | Buffer) {
       const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
-      const jid    = sock.user?.id ?? "";
-      return sock.updateProfilePicture(jid, buffer);
+      const jid    = contract.me().id ?? "";
+      return contract.updateProfilePicture(jid, buffer);
     },
   };
 }
@@ -1658,14 +1777,14 @@ const pollListenersBySocket = new WeakMap<WASocket, Set<string>>();
  * Tracks votes for an active poll.
  * Obtained via ctx.poll.create().
  */
-class PollHandle {
+export class PollHandle {
   msgId:      string;
   private _options:   Map<string, Set<string>>;
   private _callbacks: Array<(results: Record<string, number>, raw: unknown) => void>;
   private _registry:  Map<string, PollHandle>;
 
-  constructor(msg: WAProtoMsg, options: string[], registry: Map<string, PollHandle>) {
-    this.msgId      = msg.key.id ?? "";
+  constructor(msg: BotMessage, options: string[], registry: Map<string, PollHandle>) {
+    this.msgId      = msg.id ?? "";
     this._options   = new Map(options.map(o => [o, new Set<string>()]));
     this._callbacks = [];
     this._registry  = registry;
@@ -1715,15 +1834,15 @@ class PollHandle {
 }
 
 /**
- * @param {WASocket} sock
- * @param {WAStore}  store
- * @param {string}   rawJid       — destination JID (not normalized)
- * @param {object}   guardOptions
- * @param {string}   pluginName
+ * @param {WaContract} contract
+ * @param {BotStore}   store
+ * @param {string}     rawJid       — destination JID (not normalized)
+ * @param {object}     guardOptions
+ * @param {string}     pluginName
  */
 function buildPollApi(
-  sock:         WASocket,
-  store:        WAStore,
+  contract:     WaContract,
+  store:        BotStore,
   rawJid:       string,
   guardOptions: Record<string, unknown>,
   pluginName:   string
@@ -1736,6 +1855,12 @@ function buildPollApi(
   // with no dedup — so we must keep only the latest entry per voter ourselves,
   // or retracted/changed votes keep counting alongside the new one.
   const pollVotesByCreationId = new Map<string, Map<string, unknown>>();
+
+  // Poll decryption needs the raw Baileys socket (sock.ev for
+  // messages.upsert, sock.user for self-JID shape), so we lift it off the
+  // contract here. The WeakMap key is the socket itself so old listeners
+  // fall off automatically when the socket is replaced (reconnect).
+  const sock = rawSocketOf(contract);
 
   let boundPlugins = pollListenersBySocket.get(sock);
   if (!boundPlugins) {
@@ -1775,18 +1900,20 @@ function buildPollApi(
       return Array.from(new Set(cands.filter(Boolean)));
     }
   
-    sock.ev.on("messages.upsert", async ({ messages: msgs }) => {
+    sock.ev.on("messages.upsert", async ({ messages: msgs }: { messages: WAProtoMsg[]; type: string }) => {
       for (const msg of msgs) {
-        const pum = msg.message?.pollUpdateMessage;
+        const pum = (msg.message as { pollUpdateMessage?: unknown } | undefined)?.pollUpdateMessage as
+          | { pollCreationMessageKey?: { id?: string; remoteJid?: string }; vote?: unknown; senderTimestampMs?: number | bigint | string }
+          | undefined;
         if (!pum) continue;
-  
+
         const creationKey = pum.pollCreationMessageKey;
         const creationId  = creationKey?.id ?? "";
         const handle       = registry.get(creationId);
         if (!handle) continue;
-  
+
         const storeMsg = store.messages.get(creationKey?.remoteJid ?? "")?.get(creationId);
-        const pollEncKeyRaw = storeMsg?.message?.messageContextInfo?.messageSecret;
+        const pollEncKeyRaw = (storeMsg?.message as { messageContextInfo?: { messageSecret?: Buffer | string } } | undefined)?.messageContextInfo?.messageSecret;
         if (!storeMsg || !pollEncKeyRaw || !pum.vote) continue;
   
         try {
@@ -1856,7 +1983,7 @@ function buildPollApi(
      * @returns {Promise<PollHandle>}
      */
     async create(question: string, options: string[], opts: { allowMultipleAnswers?: boolean } = {}) {
-      const sender  = makeSender(sock, store, rawJid, null, { cooldown, jitter });
+      const sender  = makeSender(contract, store, rawJid, null, { cooldown, jitter });
       const handlePromise = sender.poll(question, options, opts);
       const rawMsg = await handlePromise.rawPromise;
       if (!rawMsg) throw new Error("[poll] failed to send poll message");
@@ -1866,11 +1993,16 @@ function buildPollApi(
       // Ensure the poll message is in the store before any vote arrives —
       // messages.upsert isn't guaranteed to fire (or land in time) for the
       // bot's own sent messages, which previously dropped every vote.
-      const remoteJid = rawMsg.key.remoteJid;
+      // The store still keeps raw WAMessages keyed by jid+id (the
+      // poll-decryption path below reads the raw envelope off the store),
+      // so push a raw entry back in here too. refToBotMessage keeps the
+      // driver-neutral envelope current; rawStore keeps the Baileys shape
+      // the decryption helper still needs.
+      const remoteJid = rawMsg.chatId;
       if (remoteJid) {
         if (!store.messages.has(remoteJid)) store.messages.set(remoteJid, new Map());
         if (!store.messages.get(remoteJid)!.has(handle.msgId)) {
-          store.messages.get(remoteJid)!.set(handle.msgId, rawMsg);
+          store.messages.get(remoteJid)!.set(handle.msgId, rawMsg as unknown as WAProtoMsg);
         }
       }
 
@@ -1890,12 +2022,12 @@ function buildPollApi(
 // ── Base API (shared between setup and runtime) ───────────────────────────────
 
 function buildBaseApi(
-  sock:           WASocket,
-  store:          WAStore,
+  contract:       WaContract,
+  store:          BotStore,
   pluginRegistry: Map<string, PluginEntry>,
   pluginName:     string
 ) {
-  const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+  const botJid = contract.me().id ? jidNormalizedUser(contract.me().id as string) : null;
   if (!botJid) logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
 
   return {
@@ -1908,7 +2040,7 @@ function buildBaseApi(
     scheduler: buildSchedulerApi(pluginName),
     plugins:   buildPluginsApi(pluginRegistry),
     chats:     buildChatsApi(store),
-    contacts:  buildContactsApi(sock, store, botJid),
+    contacts:  buildContactsApi(contract, store, botJid),
     storage:   buildStorageApi(pluginName),
     botId:     botJid,
   };
@@ -1920,30 +2052,27 @@ function buildBaseApi(
  * Setup API — without message context.
  * Passed to plugin.setup(ctx) during initialization.
  *
- * @param {WASocket}              sock
- * @param {WAStore}               store
- * @param {Map<string, any>}      pluginRegistry
- * @param {string}                pluginName
+ * @param {WaContract}              contract
+ * @param {BotStore}                store
+ * @param {Map<string, any>}        pluginRegistry
+ * @param {string}                  pluginName
  */
 export function buildSetupApi(
-  sock:           WASocket,
-  store:          WAStore,
+  contract:       WaContract,
+  store:          BotStore,
   pluginRegistry: Map<string, PluginEntry>,
   pluginName:     string
-) {
-  bindGroupMetaInvalidation(sock);
+): SetupContext {
+  bindGroupMetaInvalidation(contract);
   return {
-    ...buildBaseApi(sock, store, pluginRegistry, pluginName),
-    ...buildSetupSendApi(sock, store),
-    admin:    buildAdminApi(sock, null),
-    events:   buildEventsApi(sock, pluginName),
-    me:       buildMeApi(sock),
+    ...buildBaseApi(contract, store, pluginRegistry, pluginName),
+    ...buildSetupSendApi(contract, store),
+    admin:    buildAdminApi(contract, null),
+    events:   buildEventsApi(contract, pluginName),
+    me:       buildMeApi(contract),
     settings: { global: buildSettingsApi(pluginName, "_global").global },
   };
 }
-
-/** Inferred shape of the ctx object passed to plugin.setup(ctx). */
-export type SetupContext = ReturnType<typeof buildSetupApi>;
 
 // ── Runtime API ───────────────────────────────────────────────────────────────
 
@@ -1952,10 +2081,10 @@ export type SetupContext = ReturnType<typeof buildSetupApi>;
  * Passed to plugin.default(ctx) on every message.
  *
  * @param {object}          params
- * @param {WAProtoMsg}      params.msg
+ * @param {BotMessage}      params.msg
  * @param {WAChat}          params.chat
- * @param {WASocket}        params.sock
- * @param {WAStore}         params.store
+ * @param {WaContract}      params.contract
+ * @param {BotStore}        params.store
  * @param {Map}             params.pluginRegistry
  * @param {string}          params.pluginName
  * @param {object}          [params.guardOptions]
@@ -1963,20 +2092,20 @@ export type SetupContext = ReturnType<typeof buildSetupApi>;
 export function buildApi({
   msg,
   chat,
-  sock,
+  contract,
   store,
   pluginRegistry,
   pluginName,
   guardOptions = {},
 }: {
-  msg:            WAProtoMsg;
+  msg:            BotMessage;
   chat:           WAChat;
-  sock:           WASocket;
-  store:          WAStore;
+  contract:       WaContract;
+  store:          BotStore;
   pluginRegistry: Map<string, PluginEntry>;
   pluginName:     string;
   guardOptions?:  Record<string, unknown>;
-}) {
+}): PluginContext {
   const prefix  = CONFIG.CMD_PREFIX as string;
   const body    = getMsgBody(msg);
   const rawArgs = body.trim().split(/\s+/);
@@ -1984,32 +2113,39 @@ export function buildApi({
   const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
-  const rawJid   = msg.key.remoteJid ?? "";
+  const rawJid   = msg.chatId;
   const normJid  = normalizeJid(rawJid);
   const sender   = getMsgSender(msg, store);
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
-  bindGroupMetaInvalidation(sock);
+  bindGroupMetaInvalidation(contract);
 
-  // Sender for quoted messages
-  const contextInfo = getContextInfo(msg);
-  const quotedRaw: WAProtoMsg | null = contextInfo?.quotedMessage
+  // Sender for quoted messages — synthesize a neutral BotQuotedRef off
+  // the adapter's pre-extracted contextInfo fields. No raw Baileys
+  // envelope access needed here.
+  const contextInfo = getContextInfo(msg) as
+    | { quotedMessage?: unknown; stanzaId?: string; participant?: string }
+    | null;
+  const quotedRaw: BotMessage | null = contextInfo?.quotedMessage
     ? {
-        key: {
-          remoteJid:   rawJid,
-          fromMe:      false,
-          id:          contextInfo.stanzaId ?? undefined,
-          participant: contextInfo.participant ?? undefined,
+        id:          contextInfo.stanzaId ?? "",
+        chatId:      msg.chatId,
+        fromMe:      false,
+        type:        "other",
+        contentHash: "",
+        timestamp:   0,
+        _raw: {
+          quotedMessage: contextInfo.quotedMessage,
+          stanzaId:      contextInfo.stanzaId,
+          participant:   contextInfo.participant,
         },
-        message:  contextInfo.quotedMessage,
-        pushName: null,
       }
     : null;
 
   // Group participant JIDs come back in whatever addressing mode the group
   // uses (@lid or @s.whatsapp.net/@c.us) — same issue as poll vote decryption.
-  // "sender" and "sock.user.id" are usually PN-normalized, so a straight
+  // "sender" and the bot's own JID are usually PN-normalized, so a straight
   // `=== ` against an @lid participant list silently never matches, even
   // when the person genuinely is an admin. Compare every known form
   // (raw + store-resolved) on both sides instead of trusting a single shape.
@@ -2026,12 +2162,12 @@ export function buildApi({
   }
 
   return {
-    ...buildBaseApi(sock, store, pluginRegistry, pluginName),
-    ...buildSendApi(sock, store, rawJid, guardOptions),
+    ...buildBaseApi(contract, store, pluginRegistry, pluginName),
+    ...buildSendApi(contract, store, rawJid, guardOptions),
 
     // ── msg ──────────────────────────────────────────────────────────────────
 
-    msg: buildMessageContext(msg, sock, store, { cooldown, jitter }),
+    msg: buildMessageContext(msg, contract, store, { cooldown, jitter }),
 
     // ── chat ─────────────────────────────────────────────────────────────────
 
@@ -2049,7 +2185,7 @@ export function buildApi({
       get history(): WAHistoryArray {
         const chatMsgs = store.messages.get(rawJid);
         const entries = chatMsgs
-          ? [...chatMsgs.values()].map((m) => buildMessageContext(m, sock, store, { cooldown: false, jitter: false }))
+          ? [...chatMsgs.values()].map((m) => buildMessageContext(toBotMessage(m as WAProtoMsg), contract, store, { cooldown: false, jitter: false }))
           : [];
         return makeHistoryArray(entries, store);
       },
@@ -2062,7 +2198,7 @@ export function buildApi({
       async getParticipants(): Promise<Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }>> {
         if (!chat.isGroup) return [];
         try {
-          const meta = await getGroupMetadataCached(sock, rawJid);
+          const meta = await getGroupMetadataCached(contract, rawJid);
           return meta.participants.map(p => ({
             id:           normalizeJid(p.id),
             isAdmin:      p.admin === "admin" || p.admin === "superadmin",
@@ -2081,7 +2217,7 @@ export function buildApi({
       async isAdmin(contactId: string): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await getGroupMetadataCached(sock, rawJid);
+          const meta = await getGroupMetadataCached(contract, rawJid);
           return meta.participants.some(
             p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
@@ -2097,8 +2233,12 @@ export function buildApi({
       async isSenderAdmin(): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await getGroupMetadataCached(sock, rawJid);
-          const rawSenderParticipant = msg.key.participant ?? msg.key.remoteJid ?? "";
+          const meta = await getGroupMetadataCached(contract, rawJid);
+          // The adapter's pre-extracted participant fields give us both the
+          // LID and PN forms of the sender; match either against the group's
+          // own participant list.
+          const rawSenderParticipant =
+            msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? msg.chatId ?? "";
           return meta.participants.some(
             p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
@@ -2113,11 +2253,12 @@ export function buildApi({
        */
       async isBotAdmin(): Promise<boolean> {
         if (!chat.isGroup) return false;
-        const botLid = (sock.user as unknown as { lid?: string })?.lid;
-        const botCandidates = [sock.user?.id, botLid];
+        const me       = contract.me();
+        const botLid   = (me as unknown as { lid?: string })?.lid;
+        const botCandidates = [me.id, botLid];
         if (!botCandidates.some(Boolean)) return false;
         try {
-          const meta = await getGroupMetadataCached(sock, rawJid);
+          const meta = await getGroupMetadataCached(contract, rawJid);
           return meta.participants.some(
             p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
@@ -2131,32 +2272,19 @@ export function buildApi({
         logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
       },
 
-      /** Temporarily disable/re-enable the flood guard for this chat. */
-      floodGuard: {
-        /** @param {number} [durationMs] — omit to disable until .enable() is called */
-        disable(durationMs?: number) {
-          disableFloodGuard(rawJid, durationMs);
-        },
-        enable() {
-          enableFloodGuard(rawJid);
-        },
-        get disabled(): boolean {
-          return isFloodGuardDisabled(rawJid);
-        },
-      },
     },
 
     // ── admin ─────────────────────────────────────────────────────────────────
 
-    admin: buildAdminApi(sock, rawJid),
+    admin: buildAdminApi(contract, rawJid),
 
     // ── me ────────────────────────────────────────────────────────────────────
 
-    me: buildMeApi(sock),
+    me: buildMeApi(contract),
 
     // ── poll ──────────────────────────────────────────────────────────────────
 
-    poll: buildPollApi(sock, store, rawJid, guardOptions, pluginName),
+    poll: buildPollApi(contract, store, rawJid, guardOptions, pluginName),
 
     // ── settings ──────────────────────────────────────────────────────────────
 
@@ -2165,22 +2293,14 @@ export function buildApi({
     // ── isolated platform contexts ────────────────────────────────────────────
 
     wa: {
-      sock,
+      contract,
       store,
       msg,
       downloadMedia: async (opts: { asMp4?: boolean } = {}) => {
         try {
-          const buffer = await downloadMediaMessage(msg, "buffer", {}, {
-            logger: baileysLogger,
-            reuploadRequest: sock.updateMediaMessage,
-          });
-          if (!buffer || !Buffer.isBuffer(buffer)) return null;
-          const isAnimatedSticker = !!unwrap(msg)?.stickerMessage?.isAnimated;
-          if (opts.asMp4 && isAnimatedSticker) {
-            const mp4 = await stickerToMp4(buffer);
-            return { mimetype: "video/mp4", data: mp4.toString("base64") };
-          }
-          return { mimetype: getMsgMimetype(msg), data: buffer.toString("base64") };
+          const result = await contract.downloadMedia(msg, opts);
+          if (!result) return null;
+          return { mimetype: result.mimetype, data: result.data.toString("base64") };
         } catch (err) {
           logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
           return null;
@@ -2191,6 +2311,3 @@ export function buildApi({
     dc: null,
   };
 }
-
-/** Inferred shape of the `ctx` object passed to plugin.default(ctx) on every message. */
-export type PluginContext = ReturnType<typeof buildApi>;

@@ -12,7 +12,13 @@ import {
     Browsers,
     WAProto,
 } from "@whiskeysockets/baileys";
-import { Boom }             from "@hapi/boom";
+import type {
+    WASocket as BaileysWASocket,
+    WAMessage,
+    Chat as BaileysChat,
+    Contact as BaileysContact,
+    BaileysEventEmitter,
+} from "@whiskeysockets/baileys";
 import { EventEmitter }     from "events";
 import path                 from "path";
 import qrcode               from "qrcode-terminal";
@@ -21,10 +27,54 @@ import { resolveLoginMethod } from "../loginPrompt.js";
 import { logger }           from "#logger";
 import { t }                from "#i18n";
 import { createStore }      from "#client/store.js";
-import { CapabilitySet }    from "#core/capabilities.js";
-import type { PresenceCapable } from "#core/adapter.js";
-import type { WASocket, WAStore } from "#types";
 import pino from "pino";
+
+// ── Driver-local type aliases ────────────────────────────────────────────────
+//
+// PR1 of the whatsmeow-fallback refactor (see AUDIT_BAILEYS_LEAK.md): every
+// type below is the Baileys-shaped type, but re-exported under a driver-local
+// name so the rest of the codebase (client/store.ts, kernel/*, the plugin API
+// contract) never has to import directly from @whiskeysockets/baileys. The
+// only place that does is THIS file — the driver boundary. PR3 will migrate
+// call sites one at a time to the driver-neutral types in src/drivers/types.ts.
+
+/** A single incoming/outgoing Baileys WAMessage. */
+export type RawMessage = WAMessage;
+
+/** A Baileys Chat (from chats.upsert / messaging-history.set). */
+export type RawChat = BaileysChat;
+
+/** A Baileys Contact (from contacts.upsert / contacts.update). */
+export type RawContact = BaileysContact;
+
+/** Plain-data contact shape stored in the in-memory store. */
+export interface RawStoreContact {
+  id: string;
+  name?: string;
+  notify?: string;
+  verifiedName?: string;
+}
+
+/**
+ * The Baileys event emitter that backs `sock.ev`. The store binds directly
+ * to this so the store stays a Baileys-internal detail — outside the
+ * driver boundary, consume the neutral `WaContract.on(...)` instead.
+ */
+export type RawEventEmitter = BaileysEventEmitter;
+
+/** The raw Baileys WASocket, exported so the driver-local adapter can wrap
+ *  it. Outside src/drivers/baileys/ this type should NOT be used directly —
+ *  consume `WaContract` (see src/kernel/waContract.ts) instead. */
+export type RawSocket = BaileysWASocket;
+
+/** The store type, kept private to this module. */
+type WAStore = ReturnType<typeof createStore>;
+
+/**
+ * Public re-export of the store type. Today this is the Baileys-only store;
+ * in a later phase the contract will move to a driver-neutral BotStore.
+ */
+export type { WAStore };
 
 // ── Auth path ─────────────────────────────────────────────────────────────────
 
@@ -42,7 +92,7 @@ export const store: WAStore = createStore();
 // ── Socket factory ────────────────────────────────────────────────────────────
 
 export interface SocketBundle {
-  sock:  WASocket;
+  sock:  RawSocket;
   store: WAStore;
 }
 
@@ -98,7 +148,7 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
       const stored = store.messages.get(key.remoteJid ?? "")?.get(key.id ?? "");
       return stored?.message ?? undefined;
     },
-  }) as WASocket;
+  }) as RawSocket;
 
   store.bind(sock.ev);
 
@@ -159,65 +209,4 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
   }
 
   return { sock, store };
-}
-
-/**
- * Normalize a Baileys JID to the @c.us format used in ManyBot configs.
- * Groups (@g.us) and broadcasts are passed through unchanged.
- *
- * @param {string} jid
- * @returns {string}
- */
-export function normalizeJid(jid: string): string {
-  if (!jid) return jid;
-  return jid
-    .replace(/@s\.whatsapp\.net$/, "@c.us")
-    .replace(/:\d+@/, "@");
-}
-
-/**
- * Reverses normalizeJid()'s "@c.us" substitution. store.contacts is keyed
- * by whatever raw JID Baileys handed the store ("...@s.whatsapp.net" for
- * a normal DM), never run through normalizeJid — so a plain
- * store.contacts[normalizedId] lookup misses for any non-@lid contact.
- * @param {string} jid
- */
-export function denormalizeJid(jid: string): string {
-  return jid.replace(/@c\.us$/, "@s.whatsapp.net");
-}
-
-/**
- * Normalize any identifier to the wire JID format WhatsApp's servers and
- * protocol actually expect ("...@s.whatsapp.net"). Use this anywhere a
- * JID is handed straight to Baileys (addOrEditContact, removeContact,
- * groupParticipantsUpdate, message mentions, etc.) — passing this
- * framework's own normalized "@c.us" form instead usually doesn't throw,
- * it just silently no-ops (nothing tagged, no contact created), so it
- * looks fine until you check.
- * Handles this framework's own "@c.us" form, a bare phone number (with
- * or without "+", spaces or dashes), and already-valid wire JIDs
- * ("@s.whatsapp.net", "@lid", "@g.us"), which pass through unchanged.
- * @param {string} id
- */
-export function toWireJid(id: string): string {
-  const trimmed = id.trim();
-  if (/@(s\.whatsapp\.net|lid|g\.us)$/.test(trimmed)) return trimmed;
-  if (trimmed.endsWith("@c.us")) return denormalizeJid(trimmed);
-  const digits = trimmed.replace(/\D/g, "");
-  return `${digits}@s.whatsapp.net`;
-}
-
-/**
- * Minimal PresenceCapable view over a raw socket. Transitional shim used
- * by kernel code that still works with a raw sock instead of a full
- * PlatformAdapter — goes away once that code is migrated.
- *
- * @param {WASocket} sock
- * @returns {PresenceCapable}
- */
-export function toPresenceCapable(sock: WASocket): PresenceCapable {
-  return {
-    capabilities: new CapabilitySet(["presence"]),
-    setPresence:  (chatId, state) => sock.sendPresenceUpdate(state, chatId),
-  };
 }

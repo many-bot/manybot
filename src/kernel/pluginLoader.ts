@@ -16,7 +16,8 @@ import { t }             from "#i18n";
 import { pathToFileURL } from "url";
 import { PATHS }         from "#config";
 import { buildSetupApi, cleanupPluginEvents } from "#manyapi";
-import type { WASocket, WAStore } from "#types";
+import type { WaContract } from "#kernel/waContract.js";
+import type { BotStore } from "#client/store.js";
 
 export interface PluginEntry {
   name: string;
@@ -33,8 +34,8 @@ const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
 
 export const pluginRegistry = new Map<string, PluginEntry>();
 
-let globalSock: WASocket | null = null;
-let globalStore: WAStore | null = null;
+let globalContract: WaContract | null = null;
+let globalStore: BotStore | null = null;
 
 const pluginWatchers = new Map<string, fs.FSWatcher[]>();
 
@@ -104,8 +105,8 @@ export async function loadPlugins(activePlugins: string[]): Promise<void> {
  * Call setup(api) on all plugins that export it.
  * Executed once after bot connects.
  */
-export async function setupPlugins(sock: WASocket, store: WAStore): Promise<void> {
-  globalSock = sock;
+export async function setupPlugins(contract: WaContract, store: BotStore): Promise<void> {
+  globalContract = contract;
   globalStore = store;
 
   for (const plugin of pluginRegistry.values()) {
@@ -114,7 +115,7 @@ export async function setupPlugins(sock: WASocket, store: WAStore): Promise<void
 
     try {
       const api = buildSetupApi(
-        sock,
+        contract,
         store,
         pluginRegistry,
         plugin.name
@@ -259,16 +260,16 @@ export async function reloadPlugin(name: string): Promise<void> {
   const plugin = pluginRegistry.get(name);
   if (!plugin) return;
 
-  if (globalSock) {
-    cleanupPluginEvents(name, globalSock);
+  if (globalContract) {
+    cleanupPluginEvents(name, globalContract);
   }
 
   await loadPlugin(name, true);
 
   const updatedPlugin = pluginRegistry.get(name);
-  if (updatedPlugin && updatedPlugin.status === "active" && updatedPlugin.setup && globalSock && globalStore) {
+  if (updatedPlugin && updatedPlugin.status === "active" && updatedPlugin.setup && globalContract && globalStore) {
     try {
-      const api = buildSetupApi(globalSock, globalStore, pluginRegistry, name);
+      const api = buildSetupApi(globalContract, globalStore, pluginRegistry, name);
       await updatedPlugin.setup(api);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -308,8 +309,8 @@ export async function syncPlugins(): Promise<void> {
       logger.info(`[pluginLoader] Disabling plugin "${name}"`);
       const plugin = pluginRegistry.get(name);
       if (plugin) {
-        if (globalSock) {
-          cleanupPluginEvents(name, globalSock);
+        if (globalContract) {
+          cleanupPluginEvents(name, globalContract);
         }
         plugin.status = "disabled";
         unwatchPlugin(name);
@@ -323,9 +324,9 @@ export async function syncPlugins(): Promise<void> {
       logger.info(`[pluginLoader] Enabling plugin "${name}"`);
       await loadPlugin(name);
       const plugin = pluginRegistry.get(name);
-      if (plugin && plugin.status === "active" && plugin.setup && globalSock && globalStore) {
+      if (plugin && plugin.status === "active" && plugin.setup && globalContract && globalStore) {
         try {
-          const api = buildSetupApi(globalSock, globalStore, pluginRegistry, name);
+          const api = buildSetupApi(globalContract, globalStore, pluginRegistry, name);
           await plugin.setup(api);
         } catch (e) {
           const err = e instanceof Error ? e : new Error(String(e));
