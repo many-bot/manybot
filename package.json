@@ -62,10 +62,5 @@
     "#config": "./dist/config.js",
     "#main": "./dist/main.js",
     "#types": "./dist/types.js"
-  },
-  "allowScripts": {
-    "@whiskeysockets/baileys@6.7.23": true,
-    "esbuild@0.28.1": true,
-    "protobufjs@7.6.4": true
   }
 }
