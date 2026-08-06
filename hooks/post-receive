@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# hooks/post-receive — fica dentro de <seu-repo>.git/hooks/ no servidor.
+# Git roda isso automaticamente depois de aceitar um push, com cwd = o bare repo.
+set -euo pipefail
+
+BARE_REPO="$(pwd)"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+while read -r old_sha new_sha ref; do
+  if [[ "$ref" =~ ^refs/tags/v ]]; then
+    tag="${ref#refs/tags/}"
+    echo "🚀 Tag de release recebida: $tag"
+    bash "$HOOK_DIR/release.sh" "$BARE_REPO" "$tag"
+  fi
+done
+
+exit 0
+

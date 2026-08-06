@@ -25,3 +25,4 @@ tsconfig.json
 .eslintrc.*
 .prettierrc*
 .github/
+hooks/

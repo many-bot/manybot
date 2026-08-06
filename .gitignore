@@ -12,6 +12,5 @@ manybot-*.tgz
 dist/
 whatsmeow-service/bin/
 whatsmeow-session.db*
-
-# Generated protobuf code (optional: commit manually if you want)
 whatsmeow-service/pb/*.pb.go
+hooks/.env
