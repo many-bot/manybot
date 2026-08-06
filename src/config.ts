@@ -538,7 +538,12 @@ function normalize(cfg: Config): Config {
       enabled: coerceEnabled(drv.baileys?.enabled, true),
     },
     whatsmeow: {
-      enabled:     isTruthy(drv.whatsmeow?.enabled),
+      // MANYBOT_SMOKE=1 force-enables whatsmeow regardless of the TOML
+      // value — used by scripts/smoke-whatsmeow-supervisor.mjs so the
+      // smoke test doesn't depend on the local manybot.toml already
+      // having whatsmeow.enabled=true. Not a documented user-facing
+      // setting; TOML remains the source of truth outside smoke runs.
+      enabled:     process.env.MANYBOT_SMOKE === "1" ? true : isTruthy(drv.whatsmeow?.enabled),
       grpcAddress: typeof drv.whatsmeow?.grpcAddress === "string" ? drv.whatsmeow.grpcAddress : "localhost:50051",
       binaryPath:  typeof drv.whatsmeow?.binaryPath  === "string" ? drv.whatsmeow.binaryPath  : "",
     },
@@ -640,3 +645,4 @@ export const PATHS = {
   TOML_CONFIG_FILE,
   TOML_PLUGIN_FILE,
 };
+
