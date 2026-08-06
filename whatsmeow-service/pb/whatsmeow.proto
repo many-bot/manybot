@@ -1,0 +1,356 @@
+// whatsmeow.proto — driver-neutral surface of the whatsmeow Go service.
+//
+// 1:1 mirror of the `WaContract` interface declared at
+// /home/syntax/work/active/manybot/dev/src/kernel/waContract.ts.
+// Every method on the contract maps to an RPC here; any RPC that
+// whatsmeow cannot (or does not yet) implement returns codes.Unimplemented
+// from the server, and the Node client (`src/drivers/whatsmeow/client.ts`)
+// translates that into `NotImplementedError` so plugins fail loud.
+//
+// Event payloads are the same driver-neutral shapes used by the
+// contract (BotMessage, BotQuotedRef, etc.) — adapters translate from
+// the raw whatsmeow event shape into these envelopes.
+//
+// This file is the source of truth. `scripts/generate-proto.sh`
+// mirrors it into `src/drivers/whatsmeow/whatsmeow.proto` (Node only
+// uses @grpc/proto-loader dynamic loading, no codegen).
+
+syntax = "proto3";
+package whatsmeow;
+option go_package = "whatsmeow-service/pb";
+
+// ── Service ──────────────────────────────────────────────────────────────────
+
+service WhatsmeowService {
+  // Lifecycle
+  rpc Connect(ConnectRequest)       returns (ConnectResponse);
+  rpc Disconnect(Empty)             returns (Empty);
+  rpc HealthCheck(Empty)            returns (HealthStatus);
+
+  // Events (server-streaming)
+  rpc SubscribeEvents(Empty)        returns (stream WaEvent);
+
+  // Verification primitives (used by sendFallbackGuard in Node)
+  rpc VerifySent(JidAndId)          returns (VerifyResult);
+  rpc GetHistory(GetHistoryRequest) returns (GetHistoryResponse);
+
+  // Send
+  rpc SendText(SendTextRequest)     returns (SentMessageRef);
+  rpc SendImage(SendMediaRequest)   returns (SentMessageRef);
+  rpc SendVideo(SendMediaRequest)   returns (SentMessageRef);
+  rpc SendAudio(SendMediaRequest)   returns (SentMessageRef);
+  rpc SendSticker(SendMediaRequest) returns (SentMessageRef);
+  rpc SendDocument(SendDocumentRequest) returns (SentMessageRef);
+  rpc SendPoll(SendPollRequest)     returns (SentMessageRef);
+
+  // React / edit / delete
+  rpc React(ReactRequest)             returns (Empty);
+  rpc DeleteMessage(DeleteMessageRequest) returns (Empty);
+  rpc EditMessage(EditMessageRequest) returns (SentMessageRef);
+
+  // Presence + read
+  rpc SendPresence(SendPresenceRequest) returns (Empty);
+  rpc MarkRead(MarkReadRequest)         returns (Empty);
+
+  // Contacts
+  rpc OnWhatsApp(OnWhatsAppRequest)         returns (OnWhatsAppResponse);
+  rpc GetBusinessProfile(JidRequest)        returns (BusinessProfile);
+  rpc ProfilePictureUrl(JidRequest)         returns (UrlResponse);
+  rpc FetchStatus(JidRequest)               returns (StatusResponse);
+  rpc UpdateBlockStatus(UpdateBlockStatusRequest) returns (Empty);
+  rpc AddOrEditContact(ContactMutationRequest)     returns (Empty);
+  rpc RemoveContact(JidRequest)             returns (Empty);
+
+  // Groups
+  rpc GetGroupMetadata(JidRequest)              returns (GroupMetadata);
+  rpc UpdateGroupParticipants(UpdateGroupParticipantsRequest) returns (UpdateGroupParticipantsResponse);
+  rpc UpdateGroupSubject(UpdateGroupTextRequest)   returns (Empty);
+  rpc UpdateGroupDescription(UpdateGroupTextRequest) returns (Empty);
+  rpc GetGroupInviteCode(JidRequest)            returns (GroupInviteCodeResponse);
+  rpc RevokeGroupInvite(JidRequest)             returns (GroupInviteCodeResponse);
+
+  // Profile (bot or group)
+  rpc UpdateProfilePicture(UpdateProfilePictureRequest) returns (Empty);
+  rpc UpdateProfileName(TextUpdateRequest)               returns (Empty);
+  rpc UpdateProfileStatus(TextUpdateRequest)              returns (Empty);
+  rpc Me(Empty)                                          returns (MeResponse);
+
+  // Media download
+  rpc DownloadMedia(DownloadMediaRequest) returns (MediaBlob);
+}
+
+// ── Common ───────────────────────────────────────────────────────────────────
+
+message Empty {}
+
+message JidRequest {
+  string jid = 1;
+}
+
+message TextUpdateRequest {
+  string jid  = 1;
+  string text = 2;
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+message ConnectRequest  { string session_dir = 1; }
+message ConnectResponse {
+  bool   ok         = 1;
+  string qr_code    = 2;
+  string pair_code  = 3;
+  string me_jid     = 4;
+}
+message HealthStatus {
+  bool   ready       = 1;
+  string last_error  = 2;
+}
+
+// ── Verification primitives ─────────────────────────────────────────────────
+
+message JidAndId     { string jid = 1; string message_id = 2; }
+message VerifyResult { bool found = 1; }
+
+message GetHistoryRequest {
+  string jid   = 1;
+  int32  limit = 2;
+}
+message GetHistoryResponse { repeated BotMessage messages = 1; }
+
+// ── Send ─────────────────────────────────────────────────────────────────────
+
+message SendTextRequest {
+  string jid              = 1;
+  string text             = 2;
+  string quoted_id        = 3;
+  string quoted_sender    = 4;
+  repeated string mentions = 5;
+}
+
+message SendMediaRequest {
+  string jid              = 1;
+  bytes  buffer           = 2;
+  string caption          = 3;
+  string quoted_id        = 4;
+  string quoted_sender    = 5;
+  string mimetype         = 6;
+  bool   ptt              = 7;        // audio-only (voice note)
+  bool   gif_playback     = 8;        // video-only (animated sticker / gif)
+  bool   view_once        = 9;
+}
+
+message SendDocumentRequest {
+  string jid              = 1;
+  bytes  buffer           = 2;
+  string filename         = 3;
+  string mimetype         = 4;
+  string quoted_id        = 5;
+  string quoted_sender    = 6;
+}
+
+message SendPollRequest {
+  string jid                       = 1;
+  string question                  = 2;
+  repeated string options          = 3;
+  int32  selectable_count          = 4;
+  string quoted_id                 = 5;
+  string quoted_sender             = 6;
+}
+
+message SentMessageRef {
+  string id        = 1;
+  string chat_id   = 2;
+  int64  timestamp = 3;
+}
+
+// ── React / edit / delete ────────────────────────────────────────────────────
+
+message ReactRequest {
+  string chat_jid    = 1;
+  string sender_jid  = 2;
+  string message_id  = 3;
+  string emoji       = 4;
+}
+
+message DeleteMessageRequest {
+  string chat_jid    = 1;
+  string sender_jid  = 2;
+  string message_id  = 3;
+}
+
+message EditMessageRequest {
+  string chat_jid    = 1;
+  string sender_jid  = 2;
+  string message_id  = 3;
+  string new_text    = 4;
+}
+
+// ── Presence + read ──────────────────────────────────────────────────────────
+
+message SendPresenceRequest {
+  string chat_jid = 1;
+  string state    = 2;  // composing | recording | paused
+}
+
+message MarkReadRequest { repeated BotQuotedKey keys = 1; }
+message BotQuotedKey {
+  string id          = 1;
+  string remote_jid  = 2;
+  string participant = 3;
+  bool   from_me     = 4;
+}
+
+// ── Contacts ─────────────────────────────────────────────────────────────────
+
+message OnWhatsAppRequest { repeated string jids = 1; }
+message OnWhatsAppResponse {
+  repeated OnWhatsAppEntry entries = 1;
+}
+message OnWhatsAppEntry {
+  string jid     = 1;
+  bool   exists  = 2;
+}
+message BusinessProfile {
+  string jid         = 1;
+  string category    = 2;
+  string description = 3;
+}
+message UrlResponse     { string url     = 1; }
+message StatusResponse  { string status  = 1; }
+
+message UpdateBlockStatusRequest {
+  string jid    = 1;
+  string action = 2;  // block | unblock
+}
+message ContactMutationRequest {
+  string jid        = 1;
+  string full_name  = 2;
+  string first_name = 3;
+  bool   primary    = 4;
+}
+
+// ── Groups ───────────────────────────────────────────────────────────────────
+
+message GroupMetadata {
+  string subject = 1;
+  repeated GroupParticipant participants = 2;
+}
+message GroupParticipant {
+  string jid            = 1;
+  bool   is_admin       = 2;
+  bool   is_super_admin = 3;
+  string phone_number   = 4;
+}
+message UpdateGroupParticipantsRequest {
+  string jid         = 1;
+  repeated string users = 2;
+  string action      = 3;  // add | remove | promote | demote
+}
+message UpdateGroupParticipantsResponse {
+  repeated GroupParticipantStatus results = 1;
+}
+message GroupParticipantStatus {
+  string jid    = 1;
+  string status = 2;
+}
+message UpdateGroupTextRequest {
+  string jid  = 1;
+  string text = 2;
+}
+message GroupInviteCodeResponse { string code = 1; }
+
+// ── Profile ──────────────────────────────────────────────────────────────────
+
+message UpdateProfilePictureRequest {
+  string jid    = 1;
+  bytes  buffer = 2;
+}
+message MeResponse {
+  string id  = 1;
+  string lid = 2;
+}
+
+// ── Media download ───────────────────────────────────────────────────────────
+
+message DownloadMediaRequest { BotMessage msg = 1; }
+message MediaBlob {
+  string mimetype = 1;
+  bytes  data     = 2;
+}
+
+// ── Driver-neutral envelope types ────────────────────────────────────────────
+
+message BotMessage {
+  string id          = 1;
+  string chat_id     = 2;
+  bool   from_me     = 3;
+  string type        = 4;        // text|image|video|audio|sticker|document|other
+  string content_hash = 5;
+  int64  timestamp   = 6;
+  // Optional fields — populated when available.
+  string body                 = 7;
+  string mimetype             = 8;
+  string push_name            = 9;
+  repeated string mentioned_jid = 10;
+  string from_lid             = 11;
+  string from_pn              = 12;
+  string participant_alt      = 13;
+  string remote_jid_alt       = 14;
+  // Quoted reference.
+  string quoted_id            = 15;
+  string quoted_remote_jid    = 16;
+  string quoted_participant   = 17;
+  // Raw envelope (driver-specific bits, e.g. poll enc key) — see
+  // BotMessage._raw on the TS side.
+  bytes  raw_blob             = 18;
+}
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+message WaEvent {
+  oneof payload {
+    BotMessage                   message              = 1;
+    ConnStateUpdate              conn_state           = 2;
+    HistorySetEvent              history_set          = 3;
+    ChatsUpsertEvent             chats_upsert         = 4;
+    ChatsUpdateEvent             chats_update         = 5;
+    ContactsUpsertEvent          contacts_upsert      = 6;
+    ContactsUpdateEvent          contacts_update      = 7;
+    GroupParticipantsUpdateEvent group_participants   = 8;
+    GroupsUpdateEvent            groups_update        = 9;
+  }
+}
+
+message ConnStateUpdate {
+  string state       = 1;  // open | close | connecting
+  int32  status_code = 2;
+}
+
+message HistorySetEvent {
+  repeated ChatSummary    chats    = 1;
+  repeated ContactSummary contacts = 2;
+  repeated BotMessage     messages = 3;
+}
+message ChatSummary    { string id = 1; string name = 2; }
+message ContactSummary {
+  string id           = 1;
+  string name         = 2;
+  string notify       = 3;
+  string verified_name = 4;
+  string lid          = 5;
+}
+
+message ChatsUpsertEvent { repeated ChatSummary chats = 1; }
+message ChatsUpdateEvent { repeated ChatSummary updates = 1; }
+message ContactsUpsertEvent { repeated ContactSummary contacts = 1; }
+message ContactsUpdateEvent { repeated ContactSummary updates = 1; }
+
+message GroupParticipantsUpdateEvent {
+  string jid = 1;
+  repeated ParticipantAction participants = 2;
+}
+message ParticipantAction {
+  string jid    = 1;
+  string action = 2;  // add | remove | promote | demote
+}
+message GroupsUpdateEvent { repeated string jids = 1; }

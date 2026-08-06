@@ -1,4 +1,5 @@
 .claude
+CLAUDE.md
 node_modules/
 mychats.txt
 logs/
@@ -9,3 +10,8 @@ manybot-*.tgz
 *.tar
 *.zip
 dist/
+whatsmeow-service/bin/
+whatsmeow-session.db*
+
+# Generated protobuf code (optional: commit manually if you want)
+whatsmeow-service/pb/*.pb.go

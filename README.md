@@ -17,9 +17,13 @@ Open-source framework for message automation, extensible via community plugins.
 ## Requirements
 
 - Node.js >= 24
-- npm
+- npm >= 9
+- Go >= 1.23 (for whatsmeow driver)
+- protoc (for protobuf codegen)
 
 ## Getting started
+
+### Install from npm
 
 ```bash
 npm install -g @manybot/manybot
@@ -28,6 +32,16 @@ manybot
 ```
 
 On first run, a configuration file is created at `~/.manybot/manybot.toml`. Edit it to set up your preferences.
+
+### Develop from source
+
+```bash
+git clone <repo-url>
+cd dev
+npm install
+go build -o whatsmeow-service/bin/whatsmeow-service ./whatsmeow-service
+npm start
+```
 
 For detailed setup instructions, see the **[documentation](https://manybot.org/docs/)**.
 
