@@ -18,7 +18,7 @@
  * automatically, callers must disconnect it first if they want it torn
  * down.
  *
- * See CLAUDE.md §2 (interface) and §8 (cooldown semantics).
+ * See the interface and cooldown semantics.
  */
 
 import { logger } from "#logger";
@@ -86,7 +86,7 @@ class DriverManager {
    * Promote a different driver to active. Used by tests / hot-swap;
    * the production sendFallbackGuard never calls this — fallback uses
    * the secondary by direct call, leaving activeName untouched so the
-   * primary gets retried after the cooldown (CLAUDE.md §7/§8).
+   * primary gets retried after the cooldown.
    */
   switchTo(name: DriverName): void {
     if (!this.drivers.has(name)) {

@@ -1257,7 +1257,7 @@ function makeSender(
 
   return {
     text(content: string, opts: { linkPreview?: boolean; mentions?: string[] } = {}) {
-      // The text path goes through sendFallbackGuard (CLAUDE.md §4/§15):
+      // The text path goes through sendFallbackGuard:
       // try the active driver, verify the message actually landed in the
       // driver's history, and on failure swap to the other driver. sendMedia
       // and react below still go straight to the contract on purpose — media

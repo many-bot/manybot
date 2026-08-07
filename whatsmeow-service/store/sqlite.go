@@ -1,7 +1,7 @@
 // Package store wraps the whatsmeow SQL store container.
 //
 // Pure-Go SQLite via `modernc.org/sqlite` is used so we don't need cgo
-// (CLAUDE.md §17 — keep build portable).
+// (keep build portable).
 package store
 
 import (

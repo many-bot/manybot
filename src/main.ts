@@ -26,7 +26,7 @@ import { t }                          from "#i18n";
 let shuttingDown = false;
 
 // DriverManager registration: only register drivers that are enabled in
-// the config (CLAUDE.md §3). whatsmeow.enabled = false means no gRPC
+// the config. whatsmeow.enabled = false means no gRPC
 // subprocess, no Go binary lookup, no extra work at boot — the manager
 // simply doesn't know about it and sendFallbackGuard sees a missing
 // secondary and fires send_failed_no_fallback if needed.
@@ -116,7 +116,7 @@ process.on("SIGINT",  () => shutdown("SIGINT"));
 // the JID to the console, to paste into CHATS in manybot.toml.
 // Does not enter the normal bot flow (plugins are not loaded).
 if (process.argv.includes("--getid")) {
-  // getId? is a Baileys-only diagnostic method (CLAUDE.md §15). Look it
+  // getId? is a Baileys-only diagnostic method. Look it
   // up on the registered Baileys driver regardless of which one is
   // active — --getid always uses Baileys, even in a whatsmeow-primary
   // configuration, because it needs the diagnostic session, not the
@@ -146,7 +146,7 @@ if (process.argv.includes("--getid")) {
     .then(() => {
       logger.success(t("bot.ready"));
 
-      // CLAUDE.md §7: the secondary driver is connected and paired in the
+      // The secondary driver is connected and paired in the
       // background so sendFallbackGuard can reach for it without first
       // having to wait through a connect() round-trip when the primary
       // fails. The secondary does NOT register `messages.upsert` handlers

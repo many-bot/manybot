@@ -4,7 +4,7 @@
 // Builds the Go whatsmeow gRPC service binary and drops it into
 // `whatsmeow-service/bin/whatsmeow-service`. Skips silently when Go
 // isn't on PATH — the bot is allowed to run Baileys-only without
-// whatsmeow (CLAUDE.md §17). When `go` IS available but the build
+// whatsmeow. When `go` IS available but the build
 // fails (e.g. proxy issue, missing dep) the script exits non-zero so
 // CI catches it.
 

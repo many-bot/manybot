@@ -45,7 +45,7 @@ import (
 )
 
 // Per-chat history is small: we only need the last few messages to confirm
-// that a `sendText` round-trip landed (CLAUDE.md §5 — fallback guard
+// that a `sendText` round-trip landed (fallback guard
 // compares by `id`, not by text). whatsmeow doesn't expose a public
 // message-history API per JID, so we keep an LRU in-process from the
 // events stream.
@@ -172,7 +172,7 @@ func (s *Server) loadFirstDevice(ctx context.Context) (*store.Device, error) {
 // The whole call blocks until either AuthSuccess fires (ok=true) or the
 // request context is cancelled (returns a DeadlineExceeded-ish error).
 // Pairing code is left empty in this initial implementation — QR is
-// sufficient for the linked-device flow described in CLAUDE.md §13.
+// sufficient for the linked-device flow described earlier.
 func (s *Server) Connect(ctx context.Context, req *pb.ConnectRequest) (*pb.ConnectResponse, error) {
 	s.connMu.Lock()
 	if s.connected {
@@ -399,7 +399,7 @@ func (s *Server) VerifySent(ctx context.Context, req *pb.JidAndId) (*pb.VerifyRe
 
 // GetHistory returns the most recent N messages for the given chat,
 // oldest first. The fallback guard in Node uses this for its windowed
-// verification (CLAUDE.md §5).
+// verification.
 func (s *Server) GetHistory(ctx context.Context, req *pb.GetHistoryRequest) (*pb.GetHistoryResponse, error) {
 	chat := canonicalChat(req.GetJid())
 	limit := int(req.GetLimit())
@@ -566,7 +566,7 @@ func strPtr(s string) *string { return &s }
 
 // sendExtra builds the SendRequestExtra used by SendText. Today it only
 // pins the message ID so the Node side can later correlate the same ID
-// against the events stream for verification (CLAUDE.md §5).
+// against the events stream for verification.
 func sendExtra(id string) whatsmeow.SendRequestExtra {
 	return whatsmeow.SendRequestExtra{ID: types.MessageID(id)}
 }

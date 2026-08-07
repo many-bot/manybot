@@ -2,9 +2,6 @@ module whatsmeow-service
 
 go 1.25.0
 
-// whatsmeow é MPL-2.0 e projeto ManyBot é GPL-3.0-only.
-// Compatibilidade precisa ser revisada antes de qualquer release público
-// (ver CLAUDE.md §17). Desenvolvimento local não é impactado.
 require (
 	google.golang.org/grpc v1.71.0
 	google.golang.org/protobuf v1.36.11

@@ -16,7 +16,7 @@
  * Driver-neutral shape of a stored message. Used by getHistory(),
  * delivery verification, and every inbound BotMessage that flows
  * through the kernel. `contentHash` is sha1 of normalized text or
- * media buffer (see CLAUDE.md §5) — used as a tiebreaker when the id
+ * media buffer — used as a tiebreaker when the id
  * alone is not reliable.
  *
  * The lean fields (id/chatId/fromMe/type/contentHash/timestamp) are

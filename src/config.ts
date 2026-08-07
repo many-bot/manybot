@@ -425,7 +425,7 @@ export interface Config {
   STATUS_ENABLED: boolean;
   STATUS_PORT:    number;
 
-  // ── Driver selection (CLAUDE.md §3) ──────────────────────────────────────
+  // ── Driver selection ───────────────────────────────────────────────────────
   // `primary` is the driver SendFallbackGuard will try first. The other
   // driver registered with the DriverManager is the fallback. Drivers not
   // enabled here are not registered at all — no process is spawned, no

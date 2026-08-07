@@ -5,8 +5,8 @@
  * driver exists. Every outbound text send from a plugin flows through
  * sendWithFallback(): try the primary, verify the message actually
  * appeared in the driver's history, and if it didn't, swap to the
- * secondary and try again. See CLAUDE.md §4 (flow), §5 (verification),
- * and §8 (cooldown).
+ * secondary and try again. See "flow", "verification",
+ * and cooldown).
  *
  * Why a guard instead of inlining the logic in the sender: every
  * downstream caller (makeSender, buildSendApi, buildSetupSendApi) gets
@@ -15,8 +15,8 @@
  * one file.
  *
  * The guard is intentionally text-only in this phase. sendMedia and
- * react go straight to the active driver — CLAUDE.md §15 marks that
- * as out of scope until the media fallback path is designed.
+ * react go straight to the active driver — media fallback is
+ * marked as out of scope until the path is designed.
  */
 
 import { CONFIG } from "#config";
@@ -69,7 +69,7 @@ export async function sendWithFallback(
   const primary    = dm.active();
   const primaryKey = primary.name;
 
-  // §8: if the primary is in cooldown, skip straight to the secondary
+  // if the primary is in cooldown, skip straight to the secondary
   // (don't repeat the same failing call message after message). Same
   // try/catch as the normal path so a failing secondary here also fires
   // send_failed_both_drivers — observability stays consistent across
@@ -91,7 +91,7 @@ export async function sendWithFallback(
 
   // Normal path: try primary, verify, fall back if verification fails.
   // waitForSendSlot is the same throttle the rest of the senders use
-  // (CLAUDE.md §4 implicitly: fallback must respect rate-limit too).
+  // (fallback must respect rate-limit too).
   await waitForSendSlot(jid, { cooldown: true, jitter: true });
   const ref = await primary.sendText(jid, text, opts);
 
@@ -156,7 +156,7 @@ async function sendVia(
  * time-windowed rechecks — `windows` are interpreted as delays
  * BETWEEN successive checks, last one being the final timeout.
  *
- * Per CLAUDE.md §5: id is the primary signal. We match against ALL
+ * id is the primary signal. We match against ALL
  * fromMe messages in the slice, not just the newest — the secondary
  * path skips `waitForSendSlot` (skipGuard=true) so two concurrent
  * sends to the same jid can both be in flight at once, and "newest

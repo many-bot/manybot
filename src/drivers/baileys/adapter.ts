@@ -431,7 +431,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       return { id, lid: u?.lid };
     },
 
-    // ── verification primitive (CLAUDE.md §5) ──────────────────────────
+    // ── verification primitive ──────────────────────────────────────────
     // sendFallbackGuard calls this right after sendText resolves to confirm
     // the message actually landed. The Baileys in-memory store is updated
     // synchronously by the `messages.upsert` listener (store.ts), and

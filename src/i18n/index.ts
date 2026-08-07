@@ -145,6 +145,8 @@ function interpolate(str: string, context: Record<string, unknown> = {}): string
  * @param {object} context - values to interpolate {{key}}
  * @returns {string}
  */
+export function t(key: string): string;
+export function t(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
 export function t(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
   ensureLoaded();
 
@@ -230,6 +232,8 @@ export function createPluginT(pluginMetaUrl: string) {
    * @param {object} context
    * @returns {string}
    */
+  function pluginT(key: string): string;
+  function pluginT(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
   function pluginT(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
     // Try plugin's target language first
     let value = getNestedValue(pluginTranslations, key);

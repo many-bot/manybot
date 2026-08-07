@@ -233,7 +233,7 @@ export interface WaContract {
   /**
    * Read the most recent N messages the driver has on hand for `jid`,
    * in chronological order (oldest → newest). Used by the fallback guard
-   * to confirm a send landed (CLAUDE.md §5). Optional for drivers that
+   * to confirm a send landed. Optional for drivers that
    * don't keep a local history (pure-fire-and-forget transports) — the
    * fallback guard degrades to time-based confirmation in that case.
    */

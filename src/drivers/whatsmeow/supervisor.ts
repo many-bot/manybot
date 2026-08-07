@@ -27,7 +27,7 @@
  * codebase is unaware anything is missing — it just never sees a
  * ready whatsmeow.
  *
- * See CLAUDE.md §10–§12 for the lifecycle contract this implements.
+ * See the lifecycle contract this implements.
  */
 
 import { spawn } from "node:child_process";

@@ -2,7 +2,7 @@
 // `go.mau.fi/whatsmeow` that exposes the driver-neutral `WaContract`
 // surface (see /home/syntax/work/active/manybot/dev/src/kernel/waContract.ts)
 // as a gRPC server. Node connects over localhost (subprocess pattern,
-// see CLAUDE.md §10 / §11 / §12).
+// see subprocess pattern).
 //
 // RPCs not implemented against whatsmeow (yet) return codes.Unimplemented —
 // the Node client (`src/drivers/whatsmeow/client.ts`) translates them

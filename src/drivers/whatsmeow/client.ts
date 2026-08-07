@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 /**
  * Whatsmeow gRPC client implementing the WaContract interface.
  *
- * Phase 1 scope (CLAUDE.md §1/§15): only the send path (sendText) and the
+ * Phase 1 scope: only the send path (sendText) and the
  * verification primitives (getHistory) are fully wired. Every other
  * WaContract method throws "not implemented" — the kernel loads plugins
  * only after `connection.update === "open"`, and a plugin that calls e.g.
@@ -132,7 +132,7 @@ class WhatsmeowClient implements Partial<WaContract> {
   }
 
   // ── Send ───────────────────────────────────────────────────────────────────
-  // Only sendText is in phase-1 scope per CLAUDE.md §1. Media fallback is
+  // Only sendText is in phase-1 scope. Media fallback is
   // documented in the interface but explicitly deferred.
 
   async sendText(jid: string, text: string, opts?: { quoted?: BotQuotedRef; mentions?: string[] }): Promise<SentMessageRef> {

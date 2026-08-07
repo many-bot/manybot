@@ -1,7 +1,7 @@
 /**
  * kernel/pluginApi.ts — explicit `PluginContext` contract.
  *
- * Per CLAUDE.md §15, this file declares the typed surface that the
+ * This file declares the typed surface that the
  * plugin runtime passes to `plugin.default(ctx)` and `plugin.setup(ctx)`.
  * Plugins depend ONLY on `PluginContext` (and the driver-neutral types
  * it references — `WaContract`, `BotMessage`, …). The

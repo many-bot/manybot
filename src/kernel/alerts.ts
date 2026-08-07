@@ -187,7 +187,7 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
  * place but not yet mapped here still surfaces in the log instead of
  * silently disappearing.
  *
- * Mapped kinds (CLAUDE.md §18):
+ * Mapped kinds:
  *   send_failed_no_fallback   — primary failed, no secondary available
  *   send_failed_both_drivers  — both primary and secondary failed
  */

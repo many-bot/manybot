@@ -290,7 +290,7 @@ async function startBot() {
 /**
  * isReady() mirrors the "open" event from Baileys — once connect() resolves
  * we don't yet have a session, so we wait for the connection.update === "open"
- * path to flip the flag. CLAUDE.md §2 requires true ONLY after both.
+ * path to flip the flag. isReady() requires true ONLY after both.
  */
 function sockIsOpen(): boolean {
   return state === "READY" || state === "READY_INIT";
@@ -399,7 +399,7 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
   // ── verification primitive ─────────────────────────────────────────────
   // Delegates to the adapter, which reads from the in-memory Baileys
   // store (store.messages). The adapter guarantees getHistory is defined
-  // (CLAUDE.md §5), so the defensive fallback is gone.
+  // (the Baileys adapter guarantees getHistory is defined), so the defensive fallback is gone.
   getHistory: (jid, opts) => requireReady().getHistory!(jid, opts),
 
   /**
