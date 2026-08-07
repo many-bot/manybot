@@ -145,7 +145,7 @@ function interpolate(str: string, context: Record<string, unknown> = {}): string
  * @param {object} context - values to interpolate {{key}}
  * @returns {string}
  */
-export function t(key: string, context: Record<string, unknown> = {}): string {
+export function t(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
   ensureLoaded();
 
   // Try current language first
@@ -159,6 +159,12 @@ export function t(key: string, context: Record<string, unknown> = {}): string {
   // If still not found, return the key
   if (value === undefined) {
     return key;
+  }
+
+  // Caller explicitly wants the raw nested object (e.g. a map like
+  // messages.mobs), skip stringification/interpolation entirely.
+  if (context.returnObjects && typeof value === "object" && value !== null) {
+    return value as Record<string, unknown>;
   }
 
   // If not string, convert
@@ -224,7 +230,7 @@ export function createPluginT(pluginMetaUrl: string) {
    * @param {object} context
    * @returns {string}
    */
-  function pluginT(key: string, context: Record<string, unknown> = {}): string {
+  function pluginT(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
     // Try plugin's target language first
     let value = getNestedValue(pluginTranslations, key);
 
@@ -236,6 +242,10 @@ export function createPluginT(pluginMetaUrl: string) {
     // If still not found, return the key
     if (value === undefined) {
       return key;
+    }
+
+    if (context.returnObjects && typeof value === "object" && value !== null) {
+      return value as Record<string, unknown>;
     }
 
     if (typeof value !== "string") {
