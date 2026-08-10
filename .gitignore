@@ -11,5 +11,5 @@ manybot-*.tgz
 dist/
 whatsmeow-service/bin/
 whatsmeow-session.db*
-whatsmeow-service/pb/*.pb.go
+
 hooks/.env
