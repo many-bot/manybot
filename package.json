@@ -5,7 +5,7 @@
     "name": "SyntaxError!",
     "email": "me@stxerr.dev"
   },
-  "version": "5.6.0-rc.7",
+  "version": "5.6.0-rc.8",
   "license": "GPL-3.0-only",
   "private": false,
   "engines": {
