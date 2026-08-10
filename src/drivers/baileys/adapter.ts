@@ -593,13 +593,25 @@ function buildQuotedOpts(quoted: BotQuotedRef | undefined): SendOpts | undefined
 }
 
 function toBaileysKey(ref: BotQuotedRef): {
-  id: string | null; remoteJid: string; fromMe: boolean; participant: string | undefined;
+  key: { id: string | null; remoteJid: string; fromMe: boolean; participant: string | undefined };
 } {
+  // Baileys expects `quoted` to be a message-shaped object with these
+  // fields nested under `.key` (quoted.key.id / .remoteJid / .fromMe /
+  // .participant) — it reads quoted.key.* to build contextInfo
+  // (stanzaId, participant, fromMe). Passing them flat (as this used to)
+  // means quoted.key is undefined inside Baileys, so participant/fromMe
+  // resolve to undefined and the quoted reply gets misattributed to the
+  // bot itself instead of the original sender. The quoted text still
+  // rendered before this fix because WhatsApp's client resolves the
+  // preview content locally via stanzaId — only the author attribution
+  // was broken.
   return {
-    id:         ref.id ?? null,
-    remoteJid: ref.remoteJid ?? "",
-    fromMe:    !!ref.fromMe,
-    participant: ref.participant ?? undefined,
+    key: {
+      id:          ref.id ?? null,
+      remoteJid:   ref.remoteJid ?? "",
+      fromMe:      !!ref.fromMe,
+      participant: ref.participant ?? undefined,
+    },
   };
 }
 
