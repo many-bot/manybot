@@ -42,6 +42,9 @@ npm ci
 npm run build
 npm run test --if-present
 
+echo "==> Cross-compilando whatsmeow-service para todas as plataformas"
+node scripts/build-whatsmeow-release.mjs
+
 PREV_TAG="$(git --git-dir="$BARE_REPO" describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
 if [ -n "$PREV_TAG" ]; then
   NOTES="$(git --git-dir="$BARE_REPO" log "${PREV_TAG}..${TAG}" --pretty=format:'- %s (%h)')"
@@ -115,4 +118,53 @@ if [ -f "$GITHUB_ENV_FILE" ]; then
     echo "⚠️  Falha ao criar a release no GitHub, seguindo mesmo assim."
 else
   echo "ℹ️  hooks/.env não encontrado — pulando criação de release no GitHub."
+fi
+
+# ── Upload whatsmeow binaries to Codeberg release ────────────────────────
+if [ -f "$GITHUB_ENV_FILE" ]; then
+  set -a; source "$GITHUB_ENV_FILE"; set +a
+fi
+
+if [ -n "${CODECBERG_TOKEN:-}" ] && [ -n "${CODECBERG_REPO:-}" ]; then
+  DIST_DIR="whatsmeow-service/dist-release"
+  if [ -d "$DIST_DIR" ]; then
+    echo "==> Enviando binários whatsmeow para Codeberg ($CODECBERG_REPO)"
+
+    BODY="These binaries are automatically built for manybot's internal whatsmeow driver. They are **not** intended for standalone download or direct use."
+
+    # Cria a release (ou pega o id se já existir)
+    REL_JSON="$(curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases" \
+      -H "Authorization: token $CODECBERG_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "$(node -e "console.log(JSON.stringify({tag_name:'$TAG', name:'$TAG', body:'$BODY', prerelease:$IS_RC}))")")" || true
+    REL_ID="$(echo "$REL_JSON" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{console.log('')}})" 2>/dev/null)"
+
+    if [ -z "$REL_ID" ]; then
+      # 409 — já existe; busca por tag
+      echo "   Release já existe, buscando ID..."
+      REL_ID="$(curl -sS "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases/tags/$TAG" \
+        -H "Authorization: token $CODECBERG_TOKEN" | \
+        node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{console.log('')}})" 2>/dev/null)"
+    fi
+
+    if [ -n "$REL_ID" ]; then
+      for FILE in "$DIST_DIR"/*; do
+        FNAME="$(basename "$FILE")"
+        echo "   Uploading $FNAME..."
+        curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases/$REL_ID/assets" \
+          -H "Authorization: token $CODECBERG_TOKEN" \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary "@$FILE" \
+          -H "Content-Disposition: attachment; filename=\"$FNAME\"" > /dev/null || \
+          echo "   ⚠️  Falha ao enviar $FNAME"
+      done
+      echo "✅ Binários whatsmeow enviados para Codeberg"
+    else
+      echo "⚠️  Não foi possível obter o ID da release — pulando upload de binários"
+    fi
+  else
+    echo "ℹ️  $DIST_DIR não encontrado — pulando upload de binários whatsmeow"
+  fi
+else
+  echo "ℹ️  CODECBERG_TOKEN/CODECBERG_REPO não configurados — pulando upload de binários"
 fi
