@@ -69,5 +69,16 @@
     "retrying": "Tentando novamente ({{attempt}}/{{max}})...",
     "sessionWiped": "Sessão descartada, tentando parear novamente ({{round}}/{{max}})...",
     "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
+  },
+  "whatsmeow": {
+    "installPrompt": "Instalar driver whatsmeow para melhor suporte a fallback?",
+    "unsupportedArch": "Driver whatsmeow não disponível para {{os}}-{{arch}}. O bot usará apenas Baileys.",
+    "fetchingTag": "Buscando última versão do whatsmeow...",
+    "fetchFailed": "Não foi possível acessar o Codeberg. Instalação do whatsmeow ignorada.",
+    "downloading": "Baixando {{url}}...",
+    "downloadFailed": "Download falhou: {{reason}}",
+    "installTitle": "Driver whatsmeow",
+    "installed": "Driver whatsmeow instalado em {{path}}",
+    "restartNotice": "Reinicie o bot para que o driver whatsmeow entre em efeito."
   }
 }
