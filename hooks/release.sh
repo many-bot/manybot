@@ -130,13 +130,13 @@ if [ -n "${CODECBERG_TOKEN:-}" ] && [ -n "${CODECBERG_REPO:-}" ]; then
   if [ -d "$DIST_DIR" ]; then
     echo "==> Enviando binários whatsmeow para Codeberg ($CODECBERG_REPO)"
 
-    BODY="These binaries are automatically built for manybot's internal whatsmeow driver. They are **not** intended for standalone download or direct use."
+    BODY="These binaries are automatically built for manybot internal whatsmeow driver. They are **not** intended for standalone download or direct use."
 
     # Cria a release (ou pega o id se já existir)
     REL_JSON="$(curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases" \
       -H "Authorization: token $CODECBERG_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "$(node -e "console.log(JSON.stringify({tag_name:'$TAG', name:'$TAG', body:'$BODY', prerelease:$IS_RC}))")")" || true
+      -d "$(TAG="$TAG" BODY="$BODY" IS_RC="$IS_RC" node -e "console.log(JSON.stringify({tag_name:process.env.TAG, name:process.env.TAG, body:process.env.BODY, prerelease:process.env.IS_RC==='true'}))")")" || true
     REL_ID="$(echo "$REL_JSON" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{console.log('')}})" 2>/dev/null)"
 
     if [ -z "$REL_ID" ]; then
