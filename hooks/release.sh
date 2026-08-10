@@ -125,34 +125,53 @@ if [ -f "$GITHUB_ENV_FILE" ]; then
   set -a; source "$GITHUB_ENV_FILE"; set +a
 fi
 
-if [ -n "${CODECBERG_TOKEN:-}" ] && [ -n "${CODECBERG_REPO:-}" ]; then
+if [ -n "${CODEBERG_TOKEN:-}" ] && [ -n "${CODEBERG_REPO:-}" ]; then
   DIST_DIR="whatsmeow-service/dist-release"
   if [ -d "$DIST_DIR" ]; then
-    echo "==> Enviando binários whatsmeow para Codeberg ($CODECBERG_REPO)"
+    echo "==> Enviando binários whatsmeow para Codeberg ($CODEBERG_REPO)"
 
     BODY="These binaries are automatically built for manybot internal whatsmeow driver. They are **not** intended for standalone download or direct use."
 
-    # Cria a release (ou pega o id se já existir)
-    REL_JSON="$(curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases" \
-      -H "Authorization: token $CODECBERG_TOKEN" \
+    # Helper: extrai o id de uma resposta JSON da API
+    extract_id() { node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log(r.id??'')}catch{console.log('')}})" 2>/dev/null; }
+
+    # Cria a release via POST; captura HTTP code + body separadamente
+    echo "   Criando release no Codeberg..."
+    REL_RESPONSE="$(mktemp)"
+    REL_HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$REL_RESPONSE" -X POST \
+      "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases" \
+      -H "Authorization: token $CODEBERG_TOKEN" \
       -H "Content-Type: application/json" \
       -d "$(TAG="$TAG" BODY="$BODY" IS_RC="$IS_RC" node -e "console.log(JSON.stringify({tag_name:process.env.TAG, name:process.env.TAG, body:process.env.BODY, prerelease:process.env.IS_RC==='true'}))")")" || true
-    REL_ID="$(echo "$REL_JSON" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{console.log('')}})" 2>/dev/null)"
 
-    if [ -z "$REL_ID" ]; then
-      # 409 — já existe; busca por tag
-      echo "   Release já existe, buscando ID..."
-      REL_ID="$(curl -sS "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases/tags/$TAG" \
-        -H "Authorization: token $CODECBERG_TOKEN" | \
-        node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{console.log(JSON.parse(d).id||'')}catch{console.log('')}})" 2>/dev/null)"
+    if [ "$REL_HTTP_CODE" = "201" ]; then
+      REL_ID="$(extract_id < "$REL_RESPONSE")"
+    elif [ "$REL_HTTP_CODE" = "409" ]; then
+      # release já existe; busca por tag
+      echo "   Release já existe (HTTP 409), buscando ID por tag..."
+      GET_RESPONSE="$(mktemp)"
+      GET_HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$GET_RESPONSE" \
+        "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases/tags/$TAG" \
+        -H "Authorization: token $CODEBERG_TOKEN")" || true
+      if [ "$GET_HTTP_CODE" = "200" ]; then
+        REL_ID="$(extract_id < "$GET_RESPONSE")"
+      else
+        echo "   ⚠️  GET /releases/tags/$TAG retornou HTTP $GET_HTTP_CODE"
+        head -c 500 "$GET_RESPONSE" | sed 's/^/       /'
+      fi
+      rm -f "$GET_RESPONSE"
+    else
+      echo "   ⚠️  POST /releases retornou HTTP $REL_HTTP_CODE (inesperado)"
+      head -c 500 "$REL_RESPONSE" | sed 's/^/       /'
     fi
+    rm -f "$REL_RESPONSE"
 
     if [ -n "$REL_ID" ]; then
       for FILE in "$DIST_DIR"/*; do
         FNAME="$(basename "$FILE")"
         echo "   Uploading $FNAME..."
-        curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODECBERG_REPO/releases/$REL_ID/assets" \
-          -H "Authorization: token $CODECBERG_TOKEN" \
+        curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases/$REL_ID/assets" \
+          -H "Authorization: token $CODEBERG_TOKEN" \
           -H "Content-Type: application/octet-stream" \
           --data-binary "@$FILE" \
           -H "Content-Disposition: attachment; filename=\"$FNAME\"" > /dev/null || \
@@ -166,5 +185,5 @@ if [ -n "${CODECBERG_TOKEN:-}" ] && [ -n "${CODECBERG_REPO:-}" ]; then
     echo "ℹ️  $DIST_DIR não encontrado — pulando upload de binários whatsmeow"
   fi
 else
-  echo "ℹ️  CODECBERG_TOKEN/CODECBERG_REPO não configurados — pulando upload de binários"
+  echo "ℹ️  CODEBERG_TOKEN/CODEBERG_REPO não configurados — pulando upload de binários"
 fi
