@@ -72,6 +72,34 @@ if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
     });
   ')"
   echo "✅ Release criada no GitHub: $URL"
+
+  RELEASE_ID="$(echo "$BODY" | node -e '
+    let d = "";
+    process.stdin.on("data", c => d += c);
+    process.stdin.on("end", () => {
+      try { console.log(JSON.parse(d).id || ""); } catch { console.log(""); }
+    });
+  ')"
+
+  # Upload whatsmeow binaries como assets da release
+  DIST_DIR="${DIST_DIR:-whatsmeow-service/dist-release}"
+  if [ -n "$RELEASE_ID" ] && [ -d "$DIST_DIR" ]; then
+    echo "==> Enviando binários whatsmeow como assets da release..."
+    for FILE in "$DIST_DIR"/*; do
+      FNAME="$(basename "$FILE")"
+      echo "   Uploading $FNAME..."
+      curl -sS -X POST \
+        "https://uploads.github.com/repos/$GITHUB_REPO/releases/$RELEASE_ID/assets?name=$FNAME" \
+        -H "Authorization: Bearer $GITHUB_TOKEN" \
+        -H "Accept: application/vnd.github+json" \
+        -H "Content-Type: application/octet-stream" \
+        --data-binary "@$FILE" > /dev/null || \
+        echo "   ⚠️  Falha ao enviar $FNAME"
+    done
+    echo "✅ Binários whatsmeow enviados para a release do GitHub"
+  elif [ -n "$RELEASE_ID" ] && [ ! -d "$DIST_DIR" ]; then
+    echo "ℹ️  $DIST_DIR não encontrado — pulando upload de binários"
+  fi
 else
   echo "⚠️  Falha ao criar release no GitHub (HTTP $HTTP_CODE):"
   echo "$BODY"

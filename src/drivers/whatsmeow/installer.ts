@@ -28,9 +28,9 @@ function str(val: string | Record<string, unknown>): string {
 
 async function fetchLatestTag(): Promise<string> {
   const res = await fetch(
-    "https://codeberg.org/api/v1/repos/many-bot/manybot/releases/latest"
+    "https://api.github.com/repos/many-bot/manybot/releases/latest"
   );
-  if (!res.ok) throw new Error(`Codeberg API: ${res.status}`);
+  if (!res.ok) throw new Error(`GitHub API: ${res.status}`);
   const data = await res.json() as { tag_name?: string };
   return data.tag_name ?? "v5.6.1";
 }
@@ -63,7 +63,7 @@ export async function promptWhatsmeowInstall(): Promise<void> {
     return;
   }
 
-  const url = `https://codeberg.org/many-bot/manybot/releases/download/${tag}/${target.name}`;
+  const url = `https://github.com/many-bot/manybot/releases/download/${tag}/${target.name}`;
   spin.message(str(t("whatsmeow.downloading", { url })));
 
   let res: Response;

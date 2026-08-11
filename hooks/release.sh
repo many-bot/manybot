@@ -109,82 +109,12 @@ if [ "$STATUS" = "staged" ]; then
   echo "👉 Falta aprovar. De qualquer máquina com 2FA: npm stage list  (pra achar o id)  e depois  npm stage approve <id>"
 fi
 
-# Cria a Release no GitHub, se houver hooks/.env configurado. Opcional —
-# igual ao 'continue-on-error: true' do YAML antigo, uma falha aqui não
-# derruba o resto do processo (build/publish já aconteceram).
+# Cria a Release no GitHub e faz upload dos binários whatsmeow, se houver
+# hooks/.env configurado. Opcional — falha aqui não derruba o processo.
 GITHUB_ENV_FILE="$(dirname "${BASH_SOURCE[0]}")/.env"
 if [ -f "$GITHUB_ENV_FILE" ]; then
   bash "$(dirname "${BASH_SOURCE[0]}")/github-release.sh" "$TAG" "$IS_RC" || \
     echo "⚠️  Falha ao criar a release no GitHub, seguindo mesmo assim."
 else
   echo "ℹ️  hooks/.env não encontrado — pulando criação de release no GitHub."
-fi
-
-# ── Upload whatsmeow binaries to Codeberg release ────────────────────────
-if [ -f "$GITHUB_ENV_FILE" ]; then
-  set -a; source "$GITHUB_ENV_FILE"; set +a
-fi
-
-if [ -n "${CODEBERG_TOKEN:-}" ] && [ -n "${CODEBERG_REPO:-}" ]; then
-  DIST_DIR="whatsmeow-service/dist-release"
-  if [ -d "$DIST_DIR" ]; then
-    echo "==> Enviando binários whatsmeow para Codeberg ($CODEBERG_REPO)"
-
-    BODY="These binaries are automatically built for manybot internal whatsmeow driver. They are **not** intended for standalone download or direct use."
-
-    # Helper: extrai o id de uma resposta JSON da API
-    extract_id() { node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);console.log(r.id??'')}catch{console.log('')}})" 2>/dev/null; }
-
-    # Cria a release via POST; captura HTTP code + body separadamente
-    echo "   Criando release no Codeberg..."
-    REL_ID=""
-    REL_RESPONSE="$(mktemp)"
-    REL_HTTP_CODE="$(curl -sS -L --post301 --post302 --post303 -w '%{http_code}' -o "$REL_RESPONSE" -X POST \
-      "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases" \
-      -H "Authorization: token $CODEBERG_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d "$(TAG="$TAG" BODY="$BODY" IS_RC="$IS_RC" node -e "console.log(JSON.stringify({tag_name:process.env.TAG, name:process.env.TAG, body:process.env.BODY, prerelease:process.env.IS_RC==='true'}))")")" || true
-
-    if [ "$REL_HTTP_CODE" = "201" ]; then
-      REL_ID="$(extract_id < "$REL_RESPONSE")"
-    elif [ "$REL_HTTP_CODE" = "409" ]; then
-      # release já existe; busca por tag
-      echo "   Release já existe (HTTP 409), buscando ID por tag..."
-      GET_RESPONSE="$(mktemp)"
-      GET_HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$GET_RESPONSE" \
-        "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases/tags/$TAG" \
-        -H "Authorization: token $CODEBERG_TOKEN")" || true
-      if [ "$GET_HTTP_CODE" = "200" ]; then
-        REL_ID="$(extract_id < "$GET_RESPONSE")"
-      else
-        echo "   ⚠️  GET /releases/tags/$TAG retornou HTTP $GET_HTTP_CODE"
-        head -c 500 "$GET_RESPONSE" | sed 's/^/       /'
-      fi
-      rm -f "$GET_RESPONSE"
-    else
-      echo "   ⚠️  POST /releases retornou HTTP $REL_HTTP_CODE (inesperado)"
-      head -c 500 "$REL_RESPONSE" | sed 's/^/       /'
-    fi
-    rm -f "$REL_RESPONSE"
-
-    if [ -n "$REL_ID" ]; then
-      for FILE in "$DIST_DIR"/*; do
-        FNAME="$(basename "$FILE")"
-        echo "   Uploading $FNAME..."
-        curl -sS -X POST "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases/$REL_ID/assets" \
-          -H "Authorization: token $CODEBERG_TOKEN" \
-          -H "Content-Type: application/octet-stream" \
-          --data-binary "@$FILE" \
-          -H "Content-Disposition: attachment; filename=\"$FNAME\"" > /dev/null || \
-          echo "   ⚠️  Falha ao enviar $FNAME"
-      done
-      echo "✅ Binários whatsmeow enviados para Codeberg"
-    else
-      echo "⚠️  Não foi possível obter o ID da release — pulando upload de binários"
-    fi
-  else
-    echo "ℹ️  $DIST_DIR não encontrado — pulando upload de binários whatsmeow"
-  fi
-else
-  echo "ℹ️  CODEBERG_TOKEN/CODEBERG_REPO não configurados — pulando upload de binários"
 fi
