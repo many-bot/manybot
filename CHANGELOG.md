@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.6.0-rc.6 — In-Development
+## v5.6.0 — 2026-08-11
 
 ### New Features
 
