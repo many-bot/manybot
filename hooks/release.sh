@@ -137,8 +137,9 @@ if [ -n "${CODEBERG_TOKEN:-}" ] && [ -n "${CODEBERG_REPO:-}" ]; then
 
     # Cria a release via POST; captura HTTP code + body separadamente
     echo "   Criando release no Codeberg..."
+    REL_ID=""
     REL_RESPONSE="$(mktemp)"
-    REL_HTTP_CODE="$(curl -sS -w '%{http_code}' -o "$REL_RESPONSE" -X POST \
+    REL_HTTP_CODE="$(curl -sS -L --post301 --post302 --post303 -w '%{http_code}' -o "$REL_RESPONSE" -X POST \
       "https://codeberg.org/api/v1/repos/$CODEBERG_REPO/releases" \
       -H "Authorization: token $CODEBERG_TOKEN" \
       -H "Content-Type: application/json" \
