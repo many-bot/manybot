@@ -83,7 +83,7 @@ export type { WAStore };
 // globally instead, before makeWASocket() ever constructs one.
 EventEmitter.defaultMaxListeners = 50;
 
-export const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
+export const AUTH_DIR = path.join(CONFIG_DIR, "sessions", CLIENT_ID, "baileys");
 
 // ── Shared store (survives socket reconnects) ─────────────────────────────────
 

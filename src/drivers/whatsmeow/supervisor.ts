@@ -31,12 +31,13 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONFIG } from "#config";
+import { CONFIG, CONFIG_DIR, CLIENT_ID } from "#config";
 import { logger } from "#logger";
 import { fireAlert } from "#kernel/alerts.js";
+import { getDriverManager } from "#kernel/driverManager.js";
 
 // ── Tunables (mirror drivers/baileys/index.ts:98-106) ──────────────────────
 const RECONNECT_BASE_MS        = 1000;
@@ -82,7 +83,8 @@ export interface WhatsmeowSupervisor {
  * first match that exists and is a regular file. Order:
  *   1. CONFIG.drivers.whatsmeow.binaryPath (explicit user choice)
  *   2. env WM_BINARY_PATH (escape hatch for exotic installs)
- *   3. dev layout (<cwd>/whatsmeow-service/bin/whatsmeow-service)
+ *   3. stable config dir (~/.manybot/whatsmeow-service/bin/whatsmeow-service)
+ *   4. dev layout (<cwd>/whatsmeow-service/bin/whatsmeow-service)
  *   4. npm-global layout (sibling of the node binary, /usr/local style)
  */
 function resolveBinaryPath(): string | null {
@@ -93,6 +95,11 @@ function resolveBinaryPath(): string | null {
 
   const fromEnv = process.env.WM_BINARY_PATH;
   if (fromEnv) candidates.push(path.resolve(fromEnv));
+
+  // Stable config dir: ~/.manybot/whatsmeow-service/bin/whatsmeow-service
+  candidates.push(
+    path.resolve(CONFIG_DIR, "whatsmeow-service", "bin", "whatsmeow-service")
+  );
 
   // Dev: `<repo>/whatsmeow-service/bin/whatsmeow-service`
   candidates.push(
@@ -219,8 +226,13 @@ export async function startWhatsmeowSupervisor(): Promise<WhatsmeowSupervisor | 
     return null;
   }
 
+  logger.info(`[supervisor] using binary: ${binary}`);
   const grpcAddress = CONFIG.drivers.whatsmeow.grpcAddress || "localhost:50051";
-  const sessionDir  = path.resolve(process.cwd(), "whatsmeow-session.db");
+
+  const sessionDir  = path.resolve(CONFIG_DIR, "sessions", CLIENT_ID, "whatsmeow", "session.db");
+  // Ensure the parent directory exists before the Go subprocess tries to
+  // create/open the SQLite file.
+  mkdirSync(path.dirname(sessionDir), { recursive: true });
 
   const state: InternalState = {
     proc:            null,
@@ -268,6 +280,7 @@ export async function startWhatsmeowSupervisor(): Promise<WhatsmeowSupervisor | 
     state.halted = true;
     state.ready  = false;
     state.readyDeferred?.reject(new Error(reason));
+    getDriverManager().markDegraded("whatsmeow", 600_000);
     fireAlert("whatsmeow_subprocess_halted", { reason });
   }
 
@@ -298,7 +311,17 @@ export async function startWhatsmeowSupervisor(): Promise<WhatsmeowSupervisor | 
     let proc: ReturnType<typeof spawn>;
     try {
       proc = spawn(state.binary, ["--grpc-addr", state.addr, "--session-dir", state.sessionDir], {
-        stdio: "ignore",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      // Forward Go service stdout/stderr to the bot log so we can see
+      // crashes, missing dependencies, port-in-use, etc. Without this
+      // `stdio: "ignore"` would discard everything and a crashed
+      // subprocess would only surface as an exit code.
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        process.stdout.write(`[whatsmeow-stdout] ${chunk}`);
+      });
+      proc.stderr?.on("data", (chunk: Buffer) => {
+        process.stderr.write(`[whatsmeow-stderr] ${chunk}`);
       });
     } catch (e) {
       logger.error(`[supervisor] spawn failed: ${(e as Error).message}`);

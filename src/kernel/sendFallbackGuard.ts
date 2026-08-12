@@ -93,13 +93,23 @@ export async function sendWithFallback(
   // waitForSendSlot is the same throttle the rest of the senders use
   // (fallback must respect rate-limit too).
   await waitForSendSlot(jid, { cooldown: true, jitter: true });
-  const ref = await primary.sendText(jid, text, opts);
 
-  if (await verifyDelivery(primary, jid, ref, drivers.verifyWindowMs)) {
-    return ref;
+  let primaryRef: SentMessageRef | null = null;
+  let primarySendFailed = false;
+  try {
+    primaryRef = await primary.sendText(jid, text, opts);
+  } catch (err) {
+    primarySendFailed = true;
+    logger.warn({ driver: primaryKey, jid, error: String(err) }, "send threw on primary");
   }
 
-  logger.warn({ driver: primaryKey, jid, messageId: ref.id }, "send not confirmed by primary");
+  if (!primarySendFailed) {
+    if (await verifyDelivery(primary, jid, primaryRef!, drivers.verifyWindowMs)) {
+      return primaryRef!;
+    }
+    logger.warn({ driver: primaryKey, jid, messageId: primaryRef!.id }, "send not confirmed by primary");
+  }
+
   dm.markDegraded(primaryKey, drivers.fallbackCooldownMs);
 
   const secondary = pickSecondary(dm, primaryKey);
@@ -110,7 +120,7 @@ export async function sendWithFallback(
 
   try {
     const fallbackRef = await sendVia(secondary, jid, text, opts, drivers.verifyWindowMs, /*skipGuard=*/true);
-    logger.info({ driver: secondary.name, jid, messageId: fallbackRef.id, reason: "primary verification failed" }, "message sent via fallback");
+    logger.info({ driver: secondary.name, jid, messageId: fallbackRef.id, reason: primarySendFailed ? "send threw" : "primary verification failed" }, "message sent via fallback");
     return fallbackRef;
   } catch (err) {
     fireAlert("send_failed_both_drivers", { jid, primary: primaryKey, secondary: secondary.name, error: String(err) });

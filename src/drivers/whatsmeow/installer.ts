@@ -1,7 +1,7 @@
-import { mkdirSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import path from "node:path";
 import * as clack from "@clack/prompts";
-import { persistConfigValue } from "#config";
+import { persistConfigValue, CONFIG_DIR } from "#config";
 import { t } from "#i18n";
 
 interface ArchTarget {
@@ -36,13 +36,24 @@ async function fetchLatestTag(): Promise<string> {
 }
 
 function binaryDir(): string {
-  return path.resolve(process.cwd(), "whatsmeow-service", "bin");
+  return path.resolve(CONFIG_DIR, "whatsmeow-service", "bin");
 }
 
 export async function promptWhatsmeowInstall(): Promise<void> {
   const target = detectTarget();
   if (!target) {
     clack.log.warn(str(t("whatsmeow.unsupportedArch", { os: process.platform, arch: process.arch })));
+    return;
+  }
+
+  const outPath = path.join(binaryDir(), "whatsmeow-service");
+  // Binary already on disk → skip the prompt and the download, but
+  // make sure the config flag is set so the supervisor boots on the
+  // next run. The earlier "no, declined install" flow only writes the
+  // TOML on success, so users who later build the binary by hand also
+  // hit this branch on their next first-login.
+  if (existsSync(outPath)) {
+    await persistConfigValue("driver_whatsmeow_enabled", "true");
     return;
   }
 
@@ -79,7 +90,6 @@ export async function promptWhatsmeowInstall(): Promise<void> {
 
   const dir = binaryDir();
   mkdirSync(dir, { recursive: true });
-  const outPath = path.join(dir, "whatsmeow-service");
   writeFileSync(outPath, buffer);
   chmodSync(outPath, 0o755);
 
@@ -91,4 +101,12 @@ export async function promptWhatsmeowInstall(): Promise<void> {
     str(t("whatsmeow.restartNotice")),
     str(t("whatsmeow.installTitle"))
   );
+
+  // The bot is still in its very first run (no Baileys session yet, no
+  // supervisor spawned) — the config has just been updated on disk but
+  // the in-memory `CONFIG` object and the supervisor lifecycle were
+  // initialized at startup with `whatsmeow.enabled = false`. Restarting
+  // is required for the new value to take effect. Exit cleanly so the
+  // user just re-runs the bot.
+  setTimeout(() => process.exit(0), 100);
 }

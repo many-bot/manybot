@@ -93,12 +93,90 @@ export interface BaileysAdapterHandle {
   unbind(sock: RawSocket): void;
 }
 
+/**
+ * Classify a Baileys message-content payload (`WAMessageContent`) into
+ * the neutral `(type, body, mimetype)` triple used by `BotMessage`. Pure
+ * function — no side effects, no closures — so it's safe to call for
+ * both real incoming messages and the embedded `quotedMessage` content
+ * carried in `contextInfo` (which can be an `ephemeralMessage`/
+ * `viewOnceMessage` wrapper, hence the `normalizeMessageContent` call).
+ *
+ * Exported so `api/index.ts` can decode the quoted payload when
+ * synthesizing the `BotMessage` returned by `getReply()`.
+ */
+export function decodeContent(content: unknown): { type: BotMessage["type"]; body: string; mimetype: string | undefined } {
+  const m = normalizeMessageContent(content as never) ?? undefined;
+  let type: BotMessage["type"] = "other";
+  let body = "";
+  let mimetype: string | undefined;
+  if (m?.conversation)                       { type = "text";     body = m.conversation; }
+  else if (m?.extendedTextMessage?.text)    { type = "text";     body = m.extendedTextMessage.text ?? ""; }
+  else if (m?.imageMessage)                  { type = "image";    body = m.imageMessage.caption   ?? ""; mimetype = m.imageMessage.mimetype    ?? undefined; }
+  else if (m?.videoMessage)                  { type = "video";    body = m.videoMessage.caption   ?? ""; mimetype = m.videoMessage.mimetype    ?? undefined; }
+  else if (m?.audioMessage)                  { type = "audio";                                mimetype = m.audioMessage.mimetype    ?? undefined; }
+  else if (m?.documentMessage)               { type = "document"; body = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
+  else if (m?.stickerMessage)                { type = "sticker";                              mimetype = m.stickerMessage.mimetype  ?? undefined; }
+  return { type, body, mimetype };
+}
+
 export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapterHandle {
   // mutable so rebind() can swap it; closure-scoped so the contract below
   // always sees the latest sock.
   let sock:  RawSocket   = initial.sock;
   const store: BotStore  = initial.store;
   // ── Adapter-local helpers ────────────────────────────────────────────────
+
+  /**
+   * Build the `quoted` option for `sock.sendMessage(jid, content, opts)`.
+   *
+   * Baileys expects the `quoted` field to be a full message-shaped object —
+   * `{ key: {...}, message: {...} }` — so it can extract both the attribution
+   * (stanzaId/participant/fromMe from `key`) and the preview content (from
+   * `message`) when generating contextInfo. Passing only `key` makes
+   * `generateWAMessageFromContent` call `normalizeMessageContent(undefined)`
+   * → `getContentType(undefined)` → `undefined`, then index it with `[]`
+   * and throw `Cannot read properties of undefined (reading 'undefined')`.
+   *
+   * We resolve the full envelope from the in-memory store, indexed by the
+   * (remoteJid, id) pair carried in the neutral `BotQuotedRef`. If the
+   * envelope is no longer present (evicted past MAX_MSGS_PER_CHAT, lost on
+   * restart, etc.) we return `undefined` rather than emit a half-formed
+   * `quoted` — degrading to a plain unquoted reply is safer than crashing
+   * the calling plugin.
+   */
+  function buildQuotedOpts(quoted: BotQuotedRef | undefined): SendOpts | undefined {
+    if (!quoted?.id || !quoted?.remoteJid) return undefined;
+    const raw = store.messages.get(quoted.remoteJid)?.get(quoted.id) as RawMessage | undefined;
+    const inner = raw?.message;
+    if (!inner) return undefined; // safe fallback: no quoted at all
+    // `quoted` (used by sendMessage for reply-citation) is a
+    // message-shaped object: `{ key: {...}, message: {...} }`. Baileys
+    // reads `quoted.key.*` to populate contextInfo (stanzaId, participant,
+    // fromMe) — passing the fields flat used to misattribute the reply to
+    // the bot itself. `quoted.message` is also required: Baileys' internal
+    // `generateWAMessageFromContent` calls `normalizeMessageContent(
+    // quoted.message)` and indexes the result with `getContentType(...)`,
+    // which throws if `.message` is missing.
+    return { quoted: { key: toFlatKey(quoted), message: inner } };
+  }
+
+  /**
+   * Translate a neutral `BotQuotedRef` into the FLAT key shape Baileys
+   * expects for `react`/`delete`/`edit`/`readMessages` (proto.IMessageKey
+   * — `{ id, remoteJid, fromMe, participant }` directly, NOT nested under
+   * a `.key` field). The nested `{key, message}` form is reserved for the
+   * `quoted` field on sendMessage — see `buildQuotedOpts` above.
+   */
+  function toFlatKey(ref: BotQuotedRef): {
+    id: string | null; remoteJid: string; fromMe: boolean; participant: string | undefined;
+  } {
+    return {
+      id:          ref.id ?? null,
+      remoteJid:   ref.remoteJid ?? "",
+      fromMe:      !!ref.fromMe,
+      participant: ref.participant ?? undefined,
+    };
+  }
 
   /** Compute sha1-hex of a normalized buffer or string. */
   function sha1(input: Buffer | string): string {
@@ -114,16 +192,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
   /** Translate a Baileys WAMessage into the neutral BotMessage envelope. */
   function toBotMessage(msg: RawMessage): BotMessage {
     const m = normalizeMessageContent(msg.message) ?? undefined;
-    let type: BotMessage["type"] = "other";
-    let body = "";
-    let mimetype: string | undefined;
-    if (m?.conversation)            { type = "text";     body = m.conversation; }
-    else if (m?.extendedTextMessage?.text) { type = "text";     body = m.extendedTextMessage.text ?? ""; }
-    else if (m?.imageMessage)       { type = "image";    body = m.imageMessage.caption   ?? ""; mimetype = m.imageMessage.mimetype    ?? undefined; }
-    else if (m?.videoMessage)       { type = "video";    body = m.videoMessage.caption   ?? ""; mimetype = m.videoMessage.mimetype    ?? undefined; }
-    else if (m?.audioMessage)       { type = "audio";                                mimetype = m.audioMessage.mimetype    ?? undefined; }
-    else if (m?.documentMessage)    { type = "document"; body = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
-    else if (m?.stickerMessage)     { type = "sticker";                              mimetype = m.stickerMessage.mimetype  ?? undefined; }
+    const { type, body, mimetype } = decodeContent(msg.message);
 
     const key = msg.key as unknown as {
       participant?: string; participantAlt?: string;
@@ -138,6 +207,13 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       m?.documentMessage?.contextInfo ??
       undefined;
 
+    const ciTyped = contextInfo as {
+      stanzaId?: string | null;
+      participant?: string | null;
+      mentionedJid?: string[] | null;
+      quotedMessage?: unknown;
+    } | undefined;
+
     return {
       id:           msg.key.id ?? "",
       chatId:       msg.key.remoteJid ?? "",
@@ -148,20 +224,27 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       body,
       mimetype:     mimetype ?? undefined,
       pushName:     (msg as unknown as { pushName?: string }).pushName,
-      mentionedJid: contextInfo?.mentionedJid ?? undefined,
-      quotedKey: contextInfo?.stanzaId ? {
-        id:          contextInfo.stanzaId,
+      mentionedJid: ciTyped?.mentionedJid ?? undefined,
+      quotedKey: ciTyped?.stanzaId ? {
+        id:          ciTyped.stanzaId,
         remoteJid:   msg.key.remoteJid ?? undefined,
         fromMe:      false,
-        participant: contextInfo.participant ?? undefined,
+        participant: ciTyped.participant ?? undefined,
       } : undefined,
       fromLid:        key.participantAlt,
       fromPn:         key.participant,
       participantAlt: key.participantAlt,
       remoteJidAlt:   key.remoteJidAlt,
-      // Poll-decryption key lives here for poll vote decryption downstream.
+      // Driver-specific escape hatches:
+      //   - pollEncKeyRaw: poll-decryption key for vote decryption
+      //   - contextInfo:   full IContextInfo (incl. embedded quotedMessage)
+      //                    so quoted-message consumers (api/index.ts
+      //                    buildMessageContext / downloadMedia fallback)
+      //                    can decode the quoted payload without going
+      //                    back through the store.
       _raw: {
         pollEncKeyRaw: m?.messageContextInfo?.messageSecret ?? undefined,
+        contextInfo:   ciTyped ?? undefined,
       },
     };
   }
@@ -298,18 +381,18 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     },
 
     async react(jid, target, emoji) {
-      const key = toBaileysKey(target);
+      const key = toFlatKey(target);
       await sock.sendMessage(jid, { react: { text: emoji, key } } as AnyMessageContent);
     },
 
     async deleteMessage(jid, target, forEveryone) {
       if (!forEveryone) return;
-      const key = toBaileysKey(target);
+      const key = toFlatKey(target);
       await sock.sendMessage(jid, { delete: key } as AnyMessageContent);
     },
 
     async editMessage(jid, target, text) {
-      const key = toBaileysKey(target);
+      const key = toFlatKey(target);
       await sock.sendMessage(jid, { text, edit: key } as AnyMessageContent);
     },
 
@@ -322,7 +405,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     },
 
     async readMessages(keys) {
-      const baileyKeys = keys.map(toBaileysKey);
+      const baileyKeys = keys.map((k) => toFlatKey(k));
       await (sock as unknown as { readMessages(keys: unknown[]): Promise<unknown> }).readMessages(baileyKeys);
     },
 
@@ -457,10 +540,32 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
 
     // ── media (download) ───────────────────────────────────────────────────
     async downloadMedia(msg, opts) {
-      // The poll-decryption raw envelope left only what's needed for that,
-      // so to downloadMediaMessage we still need the original WAMessage.
-      // Get it back from the store by id.
-      const raw = store.messages.get(msg.chatId)?.get(msg.id) as RawMessage | undefined;
+      // Resolve the Baileys message envelope needed by `downloadMediaMessage`.
+      // Preferred path: if the caller already carries the embedded message
+      // payload (synthetic `BotMessage` for a quoted message, whose
+      // `_raw.contextInfo.quotedMessage` is the full WAMessageContent),
+      // build the envelope directly from that. This avoids the silent
+      // failure mode where the quoted message's original envelope has
+      // aged out of the store's per-chat ring buffer.
+      //
+      // Fallback: the regular case (downloading media for the incoming
+      // message itself, or any other BotMessage that has a real envelope
+      // in the store) — look it up by (chatId, id).
+      const embedded = msg._raw as
+        | { contextInfo?: { quotedMessage?: unknown; stanzaId?: string | null; participant?: string | null } }
+        | undefined;
+      const embeddedContent = embedded?.contextInfo?.quotedMessage;
+      const raw: RawMessage | undefined = embeddedContent
+        ? ({
+            key: {
+              id:          embedded.contextInfo?.stanzaId ?? msg.id,
+              remoteJid:   msg.chatId,
+              fromMe:      false,
+              participant: embedded.contextInfo?.participant ?? undefined,
+            },
+            message: embeddedContent as RawMessage["message"],
+          } as RawMessage)
+        : store.messages.get(msg.chatId)?.get(msg.id) as RawMessage | undefined;
       if (!raw) return null;
       try {
         const buffer = await downloadMediaMessage(raw, "buffer", {}, {
@@ -586,34 +691,10 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
 }
 
 // ── Helpers used inside the adapter above ────────────────────────────────────
-
-function buildQuotedOpts(quoted: BotQuotedRef | undefined): SendOpts | undefined {
-  if (!quoted) return undefined;
-  return { quoted: toBaileysKey(quoted) };
-}
-
-function toBaileysKey(ref: BotQuotedRef): {
-  key: { id: string | null; remoteJid: string; fromMe: boolean; participant: string | undefined };
-} {
-  // Baileys expects `quoted` to be a message-shaped object with these
-  // fields nested under `.key` (quoted.key.id / .remoteJid / .fromMe /
-  // .participant) — it reads quoted.key.* to build contextInfo
-  // (stanzaId, participant, fromMe). Passing them flat (as this used to)
-  // means quoted.key is undefined inside Baileys, so participant/fromMe
-  // resolve to undefined and the quoted reply gets misattributed to the
-  // bot itself instead of the original sender. The quoted text still
-  // rendered before this fix because WhatsApp's client resolves the
-  // preview content locally via stanzaId — only the author attribution
-  // was broken.
-  return {
-    key: {
-      id:          ref.id ?? null,
-      remoteJid:   ref.remoteJid ?? "",
-      fromMe:      !!ref.fromMe,
-      participant: ref.participant ?? undefined,
-    },
-  };
-}
+//
+// `buildQuotedOpts` and `toFlatKey` are defined inside the
+// `createBaileysAdapter` closure (so they can see the `store`) — only
+// `toSentRef` and `silentBaileysLogger` remain module-scoped helpers.
 
 function toSentRef(raw: unknown, fallbackChatId: string): SentMessageRef {
   const r = raw as { key?: { id?: string; remoteJid?: string } } | undefined;

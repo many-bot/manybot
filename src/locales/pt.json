@@ -71,7 +71,7 @@
     "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
   },
   "whatsmeow": {
-    "installPrompt": "Instalar driver whatsmeow para melhor suporte a fallback?",
+    "installPrompt": "Instalar driver whatsmeow para suporte a fallback? (EXPERIMENTAL — apenas sendText e histórico funcionam; outros métodos lançam erro)",
     "unsupportedArch": "Driver whatsmeow não disponível para {{os}}-{{arch}}. O bot usará apenas Baileys.",
     "fetchingTag": "Buscando última versão do whatsmeow...",
     "fetchFailed": "Não foi possível acessar o Codeberg. Instalação do whatsmeow ignorada.",
@@ -79,6 +79,7 @@
     "downloadFailed": "Download falhou: {{reason}}",
     "installTitle": "Driver whatsmeow",
     "installed": "Driver whatsmeow instalado em {{path}}",
-    "restartNotice": "Reinicie o bot para que o driver whatsmeow entre em efeito."
+    "restartNotice": "Reinicie o bot para que o driver whatsmeow entre em efeito.",
+    "experimentalNotice": "whatsmeow é EXPERIMENTAL: apenas sendText e getHistory estão implementados. sendImage, sendPoll, groupMetadata e outros métodos lançam erro."
   }
 }

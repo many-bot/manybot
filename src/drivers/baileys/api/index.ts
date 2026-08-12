@@ -16,6 +16,7 @@ import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
+import { decodeContent } from "#drivers/baileys/adapter.js";
 import { logger }                    from "#logger";
 import { t, createPluginT,
          reloadTranslations,
@@ -861,24 +862,62 @@ export function buildMessageContext(
   const cooldown = guardOptions.cooldown ?? true;
   const jitter   = guardOptions.jitter ?? true;
 
-  const contextInfo = getContextInfo(msg);
-  // Build a synthetic quoted BotMessage when the original envelope carries
-  // a quotedMessage (the adapter pre-decoded it into msg.quotedKey).
-  const quotedRaw: BotMessage | null = msg.quotedKey
-    ? {
-        id:          msg.quotedKey.id ?? "",
-        chatId:      msg.chatId,
-        fromMe:      false,
-        type:        "other",
-        contentHash: "",
-        timestamp:   0,
-        _raw:        (msg._raw as { quotedMessage?: unknown; stanzaId?: string; participant?: string } | undefined) ? {
-          quotedMessage: (msg._raw as { quotedMessage?: unknown }).quotedMessage,
-          stanzaId:      (msg._raw as { stanzaId?: string }).stanzaId,
-          participant:   (msg._raw as { participant?: string }).participant,
-        } : undefined,
+  const contextInfo = getContextInfo(msg) as
+    | {
+        stanzaId?: string | null;
+        participant?: string | null;
+        mentionedJid?: string[] | null;
+        quotedMessage?: unknown;
       }
-    : null;
+    | null;
+  // Build a synthetic quoted BotMessage when the original envelope carries
+  // a quotedMessage (the adapter pre-decodes the full IContextInfo into
+  // msg._raw.contextInfo). The synthetic uses the same decodeContent
+  // helper as toBotMessage so type/body/mimetype reflect what's actually
+  // in the quoted payload — without this, msgHasMedia()/downloadMedia()
+  // on the result of getReply() always reported type=other / no media,
+  // even when the quoted message was an image/video/document/etc.
+  //
+  // We carry the same _raw.contextInfo on the synthetic so a recursive
+  // getReply().getReply() keeps working (the inner call re-reads
+  // getContextInfo off _raw.contextInfo).
+  const quotedRaw: BotMessage | null = contextInfo?.quotedMessage
+    ? (() => {
+        const decoded = decodeContent(contextInfo.quotedMessage);
+        return {
+          id:          contextInfo.stanzaId ?? "",
+          chatId:      msg.chatId,
+          fromMe:      false,
+          type:        decoded.type,
+          contentHash: "",
+          timestamp:   0,
+          body:        decoded.body,
+          mimetype:    decoded.mimetype,
+          _raw: {
+            contextInfo: {
+              stanzaId:      contextInfo.stanzaId,
+              participant:   contextInfo.participant,
+              mentionedJid:  contextInfo.mentionedJid,
+              quotedMessage: contextInfo.quotedMessage,
+            },
+          },
+        } as BotMessage;
+      })()
+    : msg.quotedKey
+      // No embedded quotedMessage (older envelopes, evicted from store, or
+      // the quoted message pre-dates contextInfo-quoting). Fall back to a
+      // key-only synthetic so hasReply()/getReply() still work, but
+      // hasMedia/downloadMedia on the result will degrade gracefully
+      // (type=other, mimetype=undefined).
+      ? {
+          id:          msg.quotedKey.id ?? "",
+          chatId:      msg.chatId,
+          fromMe:      false,
+          type:        "other",
+          contentHash: "",
+          timestamp:   0,
+        }
+      : null;
 
   return {
     id:         msg.id,
@@ -2120,28 +2159,6 @@ export function buildApi({
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 
   bindGroupMetaInvalidation(contract);
-
-  // Sender for quoted messages — synthesize a neutral BotQuotedRef off
-  // the adapter's pre-extracted contextInfo fields. No raw Baileys
-  // envelope access needed here.
-  const contextInfo = getContextInfo(msg) as
-    | { quotedMessage?: unknown; stanzaId?: string; participant?: string }
-    | null;
-  const quotedRaw: BotMessage | null = contextInfo?.quotedMessage
-    ? {
-        id:          contextInfo.stanzaId ?? "",
-        chatId:      msg.chatId,
-        fromMe:      false,
-        type:        "other",
-        contentHash: "",
-        timestamp:   0,
-        _raw: {
-          quotedMessage: contextInfo.quotedMessage,
-          stanzaId:      contextInfo.stanzaId,
-          participant:   contextInfo.participant,
-        },
-      }
-    : null;
 
   // Group participant JIDs come back in whatever addressing mode the group
   // uses (@lid or @s.whatsapp.net/@c.us) — same issue as poll vote decryption.

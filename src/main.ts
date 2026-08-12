@@ -14,6 +14,7 @@ process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
 
 import { baileysContract }            from "#drivers/baileys/index.js";
 import { whatsmeowContract, startWhatsmeowSupervisor, wrapWithSupervisor } from "#drivers/whatsmeow/index.js";
+import { promptWhatsmeowInstall }     from "#drivers/whatsmeow/installer.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
 import { sendAlert }                  from "#kernel/alerts.js";
@@ -41,11 +42,17 @@ driverManager.register(baileysContract, { isPrimary: CONFIG.drivers.primary === 
 // running on Baileys alone, no fallback.
 let supervisor: Awaited<ReturnType<typeof startWhatsmeowSupervisor>> = null;
 if (CONFIG.drivers.whatsmeow.enabled) {
+  logger.info("[driverManager] whatsmeow enabled — spawning supervisor");
   supervisor = await startWhatsmeowSupervisor();
   if (supervisor) {
     const wrapped = wrapWithSupervisor(whatsmeowContract, supervisor);
     driverManager.register(wrapped, { isPrimary: CONFIG.drivers.primary === "whatsmeow" });
+    logger.info(`[driverManager] whatsmeow registered (primary=${CONFIG.drivers.primary === "whatsmeow"})`);
+  } else {
+    logger.warn("[driverManager] whatsmeow supervisor failed to start — fallback disabled");
   }
+} else {
+  logger.info("[driverManager] whatsmeow disabled by config — no fallback");
 }
 const activeDriver = driverManager.active();
 const secondaryName = (activeDriver.name === "baileys" ? "whatsmeow" : "baileys") as "baileys" | "whatsmeow";
@@ -134,6 +141,15 @@ if (process.argv.includes("--getid")) {
       logger.error(`--getid mode failed: ${err.message}`);
       process.exit(1);
     });
+} else if (process.argv.includes("--install-whatsmeow")) {
+  // Re-run the whatsmeow installer outside the normal setup flow.
+  // Useful when the initial install failed or the binary was moved.
+  promptWhatsmeowInstall()
+    .then(() => process.exit(0))
+    .catch((err: Error) => {
+      logger.error(`--install-whatsmeow failed: ${err.message}`);
+      process.exit(1);
+    });
 } else {
   // Start bot
   logger.info(t("bot.initialized"));
@@ -155,11 +171,14 @@ if (process.argv.includes("--getid")) {
       // here is non-fatal: the primary keeps running, fallback just stays
       // unavailable (sendFallbackGuard's `isReady()` check covers that).
       if (secondaryDriver) {
+        logger.info(`[driverManager] connecting secondary "${secondaryName}" in background…`);
         secondaryDriver.connect()
           .then(() => logger.info(`[driverManager] secondary "${secondaryName}" connected — fallback available`))
           .catch((err: Error) => logger.warn(
             `[driverManager] secondary "${secondaryName}" connect failed: ${err.message} — fallback unavailable`
           ));
+      } else {
+        logger.info(`[driverManager] no secondary driver registered — running on ${activeDriver.name} only`);
       }
     })
     .catch((err) => {

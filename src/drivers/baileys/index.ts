@@ -28,6 +28,7 @@ import { normalizeJid } from "#drivers/jid.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
+import { getDriverManager } from "#kernel/driverManager.js";
 import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
 import { setStatus } from "#kernel/statusServer.js";
 import { logger } from "#logger";
@@ -105,6 +106,12 @@ const RECONNECT_MAX_MS  = 60000;
 // silently retrying past this point can make a restriction last longer.
 const MAX_RECONNECT_ATTEMPTS = 6;
 const CACHE_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5min
+// Track consecutive restartRequired (515) — same counter space as
+// reconnectAttempts but with a lower threshold for degradation since
+// repeated 515 signals a protocol drift the current session can't
+// recover from on its own.
+const MAX_RESTART_REQUIRED = 3;
+let restartRequiredCount = 0;
 
 /**
  * Loads the on-disk cache and merges it into `store` (union, never
@@ -215,6 +222,7 @@ async function startBot() {
     if (connection === "open") {
       state = "READY_INIT";
       reconnectAttempts = 0;
+      restartRequiredCount = 0;
       setStatus(true);
       logger.success(t("system.connected"));
       logger.info(t("system.clientId", { id: CLIENT_ID }));
@@ -236,22 +244,46 @@ async function startBot() {
     if (connection === "close") {
       const code      = (lastDisconnect?.error as Boom)?.output?.statusCode;
       const loggedOut = code === DisconnectReason.loggedOut;
+      const badSession = code === DisconnectReason.badSession;
+      const restartReq = code === DisconnectReason.restartRequired;
       state = "BOOT";
       setStatus(false, String(code));
 
       logger.warn(t("system.disconnected", { reason: String(code) }));
 
-      if (loggedOut) {
-        logger.warn(t("system.sessionExpired"));
+      if (loggedOut || badSession) {
+        if (badSession) {
+          logger.warn("Session data corrupted (badSession=500). Clearing session dir.");
+          getDriverManager().markDegraded("baileys", 300_000);
+        } else {
+          logger.warn(t("system.sessionExpired"));
+        }
         try {
           await fs.rm(AUTH_DIR, { recursive: true, force: true });
         } catch (e) {
           logger.error(`[whatsapp] Failed to remove session dir: ${(e as Error).message}`);
         }
         scheduleReconnect(1000);
+      } else if (restartReq) {
+        restartRequiredCount++;
+        if (restartRequiredCount >= MAX_RESTART_REQUIRED) {
+          halted = true;
+          logger.error(`restartRequired (515) recurring — protocol drift suspected. Halting.`);
+          getDriverManager().markDegraded("baileys", 600_000);
+          sendAlert({
+            level:   "critical",
+            title:   "manybot — restartRequired recurring",
+            message: `Protocol drift suspected after ${restartRequiredCount}x restartRequired. Bot halted on Baileys. Run connect() manually.`,
+          }).catch(() => {});
+          return;
+        }
+        const delay = Math.min(500, RECONNECT_BASE_MS);
+        logger.info(t("system.reconnecting", { secs: Math.round(delay / 1000) }));
+        scheduleReconnect(delay);
       } else if (!shuttingDown) {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
           halted = true;
+          getDriverManager().markDegraded("baileys", 600_000);
           logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
           sendAlert({
             level:   "critical",

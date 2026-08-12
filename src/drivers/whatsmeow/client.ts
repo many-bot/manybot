@@ -1,11 +1,13 @@
 import { logger } from "#logger";
 import { CONFIG } from "#config";
+import { t } from "#i18n";
 import type { WaContract, SentMessageRef, BotMessage, BotQuotedRef, WaEventName, WaEventPayload } from "#kernel/waContract.js";
 import type { BotPollOptions, BotMe, BotGroupMetadata } from "#kernel/waContract.js";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 import path from "path";
 import { fileURLToPath } from "node:url";
+import qrcode from "qrcode-terminal";
 
 /**
  * Whatsmeow gRPC client implementing the WaContract interface.
@@ -56,7 +58,8 @@ class WhatsmeowClient implements Partial<WaContract> {
     const address = CONFIG.drivers.whatsmeow.grpcAddress ?? "localhost:50051";
     const Service = this.loadProto();
     this.client = new Service(address, grpc.credentials.createInsecure());
-    // Perform a health check to confirm service is ready
+
+    // 1. Health check — confirm the gRPC server is up
     await new Promise<void>((resolve, reject) => {
       this.client.HealthCheck({} as any, (err: grpc.ServiceError, resp: any) => {
         if (err) return reject(err);
@@ -65,13 +68,48 @@ class WhatsmeowClient implements Partial<WaContract> {
         else reject(new Error("Whatsmeow service not ready"));
       });
     });
-    logger.info("[whatsmeow] connected via gRPC");
+    logger.info("[whatsmeow] gRPC service ready");
 
-    // Open the server-streaming event subscription. Each WaEvent that
-    // arrives is fanned out to the local on() subscribers in the
-    // neutral envelope shape.
+    // 2. Call Connect RPC — initiates WhatsApp auth (QR or reuse existing session)
+    const connectResp: { ok: boolean; qrCode: string } = await new Promise((resolve, reject) => {
+      this.client.Connect({} as any, (err: grpc.ServiceError, resp: any) => {
+        if (err) return reject(err);
+        resolve(resp);
+      });
+    });
+
+    const needsAuth = !connectResp.ok;
+
+    if (needsAuth && connectResp.qrCode) {
+      logger.info(t("system.qrScan"));
+      qrcode.generate(connectResp.qrCode, { small: true });
+    }
+
+    // 3. Set up auth deferred BEFORE SubscribeEvents to avoid race
+    let authDeferred: { resolve: () => void; reject: (e: Error) => void } | null = null;
+    let authDone = false;
+    const authPromise = needsAuth
+      ? new Promise<void>((resolve, reject) => {
+          authDeferred = { resolve, reject };
+          setTimeout(() => {
+            if (!authDone) {
+              authDone = true;
+              reject(new Error("Whatsmeow auth timeout (2 min)"));
+            }
+          }, 120_000);
+        })
+      : Promise.resolve();
+
+    // 4. Open the server-streaming event subscription
     const stream: grpc.ClientReadableStream<any> = this.client.SubscribeEvents({} as any);
+
     stream.on("data", (raw: { payload?: string; message?: unknown; connState?: { state?: string } }) => {
+      // Resolve auth promise when connection opens (QR scanned / session reused)
+      if (!authDone && authDeferred && raw.connState?.state === "open") {
+        authDone = true;
+        authDeferred.resolve();
+        authDeferred = null;
+      }
       try {
         if (raw.connState) {
           const state = raw.connState.state ?? "connecting";
@@ -89,13 +127,32 @@ class WhatsmeowClient implements Partial<WaContract> {
       }
     });
     stream.on("error", (err: Error) => {
+      if (!authDone) {
+        authDone = true;
+        authDeferred?.reject(err);
+        authDeferred = null;
+      }
       logger.warn(`[whatsmeow] event stream error: ${err.message}`);
       this.ready = false;
     });
     stream.on("end", () => {
+      if (!authDone) {
+        authDone = true;
+        authDeferred?.reject(new Error("Event stream ended before auth completed"));
+        authDeferred = null;
+      }
       logger.warn(`[whatsmeow] event stream ended`);
       this.ready = false;
     });
+
+    // 5. If not authenticated, wait for connState === "open" from the event stream
+    await authPromise;
+
+    if (needsAuth) {
+      logger.info("[whatsmeow] authenticated");
+    }
+
+    this.ready = true;
   }
 
   async disconnect(): Promise<void> {
