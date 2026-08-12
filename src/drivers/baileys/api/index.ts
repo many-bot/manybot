@@ -41,8 +41,6 @@ import { sendWithFallback }          from "#kernel/sendFallbackGuard.js";
 import { buildSettingsApi }          from "#settingsdb";
 import WebP                          from "node-webpmux";
 import {
-  getAggregateVotesInPollMessage,
-  decryptPollVote,
   jidNormalizedUser,
 } from "@whiskeysockets/baileys";
 
@@ -263,11 +261,11 @@ let groupMetaInvalidationBound = false;
 function bindGroupMetaInvalidation(contract: WaContract) {
   if (groupMetaInvalidationBound) return;
   groupMetaInvalidationBound = true;
-  const sock = rawSocketOf(contract);
-  const ev = sock.ev as unknown as NodeJS.EventEmitter;
-  ev.on("group-participants.update", (u: { id: string }) => groupMetaCache.delete(u.id));
-  ev.on("groups.update", (updates: { id?: string }[]) => {
-    for (const u of updates) if (u.id) groupMetaCache.delete(u.id);
+  contract.on("group-participants.update", (u) => {
+    groupMetaCache.delete(u.id);
+  });
+  contract.on("groups.update", (p) => {
+    for (const u of p.updates) if (u.id) groupMetaCache.delete(u.id);
   });
 }
 
@@ -1520,20 +1518,74 @@ function buildSetupSendApi(contract: WaContract, store: BotStore) {
 }
 
 // ── Events API ────────────────────────────────────────────────────────────────
+//
+// Plugins listen to driver events through this API. The set of supported
+// event names is the same `WaEventName` union the contract declares — no
+// raw `sock.ev` access here. Subscriptions are routed through
+// `contract.on()`, which always returns an unsubscribe function. We
+// mirror that handle in `listenerRegistry` so `cleanupPluginEvents()`
+// (called on plugin reload / unload) can drop every listener at once.
 
-const listenerRegistry = new Map<string, Set<{ event: string; handler: (...args: unknown[]) => void }>>();
+import type { WaEventName, WaEventPayload } from "#kernel/waContract.js";
 
-export function cleanupPluginEvents(pluginName: string, contract: WaContract): void {
-  const sock = rawSocketOf(contract);
+const WA_EVENT_NAMES: ReadonlySet<WaEventName> = new Set<WaEventName>([
+  "messages.upsert",
+  "messages.update",
+  "messages.delete",
+  "messaging-history.set",
+  "chats.upsert",
+  "chats.update",
+  "chats.delete",
+  "contacts.upsert",
+  "contacts.update",
+  "group-participants.update",
+  "groups.upsert",
+  "groups.update",
+  "group.join-request",
+  "blocklist.set",
+  "blocklist.update",
+  "connection.update",
+]);
+
+function assertSupportedEvent(event: string): asserts event is WaEventName {
+  if (!WA_EVENT_NAMES.has(event as WaEventName)) {
+    throw new Error(
+      `[events] unsupported event "${event}". Supported: ${[...WA_EVENT_NAMES].join(", ")}. ` +
+      `If you need this event, file an issue — adding events to WaEventName is a contract change.`
+    );
+  }
+}
+
+interface RegisteredListener {
+  event:    WaEventName;
+  handler:  (payload: unknown) => void;
+  /** The unsubscribe handle returned by `contract.on()`. */
+  detach:   () => void;
+}
+
+const listenerRegistry = new Map<string, Set<RegisteredListener>>();
+
+export function cleanupPluginEvents(pluginName: string, _contract: WaContract): void {
   const list = listenerRegistry.get(pluginName);
   if (list) {
-    for (const { event, handler } of list) {
-      try {
-        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
-      } catch {}
+    for (const ref of list) {
+      try { ref.detach(); } catch {}
     }
     listenerRegistry.delete(pluginName);
   }
+  // The poll-vote subscription is created in `buildPollApi` by calling
+  // `contract.on(...)` directly, so it lives outside `listenerRegistry`.
+  // Detach it here so the listener doesn't outlive the plugin (and a
+  // reloaded plugin can re-subscribe — `buildPollApi` gates on the
+  // `boundPollPlugins` map).
+  const pollDetach = boundPollPlugins.get(pluginName);
+  if (pollDetach) {
+    try { pollDetach(); } catch {}
+    boundPollPlugins.delete(pluginName);
+  }
+  // Drop the per-plugin poll registry so reloading a plugin doesn't see
+  // stale PollHandles from a prior instance.
+  pollRegistry.delete(pluginName);
   cancelPlugin(pluginName);
 }
 
@@ -1543,23 +1595,25 @@ export function cleanupPluginEvents(pluginName: string, contract: WaContract): v
  * @param {string}     pluginName
  */
 function buildEventsApi(contract: WaContract, pluginName: string) {
-  const sock = rawSocketOf(contract);
   return {
-    on(event: string, handler: (...args: unknown[]) => void) {
-      (sock.ev as unknown as NodeJS.EventEmitter).on(event, handler);
+    on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void): () => void {
+      assertSupportedEvent(event);
+      const wrapped = (payload: unknown) => handler(payload as WaEventPayload<E>);
+      const detach  = contract.on(event, wrapped);
 
       if (!listenerRegistry.has(pluginName)) listenerRegistry.set(pluginName, new Set());
-      const ref = { event, handler };
+      const ref: RegisteredListener = { event, handler: wrapped, detach };
       listenerRegistry.get(pluginName)!.add(ref);
 
       return () => {
-        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
+        try { detach(); } catch {}
         listenerRegistry.get(pluginName)?.delete(ref);
       };
     },
 
-    once(event: string) {
-      return new Promise(resolve => {
+    once<E extends WaEventName>(event: E): Promise<WaEventPayload<E>> {
+      assertSupportedEvent(event);
+      return new Promise<WaEventPayload<E>>((resolve) => {
         const off = this.on(event, (data) => { off(); resolve(data); });
       });
     },
@@ -1567,8 +1621,9 @@ function buildEventsApi(contract: WaContract, pluginName: string) {
     cleanup() {
       const list = listenerRegistry.get(pluginName);
       if (!list) return;
-      for (const { event, handler } of list)
-        (sock.ev as unknown as NodeJS.EventEmitter).off(event, handler);
+      for (const ref of list) {
+        try { ref.detach(); } catch {}
+      }
       listenerRegistry.delete(pluginName);
     },
   };
@@ -1805,12 +1860,16 @@ function buildMeApi(contract: WaContract) {
 
 // ── Poll API ──────────────────────────────────────────────────────────────────
 
-const pollRegistry  = new Map<string, Map<string, PollHandle>>();
-// Rebinding must happen per socket instance — a plugin name alone doesn't
-// tell us whether the listener is bound to the CURRENT (post-reconnect)
-// sock.ev or a dead one from before. WeakMap keyed by sock lets old
-// entries fall off automatically once that socket is garbage collected.
-const pollListenersBySocket = new WeakMap<WASocket, Set<string>>();
+const pollRegistry = new Map<string, Map<string, PollHandle>>();
+// Per-process map of plugin names whose poll-vote subscription is bound,
+// to its unsubscribe handle. The contract handles rebinding to a fresh
+// socket on reconnect (its `on()` returns an unsubscribe that drops
+// cleanly on the dead socket's fan-out once it's torn down), so a simple
+// per-process map is enough — no per-sock WeakMap needed anymore.
+// `cleanupPluginEvents` MUST call the stored detach handle on unload so
+// the listener doesn't outlive the plugin and so a reloaded plugin can
+// re-subscribe.
+const boundPollPlugins = new Map<string, () => void>();
 
 /**
  * Tracks votes for an active poll.
@@ -1889,60 +1948,35 @@ function buildPollApi(
   if (!pollRegistry.has(pluginName)) pollRegistry.set(pluginName, new Map());
   const registry = pollRegistry.get(pluginName)!;
   // Keyed by creationId -> (voterKey -> latest vote entry). WhatsApp resends
-  // the *entire current selection* on every tap (not a diff), and Baileys'
-  // getAggregateVotesInPollMessage() replays whatever pollUpdates you give it
-  // with no dedup — so we must keep only the latest entry per voter ourselves,
-  // or retracted/changed votes keep counting alongside the new one.
+  // the *entire current selection* on every tap (not a diff), and the
+  // aggregatePollVotes() contract method replays whatever pollUpdates you
+  // give it with no dedup — so we must keep only the latest entry per
+  // voter ourselves, or retracted/changed votes keep counting alongside
+  // the new one.
   const pollVotesByCreationId = new Map<string, Map<string, unknown>>();
 
-  // Poll decryption needs the raw Baileys socket (sock.ev for
-  // messages.upsert, sock.user for self-JID shape), so we lift it off the
-  // contract here. The WeakMap key is the socket itself so old listeners
-  // fall off automatically when the socket is replaced (reconnect).
-  const sock = rawSocketOf(contract);
-
-  let boundPlugins = pollListenersBySocket.get(sock);
-  if (!boundPlugins) {
-    boundPlugins = new Set<string>();
-    pollListenersBySocket.set(sock, boundPlugins);
-  }
-
-  if (!boundPlugins.has(pluginName)) {
-    boundPlugins.add(pluginName);
-  
-    const meId = sock.user?.id ? jidNormalizedUser(sock.user.id) : "me";
-
-    // WhatsApp doesn't consistently use the same JID shape (LID vs PN) for
-    // pollCreatorJid/voterJid when deriving the poll-vote decryption key —
-    // it depends on addressingMode, 1:1 vs group, and which side sent last.
-    // Trying to compute "the" correct JID up front (as the old resolveAuthor
-    // did, always preferring participantPn) causes AES-GCM auth failures
-    // whenever WhatsApp actually used the LID for that message. Instead,
-    // gather every plausible JID for each side and brute-force combinations
-    // until one decrypts successfully — see
-    // https://github.com/WhiskeySockets/Baileys/issues/2342 and #1678.
-    function jidCandidates(key: { fromMe?: boolean; participant?: string; remoteJid?: string; participantPn?: string }): string[] {
-      const cands: string[] = [];
-      if (key.fromMe) {
-        const selfLid = (sock.user as unknown as { lid?: string })?.lid;
-        if (selfLid) cands.push(jidNormalizedUser(selfLid));
-        if (sock.user?.id) cands.push(jidNormalizedUser(sock.user.id));
-      } else {
-        const rawParticipant = key.participant ?? key.remoteJid;
-        if (rawParticipant) cands.push(jidNormalizedUser(rawParticipant));
-        if (key.participantPn) cands.push(jidNormalizedUser(key.participantPn));
-        if (rawParticipant?.endsWith("@lid")) {
-          const resolved = store.resolveJid(rawParticipant);
-          if (resolved && resolved !== rawParticipant) cands.push(jidNormalizedUser(resolved));
-        }
-      }
-      return Array.from(new Set(cands.filter(Boolean)));
-    }
-  
-    sock.ev.on("messages.upsert", async ({ messages: msgs }: { messages: WAProtoMsg[]; type: string }) => {
+  // Poll decryption is Baileys-specific. Both the subscription
+  // (`messages.upsert`) and the decryption/aggregation go through the
+  // contract — `buildPollApi` doesn't touch the raw socket anymore. The
+  // contract's optional methods are only implemented by the Baileys
+  // adapter; drivers that don't have poll decryption leave them off the
+  // contract and we silently no-op here (a bot on a non-Baileys driver
+  // simply can't track poll votes).
+  if (
+    !boundPollPlugins.has(pluginName) &&
+    typeof contract.decryptPollVote === "function" &&
+    typeof contract.aggregatePollVotes === "function"
+  ) {
+    const detach = contract.on("messages.upsert", async ({ messages: msgs }) => {
       for (const msg of msgs) {
-        const pum = (msg.message as { pollUpdateMessage?: unknown } | undefined)?.pollUpdateMessage as
-          | { pollCreationMessageKey?: { id?: string; remoteJid?: string }; vote?: unknown; senderTimestampMs?: number | bigint | string }
+        // Filter poll-update messages by reading the raw envelope from
+        // the store (the neutral `BotMessage` doesn't carry the
+        // `pollUpdateMessage` field — it's a Baileys-proto detail).
+        const raw = store.messages.get(msg.chatId)?.get(msg.id) as
+          | { message?: { pollUpdateMessage?: unknown } }
+          | undefined;
+        const pum = raw?.message?.pollUpdateMessage as
+          | { pollCreationMessageKey?: { id?: string; remoteJid?: string; participant?: string; participantPn?: string }; vote?: unknown; senderTimestampMs?: number | bigint | string }
           | undefined;
         if (!pum) continue;
 
@@ -1954,60 +1988,57 @@ function buildPollApi(
         const storeMsg = store.messages.get(creationKey?.remoteJid ?? "")?.get(creationId);
         const pollEncKeyRaw = (storeMsg?.message as { messageContextInfo?: { messageSecret?: Buffer | string } } | undefined)?.messageContextInfo?.messageSecret;
         if (!storeMsg || !pollEncKeyRaw || !pum.vote) continue;
-  
+
         try {
-          const pollEncKey = Buffer.isBuffer(pollEncKeyRaw)
-            ? pollEncKeyRaw
-            : Buffer.from(pollEncKeyRaw as unknown as string, "base64");
-  
-          const creatorCandidates = jidCandidates((creationKey ?? {}) as never);
-          const voterCandidates   = jidCandidates(msg.key as never);
-  
-          let decryptedVote: ReturnType<typeof decryptPollVote> | undefined;
-          for (const pollCreatorJid of creatorCandidates) {
-            for (const voterJid of voterCandidates) {
-              try {
-                decryptedVote = decryptPollVote(pum.vote, {
-                  pollEncKey,
-                  pollCreatorJid,
-                  pollMsgId: creationId,
-                  voterJid,
-                });
-                break;
-              } catch {
-                // try next JID combination
-              }
-            }
-            if (decryptedVote) break;
+          const decrypted = await contract.decryptPollVote!({
+            voteKey: {
+              id:          msg.id,
+              remoteJid:   msg.chatId,
+              fromMe:      msg.fromMe,
+              participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+            },
+            pollKey: {
+              id:          creationId,
+              remoteJid:   creationKey?.remoteJid ?? null,
+              fromMe:      null,
+              participant: creationKey?.participant ?? null,
+            },
+            pollEncKey: pollEncKeyRaw,
+          });
+          if (!decrypted) {
+            throw new Error("decryptPollVote returned null — JID candidate exhaustion or stale enc key");
           }
-          if (!decryptedVote) {
-            throw new Error(
-              `all JID combinations failed (creator=${JSON.stringify(creatorCandidates)}, voter=${JSON.stringify(voterCandidates)})`
-            );
-          }
-  
-          const voterKey = msg.key.fromMe
-            ? meId
-            : jidNormalizedUser(msg.key.participant ?? msg.key.remoteJid ?? "");
+
+          const voterKey = msg.fromMe
+            ? (contract.me().id ?? "me")
+            : jidNormalizedUser(msg.participantAlt ?? msg.fromLid ?? msg.chatId);
 
           const votesByVoter = pollVotesByCreationId.get(creationId) ?? new Map<string, unknown>();
           votesByVoter.set(voterKey, {
-            pollUpdateMessageKey: msg.key,
-            vote:                 decryptedVote,
+            pollUpdateMessageKey: { id: msg.id, remoteJid: msg.chatId, fromMe: msg.fromMe },
+            vote:                 decrypted,
             senderTimestampMs:    pum.senderTimestampMs,
           });
           pollVotesByCreationId.set(creationId, votesByVoter);
-  
-          const aggregated = getAggregateVotesInPollMessage(
-            { message: storeMsg.message, pollUpdates: Array.from(votesByVoter.values()) as never },
-            meId
-          );
+
+          const pollAggregateOpts = contract.aggregatePollVotes!;
+          type AggregateVotes = Parameters<typeof pollAggregateOpts>[0]["votes"];
+          const aggregated = pollAggregateOpts({
+            pollKey: {
+              id:        creationId,
+              remoteJid: creationKey?.remoteJid ?? null,
+              fromMe:    null,
+            },
+            votes: Array.from(votesByVoter.values()).map((v) => (v as { vote: AggregateVotes[number] }).vote),
+            selfJid: contract.me().id ?? undefined,
+          });
           handle._updateFromAggregated(aggregated);
         } catch (err) {
           logger.error(`[poll] erro ao decriptar voto: ${err}`);
         }
       }
     });
+    boundPollPlugins.set(pluginName, detach);
   }
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;

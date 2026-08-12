@@ -40,6 +40,8 @@ import {
   normalizeMessageContent,
   downloadMediaMessage,
   jidNormalizedUser,
+  decryptPollVote as baileysDecryptPollVote,
+  getAggregateVotesInPollMessage,
 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import { createHash } from "node:crypto";
@@ -263,6 +265,44 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       verifiedName: c.verifiedName,
       lid:          c.lid,
     };
+  }
+
+  /**
+   * Compute every plausible JID candidate for a side of a poll-vote
+   * decryption. WhatsApp doesn't consistently pick the same JID shape
+   * (LID vs PN) when deriving the poll-vote decryption key — it depends
+   * on addressingMode, 1:1 vs group, and which side sent last. Trying
+   * to compute "the" correct JID up front causes AES-GCM auth failures
+   * whenever WhatsApp actually used the LID; brute-forcing candidates
+   * is the only reliable approach (see
+   * https://github.com/WhiskeySockets/Baileys/issues/2342 and #1678).
+   *
+   * For the bot's own side (`self === true`), candidates are the bot's
+   * `user.id` and `user.lid`. For an external side, candidates are
+   * the participant/remoteJid, the `participantPn` if any, and any
+   * LID→PN mapping the store has learned.
+   */
+  function jidCandidatesFromKey(
+    key:  { fromMe?: boolean | null; participant?: string | null; remoteJid?: string | null; participantPn?: string | null },
+    sock: RawSocket,
+    store: BotStore,
+    self: boolean,
+  ): string[] {
+    const cands: string[] = [];
+    if (self) {
+      const selfLid = (sock.user as unknown as { lid?: string })?.lid;
+      if (selfLid) cands.push(jidNormalizedUser(selfLid));
+      if (sock.user?.id) cands.push(jidNormalizedUser(sock.user.id));
+    } else {
+      const rawParticipant = key.participant ?? key.remoteJid;
+      if (rawParticipant) cands.push(jidNormalizedUser(rawParticipant));
+      if (key.participantPn) cands.push(jidNormalizedUser(key.participantPn));
+      if (rawParticipant?.endsWith("@lid")) {
+        const resolved = store.resolveJid(rawParticipant);
+        if (resolved && resolved !== rawParticipant) cands.push(jidNormalizedUser(resolved));
+      }
+    }
+    return Array.from(new Set(cands.filter(Boolean)));
   }
 
   // ── Event fan-out ───────────────────────────────────────────────────────
@@ -585,6 +625,81 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
         return null;
       }
     },
+
+    // ── poll decryption (Baileys-only) ───────────────────────────────────
+    //
+    // These are the only two methods on the contract that are explicitly
+    // Baileys-specific. whatsmeow (and any future driver) may leave them
+    // undefined; the only consumer today is `buildPollApi` in
+    // drivers/baileys/api/index.ts, which already tolerates the absence.
+    //
+    // Both live on the contract (not as a separate file-level helper)
+    // because the Baileys-side knowledge they encode — picking the
+    // correct LID-vs-PN JID on each side, knowing the bot's own
+    // `sock.user.id/lid`, knowing the WAMessage shape for the encrypted
+    // payload — would otherwise leak out of the adapter.
+
+    async decryptPollVote(opts) {
+      const voteRaw = store.messages.get(opts.voteKey.remoteJid ?? "")?.get(opts.voteKey.id ?? "");
+      const pum = (voteRaw?.message as { pollUpdateMessage?: unknown } | undefined)?.pollUpdateMessage as
+        | { vote?: unknown }
+        | undefined;
+      const vote = pum?.vote;
+      if (!vote) return null;
+
+      const encKey = Buffer.isBuffer(opts.pollEncKey)
+        ? opts.pollEncKey
+        : Buffer.from(opts.pollEncKey as unknown as string, "base64");
+
+      // WhatsApp doesn't consistently use the same JID shape (LID vs PN) for
+      // pollCreatorJid/voterJid — it depends on addressingMode, 1:1 vs group,
+      // and which side sent last. Compute every plausible candidate and
+      // brute-force combinations until one decrypts successfully (see
+      // https://github.com/WhiskeySockets/Baileys/issues/2342 and #1678).
+      const creatorCandidates = jidCandidatesFromKey(opts.pollKey, sock, store, /*self*/ false);
+      const voterCandidates   = jidCandidatesFromKey(opts.voteKey,  sock, store, !!opts.voteKey.fromMe);
+
+      for (const pollCreatorJid of creatorCandidates) {
+        for (const voterJid of voterCandidates) {
+          try {
+            const decrypted = baileysDecryptPollVote(
+              vote as Parameters<typeof baileysDecryptPollVote>[0],
+              {
+                pollCreatorJid,
+                pollMsgId:   opts.pollKey.id ?? "",
+                pollEncKey:  encKey,
+                voterJid,
+              },
+            );
+            // PollVoteMessage.selectedOptions is a list of { optionHash: Buffer | null }.
+            // Map to plain hex strings for the contract surface.
+            const selectedOptions = ((decrypted.selectedOptions ?? []) as Array<{ optionHash?: Uint8Array | Buffer | null }>)
+              .map((o) => {
+                const h = o?.optionHash;
+                if (!h) return null;
+                return Buffer.isBuffer(h) ? h.toString("hex") : Buffer.from(h).toString("hex");
+              })
+              .filter((x): x is string => !!x);
+            return { selectedOptions, raw: decrypted };
+          } catch {
+            // try next JID combination
+          }
+        }
+      }
+      return null;
+    },
+
+    aggregatePollVotes(opts) {
+      const pollRaw = store.messages.get(opts.pollKey.remoteJid ?? "")?.get(opts.pollKey.id ?? "");
+      if (!pollRaw?.message) return [];
+      const meId = opts.selfJid ?? (sock.user?.id ? jidNormalizedUser(sock.user.id) : undefined);
+      const aggregated = getAggregateVotesInPollMessage(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { message: pollRaw.message as any, pollUpdates: opts.votes as any },
+        meId,
+      );
+      return aggregated as Array<{ name: string; voters: string[] }>;
+    },
   };
 
   // ── Rebind helpers (post-reconnect in drivers/baileys/index.ts) ────────
@@ -612,6 +727,27 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       const updates = arg as Array<{ key: BotQuotedRef; update: Record<string, unknown> }>;
       emit("messages.update", { updates });
     });
+    // Baileys emits one of two shapes for `messages.delete`: a `keys`
+    // array (per-message revoke) or `{ jid, all: true }` (chat clear).
+    // Normalize to a single payload here so the contract's consumer
+    // never has to special-case the variant.
+    register("messages.delete", (arg) => {
+      const a = arg as
+        | { keys: Array<{ id?: string | null; remoteJid?: string | null; fromMe?: boolean | null; participant?: string | null }> }
+        | { jid: string; all: true };
+      if ("all" in a) {
+        emit("messages.delete", { keys: [], all: { jid: a.jid } });
+      } else {
+        emit("messages.delete", {
+          keys: a.keys.map((k) => ({
+            id:          k.id ?? null,
+            remoteJid:   k.remoteJid ?? null,
+            fromMe:      k.fromMe ?? null,
+            participant: k.participant ?? null,
+          })),
+        });
+      }
+    });
     register("messaging-history.set", (arg) => {
       const { chats, contacts, messages } = arg as { chats: RawStoreContact[]; contacts: RawStoreContact[]; messages?: RawMessage[] };
       emit("messaging-history.set", {
@@ -626,6 +762,9 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     register("chats.update", (arg) => {
       emit("chats.update", { updates: arg as Array<{ id: string; name?: string }> });
     });
+    register("chats.delete", (arg) => {
+      emit("chats.delete", { ids: arg as string[] });
+    });
     register("contacts.upsert", (arg) => {
       emit("contacts.upsert", { contacts: (arg as RawStoreContact[]).map(contactSummary) });
     });
@@ -636,8 +775,35 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       const { id, participants } = arg as { id: string; participants: Array<{ id: string; action: "add" | "remove" | "promote" | "demote" }> };
       emit("group-participants.update", { id, participants });
     });
+    register("groups.upsert", (arg) => {
+      const groups = arg as Array<{ id: string; subject?: string }>;
+      emit("groups.upsert", { groups: groups.map((g) => ({ id: g.id, subject: g.subject })) });
+    });
     register("groups.update", (arg) => {
       emit("groups.update", { updates: arg as Array<{ id: string }> });
+    });
+    register("group.join-request", (arg) => {
+      const a = arg as {
+        id: string;
+        author: string;
+        participant: string;
+        action: "created" | "revoked" | "rejected";
+        method: "invite_link" | "linked_group_join" | "non_admin_add" | undefined;
+      };
+      emit("group.join-request", {
+        id: a.id,
+        author: a.author,
+        participant: a.participant,
+        action: a.action,
+        method: a.method ?? "unknown",
+      });
+    });
+    register("blocklist.set", (arg) => {
+      emit("blocklist.set", { blocklist: (arg as { blocklist: string[] }).blocklist });
+    });
+    register("blocklist.update", (arg) => {
+      const a = arg as { blocklist: string[]; type: "add" | "remove" };
+      emit("blocklist.update", { blocklist: a.blocklist, type: a.type });
     });
     register("connection.update", (arg) => {
       const { connection, lastDisconnect } = arg as { connection: "open" | "close" | "connecting"; lastDisconnect?: { error?: Boom } };
