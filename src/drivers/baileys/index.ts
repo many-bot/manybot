@@ -510,23 +510,32 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
       .map((c: { id: string; name?: string }) => ({ id: c.id, name: c.name ?? "" }))
       .sort((a: { id: string; name: string }, b: { id: string; name: string }) => a.name.localeCompare(b.name));
 
-    const picked = await clack.select({
-      message: t("getid.pickChat"),
+    // Allow selecting multiple chats (Space to toggle, Enter to confirm).
+    const picked = await clack.multiselect({
+      message: t("getid.pickPrompt"),
       options: sorted.map((c: { id: string; name: string }) => ({ label: c.name || c.id, value: c.id })),
     });
 
-    if (clack.isCancel(picked) || typeof picked !== "string") {
+    if (clack.isCancel(picked) || !Array.isArray(picked) || picked.length === 0) {
       teardownSock(sock);
       process.exit(0);
     }
 
-    const resolved = await resolveLidForJid(sock, picked);
-    const finalJid = resolved ?? picked;
-    try {
-      await copyToClipboard(finalJid);
-      logger.success(`[getid] ${t("getid.copied", { id: finalJid })}`);
-    } catch {
-      logger.info(`[getid] ${finalJid}`);
+    // Resolve any @lid values to their phone-based JIDs when possible.
+    const finalJids: string[] = [];
+    for (const p of picked as string[]) {
+      const resolved = await resolveLidForJid(sock, p);
+      finalJids.push(resolved ?? p);
+    }
+
+    const joined = finalJids.join("\n");
+    const copied = await copyToClipboard(joined);
+    if (copied) {
+      logger.success(`[getid] ${t("getid.copied", { count: finalJids.length, ids: joined })}`);
+    } else {
+      logger.warn(`[getid] ${t("getid.copyFailed", { count: finalJids.length, ids: joined })}`);
+      // Also print to stdout so the user can still see the IDs.
+      logger.info(`[getid] \n${joined}`);
     }
 
     teardownSock(sock);
