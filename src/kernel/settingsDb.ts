@@ -33,10 +33,10 @@ export interface SettingsApi extends ScopedAccessor {
   getCommunityChats(): string[];
 }
 
-// ── DB init ───────────────────────────────────────────────────────────────────
-
-const DB_PATH = path.join(CONFIG_DIR, "settings.db");
-mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const DB_PATH = process.env.NODE_ENV === "test" ? ":memory:" : path.join(CONFIG_DIR, "settings.db");
+if (DB_PATH !== ":memory:") {
+  mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
 
 const db = new DatabaseSync(DB_PATH);
 

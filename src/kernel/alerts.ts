@@ -33,6 +33,7 @@ import {
   SMTP_HOST, SMTP_PORT, SMTP_SEC, SMTP_USER, SMTP_PASS, SMTP_FROM, SMTP_TO, SMTP_INSECURE,
 } from "#config";
 import { logger } from "#logger";
+import { t } from "#i18n";
 
 export type AlertLevel = "info" | "warning" | "critical";
 
@@ -202,21 +203,21 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
   if (kind === "send_failed_no_fallback") {
     event = {
       level:   "critical",
-      title:   "manybot: sem driver de fallback",
+      title:   t("alerts.noFallbackTitle"),
       message: `jid=${details.jid} primary=${details.primary}`,
     };
   } else if (kind === "send_failed_both_drivers") {
     event = {
       level:   "critical",
-      title:   "manybot: envio falhou nos dois drivers",
+      title:   t("alerts.bothDriversFailedTitle"),
       message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
                (details.error ? ` error=${String(details.error)}` : ""),
     };
   } else if (kind === "whatsmeow_subprocess_halted") {
     event = {
       level:   "critical",
-      title:   "manybot: subprocesso whatsmeow halted",
-      message: `fallback indisponível: ${details.reason ?? "unknown"} — bot segue só com Baileys`,
+      title:   t("alerts.whatsmeowHaltedTitle"),
+      message: t("alerts.whatsmeowHaltedMessage", { reason: details.reason ?? "unknown" }) as string,
     };
   } else {
     event = {

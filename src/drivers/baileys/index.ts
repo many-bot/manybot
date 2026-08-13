@@ -287,8 +287,8 @@ async function startBot() {
           logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
           sendAlert({
             level:   "critical",
-            title:   "manybot parou de tentar reconectar",
-            message: `Desisti após ${reconnectAttempts} tentativas — possível restrição de conta. Rode connect() manualmente pra tentar de novo.`,
+            title:   t("alerts.reconnectHaltedTitle"),
+            message: t("alerts.reconnectHaltedMessage", { attempts: reconnectAttempts }) as string,
           }).catch(() => {});
           return;
         }

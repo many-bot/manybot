@@ -36,12 +36,58 @@
     "cacheLoaded": "{{count}} chat(s) loaded from cache.",
     "cacheLoadedStale": "{{count}} chat(s) loaded from cache (stale).",
     "sendFailedNoFallback": "manybot: no fallback driver available (jid={{jid}}, primary={{driver}})",
-    "sendFailedBothDrivers": "manybot: send failed on both drivers (jid={{jid}}, tried={{primary}} then {{secondary}})"
+    "sendFailedBothDrivers": "manybot: send failed on both drivers (jid={{jid}}, tried={{primary}} then {{secondary}})",
+    "commandsConfigMissingCmd": "commands.yaml: command \"{{id}}\" is missing required field \"cmd\" — skipped",
+    "commandsConfigReadFailed": "commands.yaml: could not be read ({{path}}): {{message}}",
+    "commandsConfigParseFailed": "commands.yaml: YAML parse error: {{message}}",
+    "commandsConfigInvalidRoot": "commands.yaml: top-level must be a map of command entries",
+    "commandsConfigInvalidEntry": "commands.yaml: entry \"{{id}}\" is not an object — skipped",
+    "commandRegistryOrphanEntry": "commandRegistry: entry \"{{id}}\" targets {{plugin}}.{{function}} but no active plugin provides it — skipped",
+    "commandRegistryInvalidEntry": "commandRegistry: entry \"{{id}}\" has no plugin/function and no text — skipped",
+    "commandRegistryInvocationCollision": "commandRegistry: invocation \"{{text}}\" already owned by \"{{winner}}\" — dropping {{loser}} ({{via}})",
+    "commandDeprecationRenamed": "commandRegistry: command \"{{id}}\" renamed from \"{{old}}\" to \"{{new}}\" — notifying old callers for {{days}} days",
+    "commandDeprecationRemoved": "commandRegistry: command \"{{id}}\" (cmd \"{{old}}\") was removed — notifying old callers for {{days}} days",
+    "commandDeprecationFallbackRenamed": "Command \"{{old}}\" was renamed to \"{{new}}\". Please update your message.",
+    "commandDeprecationFallbackRemoved": "Command \"{{old}}\" is no longer available.",
+    "commandDeprecationReservedInvocation": "commandRegistry: invocation \"{{text}}\" is reserved by active deprecation for \"{{id}}\" — refusing registration",
+    "commandManualMissing": "No detailed manual available for command \"{{cmd}}\".",
+    "commandNotFound": "Command or category \"{{cmd}}\" not found. Use {{prefix}}help to view the command list.",
+    "commandRegistryMenuAliasCollision": "commandRegistry: menu alias \"{{alias}}\" collided with real command \"{{winner}}\" — menu alias ignored"
   },
   "errors": {
     "stack": "Stack",
     "invalid_config": "Invalid config file {{file}}: {{error}}",
     "fix_config": "Fix the syntax in {{file}} before starting the bot."
+  },
+  "menu": {
+    "intro": "Use {prefix}<command> to run it or {prefix}help <command> to view its manual.",
+    "other": "Other",
+    "category": "Category",
+    "manual": "Manual",
+    "description": "Description"
+  },
+  "commandPermissions": {
+    "botNotAdmin": "This command requires the bot to be a group administrator.",
+    "senderNotAdmin": "This command is restricted to group administrators.",
+    "ownerOnly": "This command can only be run by the bot owner.",
+    "wrongScope": "This command cannot be used in this context.",
+    "cooldown": "Wait {{seconds}}s before using this command again."
+  },
+  "alerts": {
+    "noFallbackTitle": "manybot: no fallback driver",
+    "bothDriversFailedTitle": "manybot: sending failed on both drivers",
+    "whatsmeowHaltedTitle": "manybot: whatsmeow subprocess halted",
+    "whatsmeowHaltedMessage": "fallback unavailable: {{reason}} — bot will continue with Baileys only",
+    "updateAvailableTitle": "New manybot version available",
+    "updateAvailableMessage": "Installed: {{installed}} → available: {{available}}. See {{url}} for update instructions.",
+    "reconnectHaltedTitle": "manybot stopped reconnecting",
+    "reconnectHaltedMessage": "Gave up after {{attempts}} attempts — possible account restriction. Run connect() manually to retry."
+  },
+  "driver": {
+    "groupParticipantNotFound": "\"{{id}}\" does not match a current participant in group \"{{group}}\" (check whether the person is still in the group, or use a reply/mention instead of typing the number).",
+    "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rejected for: {{detail}}",
+    "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") failed for group \"{{group}}\" with participants [{{users}}]: {{message}}",
+    "pollDecryptFailed": "Failed to decrypt poll vote: {{error}}"
   },
   "onboarding": {
     "intro": "ManyBot — first login",

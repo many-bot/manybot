@@ -2,13 +2,21 @@
  * updateCheck.ts
  *
  * Compares the locally installed manybot version against the latest
- * published on npm, and fires an "info" alert (via alerts.ts) when a
+ * GitHub Release and fires an "info" alert (via alerts.ts) when a
  * newer version is available. Runs once on startup and then on a
  * schedule — both configurable (UPDATE_CHECK_ENABLED,
  * UPDATE_CHECK_INTERVAL_HOURS).
  *
- * Never throws — a failed check (offline, npm down) is logged at debug
- * level and silently skipped; it'll just try again next cycle.
+ * GitHub Releases is the source of truth for distribution: release
+ * candidate tags (-rc.N) skip npm entirely, and stable releases stay
+ * in "staged" on npm until a manual 2FA approval lands, so reading
+ * registry.npmjs.org here would either miss an already-published
+ * version or notify about one only after a long delay. The WhatsMeow
+ * installer follows the same pattern (api.github.com/repos/many-bot/
+ * manybot/releases/latest) — keep the two in sync.
+ *
+ * Never throws — a failed check (offline, GitHub down) is logged at
+ * debug level and silently skipped; it'll just try again next cycle.
  */
 
 import { readFileSync } from "fs";
@@ -17,6 +25,7 @@ import path from "path";
 import { UPDATE_CHECK_ENABLED, UPDATE_CHECK_INTERVAL_HOURS } from "#config";
 import { sendAlert } from "#kernel/alerts.js";
 import { logger } from "#logger";
+import { t } from "#i18n";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -25,7 +34,8 @@ const pkg = JSON.parse(
   readFileSync(path.join(__dirname, "../../package.json"), "utf8")
 ) as { name: string; version: string };
 
-const REGISTRY_URL = `https://registry.npmjs.org/${encodeURIComponent(pkg.name)}/latest`;
+const GITHUB_RELEASES_LATEST =
+  "https://api.github.com/repos/many-bot/manybot/releases/latest";
 
 /** Naive semver compare — good enough for x.y.z, no pre-release handling. */
 function isNewer(latest: string, current: string): boolean {
@@ -40,6 +50,15 @@ function isNewer(latest: string, current: string): boolean {
   return false;
 }
 
+/**
+ * GitHub tags come prefixed with "v" (e.g. "v5.7.0"). Strip it so we
+ * can compare against pkg.version directly and render the upgrade
+ * command without the prefix.
+ */
+function stripTagPrefix(tag: string): string {
+  return tag.startsWith("v") ? tag.slice(1) : tag;
+}
+
 let alreadyNotifiedFor: string | null = null;
 
 /**
@@ -50,23 +69,30 @@ export async function checkForUpdate(): Promise<void> {
   if (!UPDATE_CHECK_ENABLED) return;
 
   try {
-    const res = await fetch(REGISTRY_URL);
+    const res = await fetch(GITHUB_RELEASES_LATEST);
     if (!res.ok) {
-      logger.debug(`[updateCheck] npm registry responded ${res.status}`);
+      logger.debug(`[updateCheck] GitHub Releases responded ${res.status}`);
       return;
     }
-    const data = await res.json() as { version?: string };
-    const latest = data.version;
-    if (!latest || !isNewer(latest, pkg.version)) return;
+    const data = await res.json() as { tag_name?: string };
+    const rawTag = data.tag_name;
+    if (!rawTag) return;
+    const latest = stripTagPrefix(rawTag);
+    if (!isNewer(latest, pkg.version)) return;
 
     // Don't re-alert every cycle for the same version once already notified.
     if (alreadyNotifiedFor === latest) return;
     alreadyNotifiedFor = latest;
 
+    const releaseUrl = `https://github.com/many-bot/manybot/releases/tag/${rawTag}`;
     await sendAlert({
       level:   "info",
-      title:   "Nova versão do manybot disponível",
-      message: `Instalada: ${pkg.version} → disponível: ${latest}. Rode "npm install -g ${pkg.name}@${latest}" (ou equivalente) para atualizar.`,
+      title:   t("alerts.updateAvailableTitle"),
+      message: t("alerts.updateAvailableMessage", {
+        installed: pkg.version,
+        available: latest,
+        url: releaseUrl,
+      }) as string,
     });
   } catch (e) {
     logger.debug(`[updateCheck] check failed (non-fatal): ${(e as Error).message}`);

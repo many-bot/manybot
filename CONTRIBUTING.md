@@ -38,9 +38,14 @@ There's no watch/hot-reload dev script yet, so re-run `npm run build && npm star
 
 ```bash
 npm run typecheck
+npm run lint
+npm run test
 ```
 
-The codebase uses TypeScript in `strict` mode — make sure this passes with no errors. There's no automated linter or test suite yet, so please keep changes consistent with the style of the file you're editing (see below).
+Make sure all three checks pass cleanly with no errors before opening a PR:
+- `npm run typecheck`: Checks TypeScript in `strict` mode.
+- `npm run lint`: Runs ESLint flat config (`eslint.config.mjs`) with `eslint-plugin-import-x` to detect circular imports.
+- `npm run test`: Runs the automated unit test suite (`src/**/*.test.ts`) using `node:test` and `tsx`.
 
 ## Project layout
 
@@ -55,16 +60,24 @@ A quick map so you know where to look:
 - `scripts/` — build helper (`build-whatsmeow.mjs`) and smoke tests for the whatsmeow supervisor.
 - `hooks/` — release infrastructure used on the maintainer's server; see *About `hooks/`* below.
 
-Before touching `kernel/` or the driver layer, read the relevant file headers (every file in `src/kernel/` opens with a comment explaining its responsibility) and the `WaContract` interface in `src/drivers/`. Those notes capture design decisions (fallback/cooldown semantics, driver-neutral message types) that are easy to re-derive the wrong way.
+Before touching `kernel/` or the driver layer, read the relevant file headers (every file in `src/kernel/` opens with a comment explaining its responsibility) and the `WaContract` interface in `src/kernel/waContract.ts`. Those notes capture design decisions (fallback/cooldown semantics, driver-neutral message types) that are easy to re-derive the wrong way.
+
+## Architectural Invariants (read before editing `kernel/` or drivers)
+
+Things that have broken before or are easy to reimplement incorrectly — see also `AGENTS.md` for a more detailed guide tailored for AI agents:
+
+- **`WaContract` is the frontier between kernel and driver.** The kernel never imports a driver directly, and code outside `src/drivers/` must never touch a raw socket. Inside `src/drivers/baileys/`, the only legitimate use of `rawSocketOf(contract)` today is in `getGroupMetadataCached()` (it needs "Baileys-flavored" metadata that the neutral contract does not carry). Any other `sock.user`/`sock.ev` outside of that is a regression — it has already happened once with `hasBotMention`/`getContact`, which reverted to using `sock.user` directly instead of `contract.me()`.
+- **New version check uses GitHub Releases, not npm.** RC tags skip npm publication and stable releases stay in `staged` until manual 2FA approval — so the npm registry is a delayed or incomplete source of truth for "is there a new version?". Any such check must follow the pattern used in `src/drivers/whatsmeow/installer.ts` (GitHub API), not `registry.npmjs.org`.
+- **WhatsMeow platform lists must stay in sync.** `TARGETS` in `scripts/build-whatsmeow-release.mjs` (what is built) and `SUPPORTED` in `src/drivers/whatsmeow/installer.ts` (what the installer downloads) are two separate lists of the same thing. Adding a new platform requires updating both files.
+- **Not everything "decided" in design discussions is implemented.** In particular for `commands.yaml`: `subcommands:`, `group:`, and the configurable welcome message were decided but do not exist in `src/kernel/commandsConfig.ts` today. Confirm in code before assuming a design piece exists.
+- **Debug logs are silent by default.** Use `logger.debug(...)` for operational telemetry/non-fatal failures — it only prints when the binary is invoked with `--debug` (see `src/logger/logger.ts`). `info`/`warn`/`error` remain enabled. Never use `console.debug` or raw `console.log` for diagnostics — pass through `logger`. The goal is keeping production logs clean without losing call sites when verbose mode is needed.
 
 ## Code style
-
-There's no enforced linter, so consistency comes from following what's already there:
 
 - Files that hold non-obvious logic start with a header comment explaining what the file is responsible for (see any file in `src/kernel/` for examples). Do this for new files too.
 - Imports use the `#alias/*` subpath imports defined in `package.json` / `tsconfig.json` (e.g. `#kernel/...`, `#drivers/...`) instead of long relative paths.
 - Prefer explaining *why* in comments over *what* — the code already says what it does.
-- Match the formatting of the file you're editing (indent, quote style, trailing commas). When in doubt, run `npm run typecheck` and let the compiler be the tiebreaker.
+- Match the formatting of the file you're editing (indent, quote style, trailing commas). When in doubt, run `npm run typecheck && npm run lint && npm run test` and let the tooling be the tiebreaker.
 
 ## Commit messages
 
@@ -82,7 +95,7 @@ We don't enforce a strict format, but PRs are easier to review when commits are 
 
 1. Fork the repo and create a branch for your change.
 2. Keep the PR focused — one change per PR is much easier to review than several bundled together.
-3. Make sure `npm run typecheck` passes.
+3. Make sure `npm run check` pass cleanly.
 4. Fill in the [PR template](.github/PULL_REQUEST_TEMPLATE.md) — it asks for a one-line description, a link to the issue it closes (if any), and a short note for the reviewer. Plugin-specific changes go to [manyplug](https://github.com/many-bot/manyplug), not here.
 5. Open the PR against GitHub or Codeberg (or send a patch by email) with a short description of what changed and why.
 6. Be ready for a review round — especially for anything touching `kernel/` or the driver contract, since that code is shared by both WhatsApp backends.
@@ -117,6 +130,8 @@ Two expectations for contributors:
 - **The first section of `CHANGELOG.md` is the *in-development* entry.** When you open a PR that adds a user-visible change, append a bullet to the current `## v… — In-Development` section in the same PR — don't wait for the maintainer to do it during the release cut. Internal-only changes (test infra, refactors with no behavior delta, CI tweaks) can skip this.
 
 The release itself (tag push, `hooks/release.sh`) is run by the maintainer; you don't need to handle versioning.
+
+> Review note: this rule was broken once — the `commands.yaml` system (command registration, permissions, deprecation, menu) reached the code without a corresponding entry in `CHANGELOG.md`. If you are closing a change visible to users or plugin developers, add the entry in the same PR/task, not later.
 
 ## License
 

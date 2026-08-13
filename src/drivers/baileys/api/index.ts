@@ -35,8 +35,7 @@ import os                            from "os";
 import { spawn }                     from "child_process";
 import { randomUUID }                from "crypto";
 import { waitForSendSlot, simulateState,
-         typingDuration, mediaDuration,
-         waitForEditSlot }  from "#sendguard";
+         typingDuration, mediaDuration }  from "#sendguard";
 import { sendWithFallback }          from "#kernel/sendFallbackGuard.js";
 import { buildSettingsApi }          from "#settingsdb";
 import WebP                          from "node-webpmux";
@@ -201,13 +200,13 @@ function hasMention(contextInfo: unknown): boolean {
 }
 
 /** True if the bot's own JID (PN or LID) is in contextInfo.mentionedJid. */
-function hasBotMention(contextInfo: unknown, sock: import("#types").WASocket, store: BotStore): boolean {
+function hasBotMention(contextInfo: unknown, contract: WaContract, store: BotStore): boolean {
   const ci = contextInfo as { mentionedJid?: string[] } | null;
   const mentioned = ci?.mentionedJid;
   if (!mentioned || mentioned.length === 0) return false;
 
-  const botLid = (sock.user as unknown as { lid?: string })?.lid;
-  const botCandidates = [sock.user?.id, botLid]
+  const me = contract.me();
+  const botCandidates = [me.id, me.lid]
     .filter((v): v is string => !!v)
     .map(v => normalizeJid(store.resolveJid(normalizeJid(v))));
 
@@ -847,7 +846,6 @@ export function buildMessageContext(
   store: BotStore,
   guardOptions: { cooldown?: boolean; jitter?: boolean } = {}
 ): WAMessageContext {
-  const sock = rawSocketOf(contract);
   const body    = getMsgBody(msg);
   const prefix  = CONFIG.CMD_PREFIX as string;
   const rawArgs = body.trim().split(/\s+/);
@@ -879,6 +877,21 @@ export function buildMessageContext(
   // We carry the same _raw.contextInfo on the synthetic so a recursive
   // getReply().getReply() keeps working (the inner call re-reads
   // getContextInfo off _raw.contextInfo).
+  //
+  // WhatsApp's contextInfo never carries the quoted author's pushname, so
+  // we best-effort it from the local contact store (same lookup pattern
+  // as getContact() below) instead of leaving it undefined -> falling
+  // back to the raw phone number in senderName.
+  const lookupPushName = (jid: string | undefined | null): string | undefined => {
+    if (!jid) return undefined;
+    const contacts = store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>;
+    const info = contacts[jid]
+              ?? contacts[denormalizeJid(jid)]
+              ?? contacts[store.resolveJid(jid)]
+              ?? contacts[denormalizeJid(store.resolveJid(jid))];
+    return info?.notify ?? undefined;
+  };
+
   const quotedRaw: BotMessage | null = contextInfo?.quotedMessage
     ? (() => {
         const decoded = decodeContent(contextInfo.quotedMessage);
@@ -891,6 +904,8 @@ export function buildMessageContext(
           timestamp:   0,
           body:        decoded.body,
           mimetype:    decoded.mimetype,
+          fromPn:      contextInfo.participant ?? undefined,
+          pushName:    lookupPushName(contextInfo.participant),
           _raw: {
             contextInfo: {
               stanzaId:      contextInfo.stanzaId,
@@ -914,6 +929,8 @@ export function buildMessageContext(
           type:        "other",
           contentHash: "",
           timestamp:   0,
+          fromPn:      msg.quotedKey.participant ?? undefined,
+          pushName:    lookupPushName(msg.quotedKey.participant),
         }
       : null;
 
@@ -960,7 +977,7 @@ export function buildMessageContext(
     },
 
     hasMention: hasMention(contextInfo),
-    hasBotMention: hasBotMention(contextInfo, sock, store),
+    hasBotMention: hasBotMention(contextInfo, contract, store),
 
     reply: makeSender(contract, store, rawJid, msg, { cooldown, jitter }),
 
@@ -988,7 +1005,7 @@ export function buildMessageContext(
       if (!msg.fromMe) {
         throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
       }
-      if (!msg.id || !(await waitForEditSlot(msg.id))) return;
+      if (!msg.id) return;
       await contract.editMessage(rawJid, {
         id:          msg.id,
         remoteJid:   msg.chatId,
@@ -1012,7 +1029,7 @@ export function buildMessageContext(
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(sender)]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[store.resolveJid(msg.fromPn ?? "")]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(store.resolveJid(msg.fromPn ?? ""))];
-      const botJid = sock.user?.id ? jidNormalizedUser(sock.user.id) : null;
+      const botJid = contract.me().id ? jidNormalizedUser(contract.me().id) : null;
       return normalizeContact(sender, info, botJid, contract);
     },
   };
@@ -1130,7 +1147,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
     if (!msg.fromMe) {
       throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
     }
-    if (!msg.id || !(await waitForEditSlot(msg.id))) return;
+    if (!msg.id) return;
     await this._contract.editMessage(msg.chatId, {
       id:          msg.id,
       remoteJid:   msg.chatId,
@@ -1695,9 +1712,44 @@ async function resolveMentionJids(
   return Array.from(new Set(result.filter(Boolean)));
 }
 
-function buildAdminApi(contract: WaContract, chatJid: string | null) {
-  const norm = (v: string | string[]): string[] =>
-    (Array.isArray(v) ? v : [v]).map(toWireJid);
+function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | null) {
+  /**
+   * Resolve admin-supplied identifiers (bare phone number, @c.us,
+   * @s.whatsapp.net, or @lid) to the exact jid WhatsApp has on file for
+   * that participant *in this group*. A naive toWireJid() guess is only
+   * correct for pn-addressed groups — lid-addressed groups (increasingly
+   * common, e.g. when a member hides their phone number) only recognize
+   * that member by @lid, which a phone number typed by the admin can't
+   * produce on its own. Baileys' raw groupMetadata() participants carry
+   * `id` (whatever WA addresses them as here), `jid` (its best
+   * phone-number guess) and `lid` — check all three.
+   *
+   * Throws per-identifier if it doesn't match a current member, instead
+   * of silently sending a guessed jid that WhatsApp rejects deep inside
+   * the per-participant status array (see assertParticipantsUpdateOk).
+   */
+  async function resolveTargets(groupJid: string, identifiers: string[]): Promise<string[]> {
+    const meta = await getGroupMetadataCached(contract, groupJid);
+    const out: string[] = [];
+    for (const id of identifiers) {
+      const wire     = toWireJid(id);
+      const resolved = normalizeJid(store.resolveJid(id));
+      const match = meta.participants.find((p) => {
+        const pAny = p as unknown as { id: string; jid?: string; lid?: string };
+        return (
+          toWireJid(pAny.id) === wire ||
+          normalizeJid(store.resolveJid(pAny.id)) === resolved ||
+          (pAny.jid ? toWireJid(pAny.jid) === wire : false) ||
+          (pAny.lid ? toWireJid(pAny.lid) === wire : false)
+        );
+      }) as unknown as { id: string } | undefined;
+      if (!match) {
+        throw new Error(t("driver.groupParticipantNotFound", { id, group: groupJid }) as string);
+      }
+      out.push(match.id);
+    }
+    return Array.from(new Set(out));
+  }
 
   function requireChat() {
     if (!chatJid) throw new Error("This admin operation requires a runtime group context.");
@@ -1732,7 +1784,7 @@ function buildAdminApi(contract: WaContract, chatJid: string | null) {
     );
     if (failed.length > 0) {
       const detail = failed.map((r) => `${r.jid ?? "?"}=${r.status}`).join(", ");
-      throw new Error(`groupParticipantsUpdate("${action}") rejeitado para: ${detail}`);
+      throw new Error(t("driver.groupParticipantsUpdateRejected", { action, detail }) as string);
     }
   }
 
@@ -1751,9 +1803,12 @@ function buildAdminApi(contract: WaContract, chatJid: string | null) {
     try {
       results = await contract.groupParticipantsUpdate(jid, users, action);
     } catch (err) {
-      throw new Error(
-        `groupParticipantsUpdate("${action}") falhou para o grupo "${jid}" com participantes [${users.join(", ")}]: ${(err as Error).message}`
-      );
+      throw new Error(t("driver.groupParticipantsUpdateFailed", {
+        action,
+        group: jid,
+        users: users.join(", "),
+        message: (err as Error).message,
+      }) as string);
     }
     assertParticipantsUpdateOk(action, results);
     return results;
@@ -1761,12 +1816,28 @@ function buildAdminApi(contract: WaContract, chatJid: string | null) {
 
   function createTargetableAction(
     action: (jid: string, users: string[]) => Promise<unknown>,
-    memberIds: string | string[]
+    memberIds: string | string[],
+    mode: "existingMember" | "newMember" = "existingMember"
   ) {
-    const users          = norm(memberIds);
-    const executeCurrent = async () => { requireChat(); return action(chatJid!, users); };
+    const raw = Array.isArray(memberIds) ? memberIds : [memberIds];
+    const resolve = async (groupJid: string) =>
+      mode === "existingMember"
+        ? resolveTargets(groupJid, raw)
+        // `add` targets people who aren't members yet — there's no
+        // participant-list entry to match against, so fall back to a
+        // plain jid guess (the historical behavior).
+        : Array.from(new Set(raw.map(toWireJid)));
+    const executeCurrent = async () => {
+      requireChat();
+      const users = await resolve(chatJid!);
+      return action(chatJid!, users);
+    };
     return {
-      async to(targetJid: string) { await getGroup(targetJid); return action(targetJid, users); },
+      async to(targetJid: string) {
+        await getGroup(targetJid);
+        const users = await resolve(targetJid);
+        return action(targetJid, users);
+      },
       then<TResult1 = any, TResult2 = never>(
         onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | undefined | null,
         onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
@@ -1789,23 +1860,27 @@ function buildAdminApi(contract: WaContract, chatJid: string | null) {
     add(memberIds: string | string[]) {
       return createTargetableAction(
         (jid, users) => runParticipantsUpdate(jid, users, "add"),
-        memberIds
+        memberIds,
+        "newMember"
       );
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     async kick(memberIds: string | string[]) {
       requireChat();
-      return runParticipantsUpdate(chatJid!, norm(memberIds), "remove");
+      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
+      return runParticipantsUpdate(chatJid!, users, "remove");
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     async promote(memberIds: string | string[]) {
       requireChat();
-      return runParticipantsUpdate(chatJid!, norm(memberIds), "promote");
+      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
+      return runParticipantsUpdate(chatJid!, users, "promote");
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     async demote(memberIds: string | string[]) {
       requireChat();
-      return runParticipantsUpdate(chatJid!, norm(memberIds), "demote");
+      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
+      return runParticipantsUpdate(chatJid!, users, "demote");
     },
     /** @param {string} name */
     async setSubject(name: string) {
@@ -2034,7 +2109,7 @@ function buildPollApi(
           });
           handle._updateFromAggregated(aggregated);
         } catch (err) {
-          logger.error(`[poll] erro ao decriptar voto: ${err}`);
+          logger.error(`[poll] ${t("driver.pollDecryptFailed", { error: err })}`);
         }
       }
     });
@@ -2137,7 +2212,7 @@ export function buildSetupApi(
   return {
     ...buildBaseApi(contract, store, pluginRegistry, pluginName),
     ...buildSetupSendApi(contract, store),
-    admin:    buildAdminApi(contract, null),
+    admin:    buildAdminApi(contract, store, null),
     events:   buildEventsApi(contract, pluginName),
     me:       buildMeApi(contract),
     settings: { global: buildSettingsApi(pluginName, "_global").global },
@@ -2324,7 +2399,7 @@ export function buildApi({
 
     // ── admin ─────────────────────────────────────────────────────────────────
 
-    admin: buildAdminApi(contract, rawJid),
+    admin: buildAdminApi(contract, store, rawJid),
 
     // ── me ────────────────────────────────────────────────────────────────────
 

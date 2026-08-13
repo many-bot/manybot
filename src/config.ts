@@ -28,7 +28,7 @@ import { t } from "#i18n";
 // Paths
 // ---------------------------------------------------------------------------
 
-export const CONFIG_DIR       = path.join(os.homedir(), ".manybot");
+export const CONFIG_DIR       = process.env.MANYBOT_CONFIG_DIR ?? path.join(os.homedir(), ".manybot");
 
 /** @deprecated Use TOML_CONFIG_FILE. Frozen — no new keys. */
 export const CONFIG_FILE      = path.join(CONFIG_DIR, "manybot.conf");
@@ -407,6 +407,7 @@ export interface Config {
   PLUGINS:       string[];
   LANGUAGE:      string;
   PHONE_NUMBER:  string | null;
+  OWNER_NUMBER:  string | null;
   LOGIN_METHOD:  "phone" | "qr" | null;
 
   ADMIN_JID: string;
@@ -455,6 +456,7 @@ const DEFAULTS: Config = {
   PLUGINS:       [],
   LANGUAGE:      "en",
   PHONE_NUMBER:  null,
+  OWNER_NUMBER:  null,
   LOGIN_METHOD:  null,
   ADMIN_JID: "",
   SMTP_HOST: "",
@@ -483,6 +485,13 @@ function normalize(cfg: Config): Config {
   // Empty string and absent PHONE_NUMBER are both treated as null so plugins
   // can always do a simple truthiness check regardless of config source.
   if (cfg.PHONE_NUMBER === "") cfg.PHONE_NUMBER = null;
+
+  const rawOwner = cfg.owner_number ?? cfg.OWNER_NUMBER;
+  if (typeof rawOwner === "string" && rawOwner.trim().length > 0) {
+    cfg.OWNER_NUMBER = rawOwner.trim();
+  } else {
+    cfg.OWNER_NUMBER = null;
+  }
 
   // Anything other than "phone"/"qr" is treated as "not configured yet",
   // so a typo or leftover garbage value falls back to the interactive
@@ -614,6 +623,7 @@ export const SECURITY_LEVEL = CONFIG.SECURITY_LEVEL;
 export const PLUGINS       = CONFIG.PLUGINS;
 export const LANGUAGE      = CONFIG.LANGUAGE;
 export const PHONE_NUMBER  = CONFIG.PHONE_NUMBER;
+export const OWNER_NUMBER  = CONFIG.OWNER_NUMBER;
 export const LOGIN_METHOD  = CONFIG.LOGIN_METHOD;
 export const ADMIN_JID                   = CONFIG.ADMIN_JID;
 export const SMTP_HOST                   = CONFIG.SMTP_HOST;

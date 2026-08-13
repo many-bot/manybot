@@ -15,18 +15,34 @@
 import type { BotMessage } from "#drivers/types.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
-import { CHATS, EXCLUDE_CHATS } from "#config";
+import { CHATS, EXCLUDE_CHATS, CMD_PREFIX } from "#config";
 import { buildApi,
          buildChatFromMsg,
          buildMessageContext } from "./api/index.js";
 import { pluginRegistry }     from "#kernel/pluginLoader.js";
+import { getCommandByInvocation, getCommandRegistry } from "#kernel/commandRegistry.js";
+import { getActiveDeprecation, formatDeprecationMessage } from "#kernel/commandDeprecation.js";
+import { checkPermission } from "#kernel/commandPermissions.js";
+import { handleMenuCommand, renderNotFound, resolveLocalizedString } from "#kernel/commandMenu.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid } from "#drivers/jid.js";
+import { logger } from "#logger";
 
 const INCOMING_DEBOUNCE_MS = 0;
 const lastProcessedAt = new Map<string, number>();
+
+/**
+ * Extract the bare command token from a raw body string.
+ * Mirrors the prefix/parsing logic in `buildMessageContext` and `buildApi`
+ * (kept local to avoid coupling to internal helpers of api/index.ts).
+ * Returns "" when the body does not start with the configured prefix.
+ */
+function extractCommand(body: string, prefix: string): string {
+  const first = body.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return first.startsWith(prefix) ? first.slice(prefix.length) : "";
+}
 
 // ── Dedup of already-processed messages ────────────────────────────────────
 // WhatsApp resends messages without a delivery/read confirmation (the
@@ -112,7 +128,7 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
   const releaseChatSlot = await acquireChatSlot(jid);
 
   try {
-    await runPluginsForMessage(msg, chat, contract, store, rawJid);
+    await runPluginsForMessage(msg, chat, msgCtx, contract, store, rawJid);
   } finally {
     releaseChatSlot();
   }
@@ -121,10 +137,94 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
 async function runPluginsForMessage(
   msg: BotMessage,
   chat: Awaited<ReturnType<typeof buildChatFromMsg>>,
+  msgCtx: ReturnType<typeof buildMessageContext>,
   contract: WaContract,
   store: BotStore,
   rawJid: string
 ): Promise<void> {
+  const command = extractCommand(msgCtx.body, CMD_PREFIX);
+  const registry = getCommandRegistry();
+
+  // 1. Menu aliases match (overview / category / manual / notFound)
+  if (command && registry && registry.menuAliases.has(command)) {
+    const rawArgs = msgCtx.body.trim().slice(CMD_PREFIX.length + command.length).trim();
+    const menuResponse = handleMenuCommand(command, rawArgs, registry);
+    try {
+      await msgCtx.reply.text(menuResponse);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      logger.warn(`[messageHandler] menu reply failed: ${err.message}`);
+    }
+    return;
+  }
+
+  const matched = command ? getCommandByInvocation(command) : null;
+
+  if (matched) {
+    const permApi = buildApi({
+      msg,
+      chat,
+      contract,
+      store,
+      pluginRegistry,
+      pluginName:   matched.pluginName ?? "system",
+      guardOptions: {},
+    });
+
+    const permResult = await checkPermission(matched, {
+      isGroup: permApi.chat.isGroup,
+      chatId: permApi.chat.id,
+      senderId: msgCtx.sender,
+      isSenderAdmin: () => permApi.chat.isSenderAdmin(),
+      isBotAdmin: () => permApi.chat.isBotAdmin(),
+    });
+
+    if (!permResult.allowed) {
+      try {
+        await msgCtx.reply.text(permResult.message);
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        logger.warn(`[messageHandler] permission reply failed: ${err.message}`);
+      }
+      return;
+    }
+  }
+
+  // Fixed-text command: reply with the literal text and stop — do not
+  // invoke any plugin (legacy or migrated) for this message.
+  if (matched && matched.source === "text" && matched.text !== null) {
+    try {
+      const textContent = resolveLocalizedString(matched.text) ?? "";
+      await msgCtx.reply.text(textContent);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      logger.warn(`[messageHandler] fixed-text reply failed: ${err.message}`);
+    }
+    return;
+  }
+
+  // Deprecated old name: notify the user and stop. We do NOT redirect
+  // to the new command and do NOT fall through to the legacy run(ctx).
+  if (!matched && command) {
+    const dep = getActiveDeprecation(command);
+    if (dep) {
+      const defaults = registry?.defaults ?? {
+        notifyChanges:    true,
+        notifyPeriodDays: 7,
+        notifyMessage:    null,
+      };
+      try {
+        await msgCtx.reply.text(formatDeprecationMessage(dep, defaults));
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        logger.warn(`[messageHandler] deprecation reply failed: ${err.message}`);
+      }
+      return;
+    }
+  }
+
+  const matchedPlugin = matched && matched.source === "plugin" ? matched : null;
+
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
@@ -147,12 +247,34 @@ async function runPluginsForMessage(
     }
 
     try {
-      await runPlugin(plugin, ctx);
+      // If this plugin owns the matched registry entry, skip the legacy
+      // run(ctx) and invoke the new handler directly — avoids double-firing
+      // for a migrated command. Other plugins (and other invocations of
+      // this same plugin that did NOT match the registry) keep their legacy
+      // run(ctx).
+      if (matchedPlugin && matchedPlugin.pluginName === plugin.name && matchedPlugin.handler) {
+        await runPlugin(plugin, ctx, matchedPlugin.handler, msgCtx.args);
+      } else {
+        await runPlugin(plugin, ctx);
+      }
     } finally {
       if (useTyping) {
         clearInterval(typingInterval);
         contract.sendPresenceUpdate("paused", rawJid).catch(() => {});
       }
+    }
+  }
+
+  // Legacy plugins do not report whether they handled a message.  Keep the
+  // generic fallback opt-in and send it only after they have all had a
+  // chance to respond; a legacy plugin may therefore still produce a reply
+  // alongside this fallback.
+  if (!matched && command && registry?.menu.notFoundFallback) {
+    try {
+      await msgCtx.reply.text(renderNotFound(command, registry));
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      logger.warn(`[messageHandler] notFoundFallback reply failed: ${err.message}`);
     }
   }
 }

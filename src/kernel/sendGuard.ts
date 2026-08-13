@@ -9,9 +9,9 @@
  *   3. Human jitter          — random delay to break robotic timing patterns
  *   4. Chat-concurrency gate — caps how many different chats the bot can be
  *                              actively answering at the same time
- *   5. Edit throttle         — jittered minimum gap + cap on edits per
- *                              message, so things like loading animations
- *                              don't edit on a fixed, bot-like cadence
+ *   5. Edit throttle         — removed (was: jittered minimum gap + cap on
+ *                              edits per message). Edit timing is now left
+ *                              to the caller.
  *
  * All of the above scale with SECURITY_LEVEL ("low" | "medium" | "high").
  * Higher levels are slower and more conservative — lower risk of WhatsApp's
@@ -32,8 +32,6 @@ interface SecurityProfile {
   chatCooldownMs:      number;
   jitterMs:            { min: number; max: number };
   concurrency:         number; // max chats answered at the same time, globally
-  editIntervalMs:      { min: number; max: number };
-  maxEditsPerMessage:  number;
   typingMaxMs:         number; // cap on the "typing..." indicator, regardless of text length
 }
 
@@ -43,8 +41,6 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     chatCooldownMs:     100,
     jitterMs:           { min: 30, max: 120 },
     concurrency:        Infinity,
-    editIntervalMs:     { min: 800, max: 2000 },
-    maxEditsPerMessage: 20,
     typingMaxMs:        2000,
   },
   medium: {
@@ -52,8 +48,6 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     chatCooldownMs:     150,
     jitterMs:           { min: 50, max: 200 },
     concurrency:        2,
-    editIntervalMs:     { min: 1200, max: 3000 },
-    maxEditsPerMessage: 12,
     typingMaxMs:        4000,
   },
   high: {
@@ -61,8 +55,6 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     chatCooldownMs:     400,
     jitterMs:           { min: 150, max: 500 },
     concurrency:        1,
-    editIntervalMs:     { min: 2000, max: 5000 },
-    maxEditsPerMessage: 6,
     typingMaxMs:        8000,
   },
 };
@@ -176,55 +168,6 @@ export async function acquireChatSlot(jid: string): Promise<() => void> {
       resolve(releaseChatSlot);
     });
   });
-}
-
-// ── Edit throttle ─────────────────────────────────────────────────────────────
-// Jittered minimum gap between edits of the same message, plus a hard cap
-// on total edits — prevents fixed-interval edit loops (e.g. loading
-// animations) from producing a uniform-timing signature.
-
-interface EditState {
-  lastEditAt: number;
-  count:      number;
-}
-
-const editState = new Map<string, EditState>();
-const EDIT_STATE_STALE_MS = 10 * 60 * 1000;
-
-function cleanupEditState(now: number): void {
-  for (const [id, s] of editState) {
-    if (now - s.lastEditAt > EDIT_STATE_STALE_MS) editState.delete(id);
-  }
-}
-
-/**
- * Waits for a safe edit slot for `messageId`, applying a jittered minimum
- * gap since its last edit. Returns false once the message has hit its
- * per-level edit cap — callers should skip the edit silently in that case.
- * @param {string} messageId
- * @returns {Promise<boolean>} true if the edit may proceed
- */
-export async function waitForEditSlot(messageId: string): Promise<boolean> {
-  const now = Date.now();
-  cleanupEditState(now);
-
-  const profile = currentProfile();
-  const s = editState.get(messageId) ?? { lastEditAt: 0, count: 0 };
-
-  if (s.count >= profile.maxEditsPerMessage) {
-    editState.set(messageId, s);
-    logger.debug(`[sendGuard] edit cap reached for ${messageId}`);
-    return false;
-  }
-
-  const minGap = randomBetween(profile.editIntervalMs);
-  const wait   = s.lastEditAt + minGap - Date.now();
-  if (wait > 0) await sleep(wait);
-
-  s.lastEditAt = Date.now();
-  s.count += 1;
-  editState.set(messageId, s);
-  return true;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

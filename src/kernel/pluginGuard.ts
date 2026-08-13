@@ -21,6 +21,7 @@
  */
 import { logger }         from "#logger";
 import { pluginRegistry, type PluginEntry } from "#kernel/pluginLoader.js";
+import type { CommandHandler } from "#kernel/commandRegistry.js";
 
 /** Max ms a single plugin run is allowed to take before it's force-aborted. */
 const PLUGIN_TIMEOUT_MS = 120_000;
@@ -50,15 +51,25 @@ function withTimeout(promise: Promise<unknown>, ms: number, pluginName: string):
  * plugin.guardOptions (optional, read from plugin's own export):
  *   @param {boolean} [plugin.guardOptions.timeout=true]
  */
-export async function runPlugin(plugin: PluginEntry, context: unknown): Promise<void> {
+export async function runPlugin(
+  plugin: PluginEntry,
+  context: unknown,
+  handler?: CommandHandler,
+  input?: unknown
+): Promise<void> {
   if (plugin.status !== "active") return;
 
   const useTimeout = plugin.guardOptions?.timeout !== false;
 
   try {
-    if (!plugin.run) return;
-    const run = plugin.run(context);
-    await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
+    if (handler) {
+      const run = handler(context, input);
+      await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
+    } else {
+      if (!plugin.run) return;
+      const run = plugin.run(context);
+      await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
+    }
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
     const errorCount = (plugin.errorCount ?? 0) + 1;

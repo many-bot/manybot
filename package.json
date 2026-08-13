@@ -27,13 +27,21 @@
   "scripts": {
     "build": "npm i && tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true }); fs.mkdirSync('dist/drivers/whatsmeow', { recursive: true }); fs.cpSync('src/drivers/whatsmeow/whatsmeow.proto', 'dist/drivers/whatsmeow/whatsmeow.proto');\" && node scripts/build-whatsmeow.mjs",
     "start": "node dist/main.js",
-    "typecheck": "tsc --noEmit"
+    "lint": "eslint .",
+    "test": "NODE_ENV=test tsx --conditions development --test --experimental-test-coverage src/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^8.0.1",
+    "eslint": "^10.8.1",
+    "eslint-plugin-import-x": "^4.17.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.67.0"
   },
   "dependencies": {
     "@clack/prompts": "^0.10.1",
@@ -41,6 +49,7 @@
     "@grpc/proto-loader": "^0.7.15",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "6.7.24",
+    "js-yaml": "^5.2.3",
     "node-cron": "^4.6.0",
     "node-webpmux": "^3.2.1",
     "nodemailer": "^9.0.3",
@@ -49,18 +58,62 @@
     "smol-toml": "^1.7.0"
   },
   "imports": {
-    "#drivers/*": "./dist/drivers/*",
-    "#client/*": "./dist/client/*",
-    "#kernel/*": "./dist/kernel/*",
-    "#manyapi": "./dist/kernel/pluginApi.js",
-    "#settingsdb": "./dist/kernel/settingsDb.js",
-    "#sendguard": "./dist/kernel/sendGuard.js",
-    "#logger": "./dist/logger/logger.js",
-    "#utils/*": "./dist/utils/*",
-    "#i18n": "./dist/i18n/index.js",
-    "#download": "./dist/download/queue.js",
-    "#config": "./dist/config.js",
-    "#main": "./dist/main.js",
-    "#types": "./dist/types.js"
+    "#drivers/*": {
+      "development": "./src/drivers/*",
+      "default": "./dist/drivers/*"
+    },
+    "#client/*": {
+      "development": "./src/client/*",
+      "default": "./dist/client/*"
+    },
+    "#kernel/*": {
+      "development": "./src/kernel/*",
+      "default": "./dist/kernel/*"
+    },
+    "#manyapi": {
+      "development": "./src/kernel/pluginApi.ts",
+      "default": "./dist/kernel/pluginApi.js"
+    },
+    "#settingsdb": {
+      "development": "./src/kernel/settingsDb.ts",
+      "default": "./dist/kernel/settingsDb.js"
+    },
+    "#sendguard": {
+      "development": "./src/kernel/sendGuard.ts",
+      "default": "./dist/kernel/sendGuard.js"
+    },
+    "#logger": {
+      "development": "./src/logger/logger.ts",
+      "default": "./dist/logger/logger.js"
+    },
+    "#utils/*": {
+      "development": "./src/utils/*",
+      "default": "./dist/utils/*"
+    },
+    "#i18n": {
+      "development": "./src/i18n/index.ts",
+      "default": "./dist/i18n/index.js"
+    },
+    "#download": {
+      "development": "./src/download/queue.ts",
+      "default": "./dist/download/queue.js"
+    },
+    "#config": {
+      "development": "./src/config.ts",
+      "default": "./dist/config.js"
+    },
+    "#main": {
+      "development": "./src/main.ts",
+      "default": "./dist/main.js"
+    },
+    "#types": {
+      "development": "./src/types.ts",
+      "default": "./dist/types.js"
+    }
+  },
+  "allowScripts": {
+    "@whiskeysockets/baileys@6.7.24": true,
+    "protobufjs@7.6.5": true,
+    "esbuild@0.28.1": true
   }
 }

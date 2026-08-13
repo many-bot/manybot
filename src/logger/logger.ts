@@ -4,14 +4,26 @@ const c: Record<string, string> = {
   red: "\x1b[31m", blue: "\x1b[34m",
 };
 
+let debugEnabled = process.argv.includes("--debug");
+
 /**
  * ManyBot central logger.
  * Each method only handles output — no business logic or external I/O.
+ *
+ * `debug` is silent by default to keep production logs clean. Pass
+ * `--debug` on the command line to enable it. The check is a single
+ * `Array.includes` on argv, cheap enough to do per call and avoids
+ * requiring logger consumers to know about a global toggle.
  */
 export const logger = {
   info:    (...a: unknown[]) => console.log(`${c.cyan  }INFO  ${c.reset}`, ...a),
   success: (...a: unknown[]) => console.log(`${c.green }OK    ${c.reset}`, ...a),
   warn:    (...a: unknown[]) => console.log(`${c.yellow}WARN  ${c.reset}`, ...a),
   error:   (...a: unknown[]) => console.log(`${c.red   }ERROR ${c.reset}`, ...a),
-  debug:   (...a: unknown[]) => console.log(`${c.blue  }DEBUG ${c.reset}`, ...a),
+  debug:   (...a: unknown[]) => {
+    if (debugEnabled) console.log(`${c.blue  }DEBUG ${c.reset}`, ...a);
+  },
 };
+
+export function enableDebug(): void { debugEnabled = true; }
+export function isDebugEnabled(): boolean { return debugEnabled; }

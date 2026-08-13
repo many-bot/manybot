@@ -150,12 +150,34 @@ export function t(key: string, context: Record<string, unknown>): string | Recor
 export function t(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
   ensureLoaded();
 
+  return translate(currentTranslations, fallbackTranslations, key, context);
+}
+
+/**
+ * Translates a key for an explicit language. This is useful for rendered
+ * content that accepts a language override, such as the command menu.
+ */
+export function tFor(lang: string | undefined, key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
+  ensureLoaded();
+
+  const targetLang = lang?.trim().toLowerCase() || currentLang || DEFAULT_LANG;
+  const targetTranslations = loadLocale(targetLang) || fallbackTranslations;
+  return translate(targetTranslations, fallbackTranslations, key, context);
+}
+
+function translate(
+  targetTranslations: Record<string, unknown>,
+  englishTranslations: Record<string, unknown>,
+  key: string,
+  context: Record<string, unknown>
+): string | Record<string, unknown> {
+
   // Try current language first
-  let value = getNestedValue(currentTranslations, key);
+  let value = getNestedValue(targetTranslations, key);
 
   // Fallback to English if not found
   if (value === undefined) {
-    value = getNestedValue(fallbackTranslations, key);
+    value = getNestedValue(englishTranslations, key);
   }
 
   // If still not found, return the key

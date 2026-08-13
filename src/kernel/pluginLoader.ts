@@ -16,14 +16,28 @@ import { t }             from "#i18n";
 import { pathToFileURL } from "url";
 import { PATHS }         from "#config";
 import { buildSetupApi, cleanupPluginEvents } from "#manyapi";
+import { initCommandRegistry } from "#kernel/commandRegistry.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
+
+import type { CommandPermissions, LocalizedString } from "./commandsConfig.js";
+
+export interface PluginCommandDefault {
+  cmd: string;
+  aliases?: string[];
+  desc?: LocalizedString;
+  category?: string;
+  manual?: LocalizedString;
+  permissions?: CommandPermissions;
+  handler: (ctx: unknown, input?: unknown) => Promise<unknown>;
+}
 
 export interface PluginEntry {
   name: string;
   status: "active" | "disabled" | "error";
   run: ((ctx: unknown) => Promise<void>) | null;
   setup: ((ctx: unknown) => Promise<void>) | null;
+  commands: Record<string, PluginCommandDefault> | null;
   exports: unknown;
   error: Error | null;
   guardOptions: Record<string, unknown>;
@@ -90,6 +104,8 @@ export async function loadPlugins(activePlugins: string[]): Promise<void> {
   }
 
   startConfigWatcher();
+
+  await initCommandRegistry();
 
   const total   = pluginRegistry.size;
   const active  = [...pluginRegistry.values()].filter(p => p.status === "active").length;
@@ -187,6 +203,7 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       status: "disabled",
       run: null,
       setup: null,
+      commands: null,
       exports: null,
       error: null,
       guardOptions: {},
@@ -203,6 +220,7 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       status: "disabled",
       run: null,
       setup: null,
+      commands: null,
       exports: null,
       error: null,
       guardOptions: {},
@@ -226,6 +244,7 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       status:  "active",
       run:     mod.default,
       setup:   mod.setup ?? null,
+      commands: (mod.commands as Record<string, PluginCommandDefault> | undefined) ?? null,
       exports: mod.api ?? null,
       error:   null,
       guardOptions: mod.guardOptions ?? {},
@@ -233,6 +252,10 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
     });
 
     logger.info(t(isReload ? "system.pluginReloaded" : "system.pluginLoaded", { name }));
+
+    if (isReload) {
+      await initCommandRegistry();
+    }
 
     watchPluginDirectory(name);
   } catch (e) {
@@ -245,11 +268,16 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       status:  newErrorCount >= 3 ? "error" : "active",
       run: null,
       setup: null,
+      commands: null,
       exports: null,
       error: err,
       guardOptions: {},
       errorCount: newErrorCount,
     });
+
+    if (isReload) {
+      await initCommandRegistry();
+    }
   }
 }
 
@@ -335,6 +363,8 @@ export async function syncPlugins(): Promise<void> {
       }
     }
   }
+
+  await initCommandRegistry();
 }
 
 /**

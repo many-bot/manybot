@@ -36,12 +36,58 @@
     "cacheLoaded": "{{count}} conversa(s) carregada(s) do cache.",
     "cacheLoadedStale": "{{count}} conversa(s) carregada(s) do cache (desatualizado).",
     "sendFailedNoFallback": "manybot: nenhum driver de fallback disponível (jid={{jid}}, primário={{driver}})",
-    "sendFailedBothDrivers": "manybot: envio falhou nos dois drivers (jid={{jid}}, tentou {{primary}} depois {{secondary}})"
+    "sendFailedBothDrivers": "manybot: envio falhou nos dois drivers (jid={{jid}}, tentou {{primary}} depois {{secondary}})",
+    "commandsConfigMissingCmd": "commands.yaml: comando \"{{id}}\" sem o campo obrigatório \"cmd\" — ignorado",
+    "commandsConfigReadFailed": "commands.yaml: não foi possível ler ({{path}}): {{message}}",
+    "commandsConfigParseFailed": "commands.yaml: erro de parse YAML: {{message}}",
+    "commandsConfigInvalidRoot": "commands.yaml: o nível raiz deve ser um mapa de entradas de comando",
+    "commandsConfigInvalidEntry": "commands.yaml: entrada \"{{id}}\" não é um objeto — ignorada",
+    "commandRegistryOrphanEntry": "commandRegistry: entrada \"{{id}}\" aponta para {{plugin}}.{{function}} mas nenhum plugin ativo fornece — ignorada",
+    "commandRegistryInvalidEntry": "commandRegistry: entrada \"{{id}}\" não tem plugin/function nem text — ignorada",
+    "commandRegistryInvocationCollision": "commandRegistry: invocação \"{{text}}\" já pertence a \"{{winner}}\" — descartando {{loser}} ({{via}})",
+    "commandDeprecationRenamed": "commandRegistry: comando \"{{id}}\" renomeado de \"{{old}}\" para \"{{new}}\" — avisando chamadores antigos por {{days}} dias",
+    "commandDeprecationRemoved": "commandRegistry: comando \"{{id}}\" (cmd \"{{old}}\") foi removido — avisando chamadores antigos por {{days}} dias",
+    "commandDeprecationFallbackRenamed": "O comando \"{{old}}\" foi renomeado para \"{{new}}\". Atualize sua mensagem.",
+    "commandDeprecationFallbackRemoved": "O comando \"{{old}}\" não está mais disponível.",
+    "commandDeprecationReservedInvocation": "commandRegistry: invocação \"{{text}}\" está reservada por deprecation ativa de \"{{id}}\" — registro recusado",
+    "commandManualMissing": "Nenhum manual detalhado disponível para o comando \"{{cmd}}\".",
+    "commandNotFound": "Comando ou categoria \"{{cmd}}\" não encontrado. Use {{prefix}}help para ver a lista de comandos.",
+    "commandRegistryMenuAliasCollision": "commandRegistry: alias de menu \"{{alias}}\" colidiu com comando real \"{{winner}}\" — alias de menu ignorado"
   },
   "errors": {
     "stack": "Stack",
     "invalid_config": "Arquivo de configuração inválido {{file}}: {{error}}",
     "fix_config": "Corrija a sintaxe em {{file}} antes de iniciar o bot."
+  },
+  "menu": {
+    "intro": "Use {prefix}<comando> para executar ou {prefix}help <comando> para ver o manual.",
+    "other": "Outros",
+    "category": "Categoria",
+    "manual": "Manual",
+    "description": "Descrição"
+  },
+  "commandPermissions": {
+    "botNotAdmin": "Este comando requer que o bot seja administrador do grupo.",
+    "senderNotAdmin": "Este comando é restrito a administradores do grupo.",
+    "ownerOnly": "Este comando só pode ser executado pelo dono do bot.",
+    "wrongScope": "Este comando não pode ser usado neste ambiente.",
+    "cooldown": "Aguarde {{seconds}}s para usar este comando novamente."
+  },
+  "alerts": {
+    "noFallbackTitle": "manybot: sem driver de fallback",
+    "bothDriversFailedTitle": "manybot: envio falhou nos dois drivers",
+    "whatsmeowHaltedTitle": "manybot: subprocesso whatsmeow interrompido",
+    "whatsmeowHaltedMessage": "fallback indisponível: {{reason}} — o bot continuará apenas com Baileys",
+    "updateAvailableTitle": "Nova versão do manybot disponível",
+    "updateAvailableMessage": "Instalada: {{installed}} → disponível: {{available}}. Veja {{url}} para instruções de atualização.",
+    "reconnectHaltedTitle": "manybot parou de tentar reconectar",
+    "reconnectHaltedMessage": "Desisti após {{attempts}} tentativas — possível restrição de conta. Rode connect() manualmente para tentar de novo."
+  },
+  "driver": {
+    "groupParticipantNotFound": "\"{{id}}\" não corresponde a nenhum participante atual do grupo \"{{group}}\" (confira se a pessoa ainda está no grupo, ou use reply/menção em vez de digitar o número).",
+    "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rejeitado para: {{detail}}",
+    "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") falhou para o grupo \"{{group}}\" com participantes [{{users}}]: {{message}}",
+    "pollDecryptFailed": "Erro ao decriptar voto da enquete: {{error}}"
   },
   "onboarding": {
     "intro": "ManyBot — primeiro login",
