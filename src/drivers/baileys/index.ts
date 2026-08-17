@@ -5,7 +5,7 @@
  *
  * Owns the socket state machine (connect / disconnect / reconnect /
  * circuit breaker) and exposes the live `WaContract` adapter to the
- * rest of the kernel. Plugins, sendFallbackGuard, messageHandler,
+ * rest of the kernel. Plugins, activeDriverSend, messageHandler,
  * pluginLoader, contactAutoSave and sendGuard all consume the
  * `WaContract` returned here — they never touch the raw Baileys socket.
  *
@@ -16,9 +16,8 @@
  * registration, and the reconnect circuit breaker — none of which
  * the adapter should know about.
  *
- * For the verification-required path (sendFallbackGuard), the contract
- * also exposes `getHistory?` — which the adapter populates from the
- * Baileys store.messages map on demand.
+ * The contract also exposes `getHistory?` — which the adapter
+ * populates from the Baileys store.messages map on demand.
  */
 
 import { createSocket, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
@@ -28,7 +27,6 @@ import { normalizeJid } from "#drivers/jid.js";
 import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
-import { getDriverManager } from "#kernel/driverManager.js";
 import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
 import { setStatus } from "#kernel/statusServer.js";
 import { logger } from "#logger";
@@ -251,40 +249,43 @@ async function startBot() {
 
       logger.warn(t("system.disconnected", { reason: String(code) }));
 
-      if (loggedOut || badSession) {
-        if (badSession) {
-          logger.warn("Session data corrupted (badSession=500). Clearing session dir.");
-          getDriverManager().markDegraded("baileys", 300_000);
-        } else {
-          logger.warn(t("system.sessionExpired"));
-        }
-        try {
-          await fs.rm(AUTH_DIR, { recursive: true, force: true });
-        } catch (e) {
+       if (loggedOut || badSession) {
+         if (badSession) {
+           logger.warn("Session data corrupted (badSession=500). Clearing session dir.");
+           // No longer mark degraded - halt on failure
+           logger.error("Baileys driver failed due to bad session - bot will halt");
+           process.exit(1);
+         } else {
+           logger.warn(t("system.sessionExpired"));
+           // No longer mark degraded - halt on failure
+           logger.error("Baileys driver failed due to session expired - bot will halt");
+           process.exit(1);
+         }
+  try {
+    await fs.rm(AUTH_DIR, { recursive: true, force: true });
+  } catch (e) {
+    logger.error(`Baileys driver failed due to ${badSession ? "bad session" : "session expired"} - bot will halt`);
+    process.exit(1);
           logger.error(`[whatsapp] Failed to remove session dir: ${(e as Error).message}`);
         }
         scheduleReconnect(1000);
       } else if (restartReq) {
         restartRequiredCount++;
         if (restartRequiredCount >= MAX_RESTART_REQUIRED) {
-          halted = true;
-          logger.error(`restartRequired (515) recurring — protocol drift suspected. Halting.`);
-          getDriverManager().markDegraded("baileys", 600_000);
-          sendAlert({
-            level:   "critical",
-            title:   "manybot — restartRequired recurring",
-            message: `Protocol drift suspected after ${restartRequiredCount}x restartRequired. Bot halted on Baileys. Run connect() manually.`,
-          }).catch(() => {});
-          return;
+halted = true;
+           logger.error(`restartRequired (515) recurring — protocol drift suspected. Halting.`);
+           logger.error("Baileys driver failed due to repeated restartRequired - bot will halt");
+           process.exit(1);
         }
         const delay = Math.min(500, RECONNECT_BASE_MS);
         logger.info(t("system.reconnecting", { secs: Math.round(delay / 1000) }));
         scheduleReconnect(delay);
       } else if (!shuttingDown) {
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-          halted = true;
-          getDriverManager().markDegraded("baileys", 600_000);
-          logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
+halted = true;
+           logger.error(t("system.reconnectHalted", { attempts: reconnectAttempts }));
+           logger.error("Baileys driver failed due to exhausted reconnect attempts - bot will halt");
+           process.exit(1);
           sendAlert({
             level:   "critical",
             title:   t("alerts.reconnectHaltedTitle"),
@@ -428,10 +429,10 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
   // ── media (download) ────────────────────────────────────────────────────
   downloadMedia: (...args) => requireReady().downloadMedia(...args),
 
-  // ── verification primitive ─────────────────────────────────────────────
+  // ── history ──────────────────────────────────────────────────────────
   // Delegates to the adapter, which reads from the in-memory Baileys
-  // store (store.messages). The adapter guarantees getHistory is defined
-  // (the Baileys adapter guarantees getHistory is defined), so the defensive fallback is gone.
+  // store (store.messages). The Baileys adapter always defines
+  // getHistory, so calling it unconditionally here is safe.
   getHistory: (jid, opts) => requireReady().getHistory!(jid, opts),
 
   /**
@@ -652,3 +653,4 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
 function hashText(text: string): string {
   return createHash("sha1").update(text.trim(), "utf8").digest("hex");
 }
+
