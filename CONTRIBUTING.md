@@ -47,6 +47,8 @@ Make sure all three checks pass cleanly with no errors before opening a PR:
 - `npm run lint`: Runs ESLint flat config (`eslint.config.mjs`) with `eslint-plugin-import-x` to detect circular imports.
 - `npm run test`: Runs the automated unit test suite (`src/**/*.test.ts`) using `node:test` and `tsx`.
 
+Tests are part of the change: add or update focused coverage whenever behavior is added or changed. Treat a passing test as a check against the intended production contract, not as a reason to preserve an accidental implementation detail. If an existing expectation describes behavior that is correct in the code but wrong in production, fix production when that is the intended outcome; otherwise update the stale test expectation and cover the actual contract.
+
 ## Project layout
 
 A quick map so you know where to look:
@@ -75,6 +77,7 @@ Things that have broken before or are easy to reimplement incorrectly — see al
 ## Code style
 
 - Files that hold non-obvious logic start with a header comment explaining what the file is responsible for (see any file in `src/kernel/` for examples). Do this for new files too.
+- Documentation and code comments must always be written in English only (except for localization resource files in `src/locales/` such as `pt.json` / `es.json`).
 - Imports use the `#alias/*` subpath imports defined in `package.json` / `tsconfig.json` (e.g. `#kernel/...`, `#drivers/...`) instead of long relative paths.
 - Prefer explaining *why* in comments over *what* — the code already says what it does.
 - Match the formatting of the file you're editing (indent, quote style, trailing commas). When in doubt, run `npm run typecheck && npm run lint && npm run test` and let the tooling be the tiebreaker.
@@ -90,6 +93,8 @@ We don't enforce a strict format, but PRs are easier to review when commits are 
 ```
 
 `<area>` is usually one of `kernel`, `drivers/<name>`, `i18n`, `build`, `deps`, `docs`. If your change touches multiple areas, pick the dominant one. Squash commits before merging if the history is noisy.
+
+Every commit must be self-contained and fully functional on its own — never split changes across commits in a way that leaves intermediate commits uncompilable, failing checks, or with unresolved dependencies.
 
 ## Submitting your change
 
