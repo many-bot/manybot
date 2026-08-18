@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import type { WaContract, SentMessageRef } from "#kernel/waContract.js";
 
-function createFakeDriver(name: "baileys" | "whatsmeow", ready = true): WaContract & { disconnected: boolean } {
+function createFakeDriver(name: "baileys", ready = true): WaContract & { disconnected: boolean } {
   const state = { disconnected: false };
   const mockRef = (id: string): SentMessageRef => ({ id, chatId: "123@c.us", timestamp: Date.now() });
 
@@ -61,7 +61,7 @@ describe("kernel/driverManager", () => {
     _resetDriverManagerForTests();
   });
 
-  test("registers primary driver and returns active instance", () => {
+  test("registers driver and returns active instance", () => {
     const dm = getDriverManager();
     const baileys = createFakeDriver("baileys");
 
@@ -76,33 +76,6 @@ describe("kernel/driverManager", () => {
   test("throws if active() called with no drivers registered", () => {
     const dm = getDriverManager();
     assert.throws(() => dm.active(), /no active driver registered/);
-  });
-
-  test("registers secondary driver as fallback without changing activeName", () => {
-    const dm = getDriverManager();
-    const baileys = createFakeDriver("baileys");
-    const whatsmeow = createFakeDriver("whatsmeow");
-
-    dm.register(baileys, { isPrimary: true });
-    dm.register(whatsmeow, { isPrimary: false });
-
-    assert.equal(dm.activeName_(), "baileys");
-    assert.equal(dm.get("whatsmeow"), whatsmeow);
-  });
-
-  test("supports manual switchTo driver", () => {
-    const dm = getDriverManager();
-    const baileys = createFakeDriver("baileys");
-    const whatsmeow = createFakeDriver("whatsmeow");
-
-    dm.register(baileys, { isPrimary: true });
-    dm.register(whatsmeow);
-
-    dm.switchTo("whatsmeow");
-    assert.equal(dm.activeName_(), "whatsmeow");
-    assert.equal(dm.active(), whatsmeow);
-
-    assert.throws(() => dm.switchTo("nonexistent" as unknown as "baileys"), /cannot switch to unregistered driver/);
   });
 
   test("tracks degradation with expiration", async (t) => {
@@ -120,24 +93,12 @@ describe("kernel/driverManager", () => {
     assert.equal(dm.isDegraded("baileys"), false);
   });
 
-  test("shutdown disconnects in reverse registration order", async () => {
+  test("shutdown disconnects all drivers", async () => {
     const dm = getDriverManager();
     const baileys = createFakeDriver("baileys");
-    const whatsmeow = createFakeDriver("whatsmeow");
-
-    const shutdownOrder: string[] = [];
-    baileys.disconnect = async () => {
-      shutdownOrder.push("baileys");
-    };
-    whatsmeow.disconnect = async () => {
-      shutdownOrder.push("whatsmeow");
-    };
-
     dm.register(baileys, { isPrimary: true });
-    dm.register(whatsmeow, { isPrimary: false });
 
     await dm.shutdown();
-
-    assert.deepEqual(shutdownOrder, ["whatsmeow", "baileys"]);
+    assert.equal(baileys.disconnected, true);
   });
 });

@@ -27,8 +27,16 @@ import type {
 // ── Store types ───────────────────────────────────────────────────────────────
 
 export interface StoreChat {
-  id:   string;
-  name: string;
+  id:                    string;
+  name:                  string;
+  /**
+   * Disappearing-message timer (seconds) for this chat. `0` means the
+   * timer was explicitly cleared (or never set). Kept on StoreChat so
+   * the Baileys adapter can pick the right `ephemeralExpiration` option
+   * for every outgoing send without having to look it up again, and so
+   * the value survives a snapshot round-trip (see `toJSON` / `hydrate`).
+   */
+  ephemeralExpiration:   number;
 }
 
 /**
@@ -80,6 +88,15 @@ export interface BotStore {
    */
   forgetLid(lid: string): void;
   /**
+   * Record the disappearing-message timer for a chat learned from a
+   * source outside the store's own event listeners — e.g. a live
+   * `groupMetadata()` lookup, which carries WhatsApp's own current
+   * `ephemeralDuration` for a group and is more trustworthy than a
+   * timer heuristically learned from a past, possibly unrelated message.
+   * `seconds` of `0` clears the timer.
+   */
+  setChatEphemeralExpiration(jid: string, seconds: number): void;
+  /**
    * Bind the store to a driver's event emitter.
    * Must be called immediately after socket creation.
    */
@@ -121,13 +138,43 @@ export function createStore(): BotStore {
     lidMap.delete(lid);
   }
 
+  // Coerce the various shapes Baileys delivers `ephemeralExpiration` in
+  // (string-numbered from the wire, `null` when the timer was cleared,
+  // or absent entirely) into a plain finite number. Anything we can't
+  // parse becomes 0 — the wire convention for "no disappearing timer".
+  function normalizeExpiration(raw: unknown): number {
+    if (raw === null || raw === undefined) return 0;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+
+  function setChatEphemeralExpiration(jid: string, seconds: number): void {
+    if (!jid) return;
+    const existing = chatsMap.get(jid);
+    const next     = normalizeExpiration(seconds);
+    if (existing) {
+      existing.ephemeralExpiration = next;
+    } else {
+      chatsMap.set(jid, { id: jid, name: jid.split("@")[0], ephemeralExpiration: next });
+    }
+  }
+
   // Max messages kept per chat (prevents unbounded memory growth)
   const MAX_MSGS_PER_CHAT = 200;
 
   function upsertChat(chat: RawChat) {
     if (!chat.id) return;
     const name = (chat as unknown as { name?: string }).name ?? chat.id.split("@")[0];
-    chatsMap.set(chat.id, { id: chat.id, name });
+    const rawExp = (chat as unknown as { ephemeralExpiration?: unknown }).ephemeralExpiration;
+    const existing = chatsMap.get(chat.id);
+    chatsMap.set(chat.id, {
+      id:                  chat.id,
+      name,
+      // Preserve a previously-learned timer if this upsert doesn't carry
+      // one (chats.upsert often ships without ephemeralExpiration — the
+      // value arrives later via chats.update or an ephemeralMessage).
+      ephemeralExpiration: rawExp !== undefined ? normalizeExpiration(rawExp) : (existing?.ephemeralExpiration ?? 0),
+    });
   }
 
   function upsertContact(contact: RawContact) {
@@ -205,8 +252,15 @@ export function createStore(): BotStore {
       for (const update of updates) {
         if (!update.id) continue;
         const existing = chatsMap.get(update.id);
-        const name = (update as unknown as { name?: string }).name;
-        if (existing && name) existing.name = name;
+        if (!existing) continue;
+        const u = update as unknown as { name?: string; ephemeralExpiration?: unknown };
+        if (u.name) existing.name = u.name;
+        // Baileys sends `ephemeralExpiration: null` to signal the timer
+        // was cleared — store 0 in that case so a later `chats.update`
+        // carrying a positive value can take over again.
+        if ("ephemeralExpiration" in u) {
+          existing.ephemeralExpiration = normalizeExpiration(u.ephemeralExpiration);
+        }
       }
     });
 
@@ -225,7 +279,21 @@ export function createStore(): BotStore {
     });
 
     ev.on("messages.upsert", ({ messages: msgs }) => {
-      for (const msg of msgs) storeMessage(msg);
+      for (const msg of msgs) {
+        storeMessage(msg);
+        // Disappearing-message timer: when a message arrives wrapped in
+        // an `ephemeralMessage`, the inner contextInfo carries the
+        // per-message timer WhatsApp negotiated for the chat. Promote
+        // it to the chat-level entry so subsequent sends can pick it up
+        // without re-scanning every message.
+        const m = msg.message as
+          | { ephemeralMessage?: { message?: { extendedTextMessage?: { contextInfo?: { expiration?: unknown } } } } }
+          | undefined;
+        const expiration = m?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.expiration;
+        if (expiration !== undefined && msg.key.remoteJid) {
+          setChatEphemeralExpiration(msg.key.remoteJid, normalizeExpiration(expiration));
+        }
+      }
       capturePushNames(msgs);
     });
 
@@ -276,6 +344,7 @@ export function createStore(): BotStore {
     resolveJid,
     learnLid,
     forgetLid,
+    setChatEphemeralExpiration,
     bind,
     toJSON,
     hydrate,

@@ -25,7 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm i && tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true }); fs.mkdirSync('dist/drivers/whatsmeow', { recursive: true }); fs.cpSync('src/drivers/whatsmeow/whatsmeow.proto', 'dist/drivers/whatsmeow/whatsmeow.proto');\" && node scripts/build-whatsmeow.mjs",
+    "build": "npm i && tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\"",
     "start": "node dist/main.js",
     "lint": "eslint .",
     "test": "NODE_ENV=test tsx --conditions development --test --experimental-test-coverage src/**/*.test.ts",

@@ -426,6 +426,14 @@ function startConfigWatcher() {
   }
 }
 
+/**
+ * Tear down everything `loadPlugins()` started — config watcher, per-plugin
+ * directory watchers, and each plugin's exported `cleanup()` handler.
+ *
+ * Used by the process-shutdown path in main.ts and by tests that need a
+ * clean registry between cases. Idempotent: safe to call multiple times
+ * and safe to call before any plugin has been loaded.
+ */
 export async function cleanupPlugins(): Promise<void> {
   if (configWatcher) {
     configWatcher.close();
@@ -451,3 +459,66 @@ export async function cleanupPlugins(): Promise<void> {
     }
   }
 }
+
+export async function loadIntegrationPlugin(): Promise<PluginEntry> {
+  // Integration mode is opt-in: the bot never loads this plugin in
+  // production. The check has to happen before any filesystem work so
+  // a forgotten opt-in fails fast with a clear message, not a stack
+  // trace from a missing file or a permission error. We only enforce
+  // the explicit opt-in flag here — `TEST_CHAT` is consulted by the
+  // plugin itself at runtime, not by the loader.
+  if (process.env.MANYBOT_RUN_WHATSAPP_TESTS !== "1") {
+    throw new Error(
+      `[pluginLoader] cannot load the integration plugin: ` +
+      `MANYBOT_RUN_WHATSAPP_TESTS=1 is required to opt in to the integration test harness.`
+    );
+  }
+  const { INTEGRATION_PLUGIN_NAME, getIntegrationPluginDir } =
+    await import("#kernel/integrationMode.js");
+
+  // Idempotent: if a previous load already registered the integration
+  // plugin, hand the same entry back rather than re-importing and
+  // duplicating the registry (and the in-process event listeners that
+  // would otherwise attach twice).
+  const existing = pluginRegistry.get(INTEGRATION_PLUGIN_NAME);
+  if (existing) return existing;
+
+  const dir = getIntegrationPluginDir();
+  const pluginPath = `${dir}/index.ts`;
+  try {
+    const mod = await import(pathToFileURL(pluginPath).href);
+    if (typeof mod.default !== "function") {
+      throw new Error(`Integration plugin "${INTEGRATION_PLUGIN_NAME}" does not export a default function`);
+    }
+    const entry: PluginEntry = {
+      name: INTEGRATION_PLUGIN_NAME,
+      status: "active",
+      run: mod.default,
+      setup: mod.setup ?? null,
+      commands: null,
+      exports: (mod as any).api ?? null,
+      error: null,
+      guardOptions: {},
+      errorCount: 0,
+    };
+    pluginRegistry.set(INTEGRATION_PLUGIN_NAME, entry);
+    return entry;
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    const entry: PluginEntry = {
+      name: INTEGRATION_PLUGIN_NAME,
+      status: "error",
+      run: null,
+      setup: null,
+      commands: null,
+      exports: null,
+      error: err,
+      guardOptions: {},
+      errorCount: 1,
+    };
+    pluginRegistry.set(INTEGRATION_PLUGIN_NAME, entry);
+    throw err;
+  }
+}
+
+

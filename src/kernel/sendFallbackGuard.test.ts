@@ -4,7 +4,7 @@ import { sendWithFallback, SendFailedError } from "#kernel/sendFallbackGuard.js"
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import type { WaContract, SentMessageRef } from "#kernel/waContract.js";
 
-function createMockDriver(name: "baileys" | "whatsmeow", ready = true, failsSend = false, failsVerify = false): WaContract {
+function createMockDriver(name: "baileys", ready = true, failsSend = false, failsVerify = false): WaContract {
   const mockRef = (id: string): SentMessageRef => ({ id, chatId: "123@c.us", timestamp: Date.now() });
 
   return {
@@ -70,20 +70,7 @@ describe("kernel/sendFallbackGuard", () => {
     assert.equal(ref.id, "msg_baileys");
   });
 
-  test("falls back to secondary driver when primary fails send", async () => {
-    const dm = getDriverManager();
-    const primaryFailing = createMockDriver("baileys", true, true);
-    const secondaryOk = createMockDriver("whatsmeow", true);
-
-    dm.register(primaryFailing, { isPrimary: true });
-    dm.register(secondaryOk, { isPrimary: false });
-
-    const ref = await sendWithFallback("5511999999999@c.us", "hello fallback");
-    assert.equal(ref.id, "msg_whatsmeow");
-    assert.equal(dm.isDegraded("baileys"), true);
-  });
-
-  test("throws SendFailedError when no fallback driver is available", async () => {
+  test("throws SendFailedError with no_fallback when send fails", async () => {
     const dm = getDriverManager();
     const primaryFailing = createMockDriver("baileys", true, true);
 
@@ -91,6 +78,18 @@ describe("kernel/sendFallbackGuard", () => {
 
     await assert.rejects(
       async () => sendWithFallback("5511999999999@c.us", "no fallback"),
+      (err: any) => err instanceof SendFailedError && err.reason === "no_fallback"
+    );
+  });
+
+  test("throws SendFailedError with no_fallback when verification fails", async () => {
+    const dm = getDriverManager();
+    const primaryFailing = createMockDriver("baileys", true, false, true);
+
+    dm.register(primaryFailing, { isPrimary: true });
+
+    await assert.rejects(
+      async () => sendWithFallback("5511999999999@c.us", "verify fail"),
       (err: any) => err instanceof SendFailedError && err.reason === "no_fallback"
     );
   });

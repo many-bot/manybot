@@ -2,11 +2,11 @@
  * src/drivers/types.ts
  *
  * Driver-neutral envelope types shared by every WhatsApp driver
- * implementation (Baileys today, whatsmeow in a later phase). The
- * full driver surface (send, react, presence, contacts, groups,
- * profile, media) is declared as `WaContract` in `#kernel/waContract.js`
- * — every driver implements it. This module holds only the message
- * shapes that flow across the driver boundary.
+ * implementation (Baileys today). The full driver surface (send, react,
+ * presence, contacts, groups, profile, media) is declared as
+ * `WaContract` in `#kernel/waContract.js` — every driver implements it.
+ * This module holds only the message shapes that flow across the driver
+ * boundary.
  *
  * Plugins depend on these types through the `WaContract` re-exports,
  * never on a specific driver's Baileys/grpc types.

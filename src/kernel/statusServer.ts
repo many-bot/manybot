@@ -20,10 +20,16 @@ let status: Status = {
 };
 
 export function setStatus(online: boolean, lastError?: string): void {
-  if (status.online === online) return;
+  // Same-state updates are a no-op for `online` / `since` so polling the
+  // status page doesn't see the timestamp flicker on every redundant
+  // call (the connection.update listener fires more than once per
+  // reconnect). An explicit `lastError` always wins — if the caller is
+  // reporting a new failure while we're already marked offline, that
+  // message is more useful than the stale one from before.
+  if (status.online === online && !lastError) return;
   status = {
     online,
-    since: new Date().toISOString(),
+    since: status.online === online ? status.since : new Date().toISOString(),
     ...(lastError ? { lastError } : {}),
   };
 }
@@ -32,7 +38,7 @@ export function getStatus(): Status {
   return status;
 }
 
-export function startStatusServer(port: number): void {
+export function startStatusServer(port: number): import("http").Server {
   const server = http.createServer((req, res) => {
     res.writeHead(200, {
       "Content-Type": "application/json",
@@ -48,4 +54,5 @@ export function startStatusServer(port: number): void {
   server.listen(port, () => {
     logger.info(`[status] JSON endpoint em http://localhost:${port}`);
   });
+  return server;
 }

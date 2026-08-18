@@ -11,12 +11,7 @@
  * globalSock in pluginLoader.ts. Only main.ts is expected to call
  * register(); everywhere else reads through active() / get() / isDegraded.
  *
- * Shutdown order in shutdown() is reverse-registration, so a driver
- * that was added later (e.g. whatsmeow) is disconnected before the
- * primary one (typically Baileys). Re-registering the same name
- * overwrites the previous instance — the old driver is NOT disconnected
- * automatically, callers must disconnect it first if they want it torn
- * down.
+ * Shutdown order in shutdown() is reverse-registration.
  *
  * See the interface and cooldown semantics.
  */
@@ -24,7 +19,14 @@
 import { logger } from "#logger";
 import type { WaContract } from "#kernel/waContract.js";
 
-type DriverName = "baileys" | "whatsmeow";
+/**
+ * Driver names are open-ended strings — registration accepts whatever
+ * `WaContract.name` declares, and lookup is keyed by the same string.
+ * Narrowing the type to a literal union would force every site that
+ * reads `primary.name` back through `as` casts after the driver set
+ * changes; widening keeps the surface stable as drivers come and go.
+ */
+type DriverName = string;
 
 class DriverManager {
   private drivers       = new Map<string, WaContract>();
@@ -80,6 +82,16 @@ class DriverManager {
 
   markDegraded(name: DriverName, durationMs: number): void {
     this.degradedUntil.set(name, Date.now() + durationMs);
+  }
+
+  /**
+   * Drop the degradation entry for `name` so the next `isDegraded()`
+   * check returns false. Used after a successful send to clear the
+   * cooldown that the most recent failed send had set, without waiting
+   * for the timer to expire.
+   */
+  clearDegraded(name: DriverName): void {
+    this.degradedUntil.delete(name);
   }
 
   /**

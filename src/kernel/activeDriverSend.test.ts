@@ -4,7 +4,7 @@ import { sendActiveDriverText } from "#kernel/activeDriverSend.js";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import type { WaContract, SentMessageRef } from "#kernel/waContract.js";
 
-function createMockDriver(name: "baileys" | "whatsmeow", ready = true, failsSend = false): WaContract {
+function createMockDriver(name: "baileys", ready = true, failsSend = false): WaContract {
   const mockRef = (id: string): SentMessageRef => ({ id, chatId: "123@c.us", timestamp: Date.now() });
 
   return {
@@ -18,10 +18,10 @@ function createMockDriver(name: "baileys" | "whatsmeow", ready = true, failsSend
     disconnect: async () => {},
     me: () => ({ id: "123@c.us" }),
     sendImage: async () => mockRef("image"),
-    sendVideo: async () => mockRef("video"),
-    sendAudio: async () => mockRef("audio"),
-    sendDocument: async () => mockRef("doc"),
-    sendSticker: async () => mockRef("sticker"),
+    sendVideo: async () => mockRef("image"),
+    sendAudio: async () => mockRef("image"),
+    sendDocument: async () => mockRef("image"),
+    sendSticker: async () => mockRef("image"),
     sendLocation: async () => mockRef("loc"),
     sendContact: async () => mockRef("contact"),
     sendReaction: async () => {},
@@ -88,7 +88,7 @@ describe("kernel/activeDriverSend", () => {
         receivedOpts = opts;
         return { id: "msg1", chatId: _jid, timestamp: Date.now() };
       },
-    } as WaContract;
+    } as unknown as WaContract;
 
     dm.register(driver, { isPrimary: true });
 

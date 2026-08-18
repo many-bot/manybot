@@ -163,6 +163,28 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
   }
 
   /**
+   * Merge `quoted` reply-citation with the chat's current
+   * `ephemeralExpiration` so every outgoing send in a chat with a
+   * disappearing-message timer inherits it automatically. Returns
+   * `undefined` when there's nothing to set, so callers can pass it
+   * through as the third argument to `sock.sendMessage` without
+   * conditionally building the options object.
+   *
+   * The timer is read off the in-memory store, which is populated by
+   * `chats.upsert` / `chats.update` / `messages.upsert` (via the
+   * `ephemeralMessage` envelope) and from `groupMetadata().ephemeralDuration`
+   * in this same adapter — i.e. everything WhatsApp tells us about the
+   * chat's timer ends up there, and the send path just reads it back.
+   */
+  function buildSendOpts(jid: string, quoted: BotQuotedRef | undefined): SendOpts | undefined {
+    const quotedOpts = buildQuotedOpts(quoted);
+    const timer = store.chats.get(jid)?.ephemeralExpiration;
+    if (!timer) return quotedOpts;
+    if (!quotedOpts) return { ephemeralExpiration: timer };
+    return { ...quotedOpts, ephemeralExpiration: timer };
+  }
+
+  /**
    * Translate a neutral `BotQuotedRef` into the FLAT key shape Baileys
    * expects for `react`/`delete`/`edit`/`readMessages` (proto.IMessageKey
    * — `{ id, remoteJid, fromMe, participant }` directly, NOT nested under
@@ -370,7 +392,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     async sendText(jid, text, opts) {
       const content: AnyMessageContent = { text };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sendOpts: any = buildQuotedOpts(opts?.quoted);
+      const sendOpts: any = buildSendOpts(jid, opts?.quoted);
       if (opts?.mentions?.length) content.mentions = opts.mentions;
       const ref = await sock.sendMessage(jid, content, sendOpts);
       return toSentRef(ref, jid);
@@ -381,7 +403,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       if (opts?.caption) content.caption = opts.caption;
       if (opts?.viewOnce) content.viewOnce = true;
       if (opts?.mentions?.length) content.mentions = opts.mentions;
-      const ref = await sock.sendMessage(jid, content, buildQuotedOpts(opts?.quoted));
+      const ref = await sock.sendMessage(jid, content, buildSendOpts(jid, opts?.quoted));
       return toSentRef(ref, jid);
     },
 
@@ -391,7 +413,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       if (opts?.viewOnce) content.viewOnce = true;
       if (opts?.gifPlayback) content.gifPlayback = true;
       if (opts?.mentions?.length) content.mentions = opts.mentions;
-      const ref = await sock.sendMessage(jid, content, buildQuotedOpts(opts?.quoted));
+      const ref = await sock.sendMessage(jid, content, buildSendOpts(jid, opts?.quoted));
       return toSentRef(ref, jid);
     },
 
@@ -400,23 +422,23 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       content.mimetype = opts?.mimetype ?? "audio/mp4";
       if (opts?.ptt) content.ptt = true;
       if (opts?.viewOnce) content.viewOnce = true;
-      const ref = await sock.sendMessage(jid, content, buildQuotedOpts(opts?.quoted));
+      const ref = await sock.sendMessage(jid, content, buildSendOpts(jid, opts?.quoted));
       return toSentRef(ref, jid);
     },
 
     async sendSticker(jid, buffer, opts) {
-      const ref = await sock.sendMessage(jid, { sticker: buffer } as AnyMessageContent, buildQuotedOpts(opts?.quoted));
+      const ref = await sock.sendMessage(jid, { sticker: buffer } as AnyMessageContent, buildSendOpts(jid, opts?.quoted));
       return toSentRef(ref, jid);
     },
 
     async sendDocument(jid, buffer, filename, mimetype, opts) {
-      const ref = await sock.sendMessage(jid, { document: buffer, mimetype, fileName: filename } as AnyMessageContent, buildQuotedOpts(opts?.quoted));
+      const ref = await sock.sendMessage(jid, { document: buffer, mimetype, fileName: filename } as AnyMessageContent, buildSendOpts(jid, opts?.quoted));
       return toSentRef(ref, jid);
     },
 
     async sendPoll(jid, opts) {
       const poll = { name: opts.name, values: opts.values, selectableCount: opts.selectableCount ?? 1 };
-      const ref = await sock.sendMessage(jid, { poll } as Parameters<typeof sock.sendMessage>[1], buildQuotedOpts(opts.quoted));
+      const ref = await sock.sendMessage(jid, { poll } as Parameters<typeof sock.sendMessage>[1], buildSendOpts(jid, opts.quoted));
       return toSentRef(ref, jid);
     },
 
@@ -501,6 +523,15 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     // ── groups ─────────────────────────────────────────────────────────────
     async groupMetadata(jid) {
       const meta = await sock.groupMetadata(jid);
+      // WhatsApp reports the group's current disappearing-message
+      // timer as `ephemeralDuration` on the metadata payload — promote
+      // it to the in-memory store so the next send to this group
+      // picks it up automatically (and so the timer survives a
+      // snapshot round-trip without us re-fetching metadata).
+      const rawDuration = (meta as unknown as { ephemeralDuration?: unknown }).ephemeralDuration;
+      if (rawDuration !== undefined) {
+        store.setChatEphemeralExpiration(jid, Number(rawDuration) || 0);
+      }
       return {
         subject: meta.subject,
         participants: meta.participants.map(p => ({

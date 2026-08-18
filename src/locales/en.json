@@ -76,8 +76,6 @@
   "alerts": {
     "noFallbackTitle": "manybot: no fallback driver",
     "bothDriversFailedTitle": "manybot: sending failed on both drivers",
-    "whatsmeowHaltedTitle": "manybot: whatsmeow subprocess halted",
-    "whatsmeowHaltedMessage": "fallback unavailable: {{reason}} — bot will continue with Baileys only",
     "updateAvailableTitle": "New manybot version available",
     "updateAvailableMessage": "Installed: {{installed}} → available: {{available}}. See {{url}} for update instructions.",
     "reconnectHaltedTitle": "manybot stopped reconnecting",
@@ -115,17 +113,5 @@
     "retrying": "Retrying ({{attempt}}/{{max}})...",
     "sessionWiped": "Session discarded, pairing again ({{round}}/{{max}})...",
     "connectGaveUp": "Couldn't connect after several attempts. Check your network and try again."
-  },
-  "whatsmeow": {
-    "installPrompt": "Install whatsmeow driver for fallback support? (EXPERIMENTAL — only text send & history work; other methods throw)",
-    "unsupportedArch": "whatsmeow driver not available for {{os}}-{{arch}}. The bot will use Baileys only.",
-    "fetchingTag": "Fetching latest whatsmeow release...",
-    "fetchFailed": "Could not reach Codeberg. Skipping whatsmeow install.",
-    "downloading": "Downloading {{url}}...",
-    "downloadFailed": "Download failed: {{reason}}",
-    "installTitle": "whatsmeow driver",
-    "installed": "whatsmeow driver installed at {{path}}",
-    "restartNotice": "Restart the bot for the whatsmeow driver to take effect.",
-    "experimentalNotice": "whatsmeow is EXPERIMENTAL: only sendText and getHistory are implemented. sendImage, sendPoll, groupMetadata, and other methods throw."
   }
 }

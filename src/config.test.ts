@@ -20,8 +20,7 @@ describe("config", () => {
     assert.ok(Array.isArray(CONFIG.EXCLUDE_CHATS));
     assert.ok(["low", "medium", "high"].includes(CONFIG.SECURITY_LEVEL));
     assert.ok(CONFIG.drivers);
-    assert.ok(["baileys", "whatsmeow"].includes(CONFIG.drivers.primary));
+    assert.ok(CONFIG.drivers.primary === "baileys");
     assert.ok(typeof CONFIG.drivers.baileys.enabled === "boolean");
-    assert.ok(typeof CONFIG.drivers.whatsmeow.enabled === "boolean");
   });
 });

@@ -71,7 +71,7 @@ describe("kernel/commandMenu", () => {
   describe("renderOverview", () => {
     test("uses English built-in labels by default in tests", () => {
       const registry = createTestRegistry();
-      const overview = renderOverview(registry);
+      const overview = renderOverview(registry, "en");
 
       assert.match(overview, /Use !<command> to run it/);
     });

@@ -29,17 +29,12 @@ import type { BotMessage } from "#drivers/types.js";
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-/**
- * Thrown by sendWithFallback when the message could not be delivered
- * through any available driver. `reason` distinguishes between
- * "primary failed and no secondary was available" vs "both failed".
- */
 export class SendFailedError extends Error {
   readonly jid:    string;
-  readonly driver: "baileys" | "whatsmeow";
+  readonly driver: string;
   readonly reason: "no_fallback" | "both_failed";
 
-  constructor(jid: string, driver: "baileys" | "whatsmeow", reason: "no_fallback" | "both_failed") {
+  constructor(jid: string, driver: string, reason: "no_fallback" | "both_failed") {
     super(`send failed: ${reason} (jid=${jid}, lastDriver=${driver})`);
     this.name   = "SendFailedError";
     this.jid    = jid;
@@ -49,15 +44,13 @@ export class SendFailedError extends Error {
 }
 
 /**
- * Try the active driver, then the other one if the active one failed to
- * confirm the send. Honors `drivers.fallbackCooldownMs` (skip the active
- * if it's currently degraded) and uses `drivers.verifyWindowMs` to decide
- * how long to wait for confirmation before giving up on a given attempt.
+ * Try the active driver and verify the send. Honors `drivers.fallbackCooldownMs`
+ * (though with only one driver, degradation doesn't skip attempts) and uses
+ * `drivers.verifyWindowMs` to decide how long to wait for confirmation.
  *
  * Resolves with the SentMessageRef of the driver that actually delivered
- * the message. Rejects with SendFailedError if neither driver confirmed
- * the send (or if the only driver that could have been tried was the
- * active one and it wasn't ready).
+ * the message. Rejects with SendFailedError with reason "no_fallback" if the
+ * send could not be confirmed.
  */
 export async function sendWithFallback(
   jid:  string,
@@ -69,29 +62,13 @@ export async function sendWithFallback(
   const primary    = dm.active();
   const primaryKey = primary.name;
 
-  // if the primary is in cooldown, skip straight to the secondary
-  // (don't repeat the same failing call message after message). Same
-  // try/catch as the normal path so a failing secondary here also fires
-  // send_failed_both_drivers — observability stays consistent across
-  // the degraded and fresh-primary paths.
+  // Mark as not degraded before attempting (degradation only lasts for cooldown period)
+  // With only one driver, we don't actually skip attempts when degraded - we just track
+  // that the last attempt failed so we can alert appropriately
   if (dm.isDegraded(primaryKey)) {
-    const secondary = pickSecondary(dm, primaryKey);
-    if (secondary && secondary.isReady()) {
-      try {
-        return await sendVia(secondary, jid, text, opts, drivers.verifyWindowMs, /*skipGuard=*/false);
-      } catch (err) {
-        fireAlert("send_failed_both_drivers", { jid, primary: primaryKey, secondary: secondary.name, error: String(err) });
-        throw err;
-      }
-    }
-    logger.warn({ jid, primary: primaryKey }, "send skipped primary (degraded) and no fallback ready");
-    fireAlert("send_failed_no_fallback", { jid, primary: primaryKey });
-    throw new SendFailedError(jid, primaryKey, "no_fallback");
+    logger.debug({ driver: primaryKey }, "driver in degradation period but attempting send anyway (single driver mode)");
   }
 
-  // Normal path: try primary, verify, fall back if verification fails.
-  // waitForSendSlot is the same throttle the rest of the senders use
-  // (fallback must respect rate-limit too).
   await waitForSendSlot(jid, { cooldown: true, jitter: true });
 
   let primaryRef: SentMessageRef | null = null;
@@ -101,31 +78,25 @@ export async function sendWithFallback(
   } catch (err) {
     primarySendFailed = true;
     logger.warn({ driver: primaryKey, jid, error: String(err) }, "send threw on primary");
-  }
-
-  if (!primarySendFailed) {
-    if (await verifyDelivery(primary, jid, primaryRef!, drivers.verifyWindowMs)) {
-      return primaryRef!;
-    }
-    logger.warn({ driver: primaryKey, jid, messageId: primaryRef!.id }, "send not confirmed by primary");
-  }
-
-  dm.markDegraded(primaryKey, drivers.fallbackCooldownMs);
-
-  const secondary = pickSecondary(dm, primaryKey);
-  if (!secondary || !secondary.isReady()) {
+    dm.markDegraded(primaryKey, drivers.fallbackCooldownMs);
     fireAlert("send_failed_no_fallback", { jid, primary: primaryKey });
     throw new SendFailedError(jid, primaryKey, "no_fallback");
   }
 
-  try {
-    const fallbackRef = await sendVia(secondary, jid, text, opts, drivers.verifyWindowMs, /*skipGuard=*/true);
-    logger.info({ driver: secondary.name, jid, messageId: fallbackRef.id, reason: primarySendFailed ? "send threw" : "primary verification failed" }, "message sent via fallback");
-    return fallbackRef;
-  } catch (err) {
-    fireAlert("send_failed_both_drivers", { jid, primary: primaryKey, secondary: secondary.name, error: String(err) });
-    throw err;
+  if (!primarySendFailed) {
+    if (await verifyDelivery(primary, jid, primaryRef!, drivers.verifyWindowMs)) {
+      // Successful send - clear any degradation state
+      dm.clearDegraded(primaryKey);
+      return primaryRef!;
+    }
+    logger.warn({ driver: primaryKey, jid, messageId: primaryRef!.id }, "send not confirmed by primary");
+    dm.markDegraded(primaryKey, drivers.fallbackCooldownMs);
+    fireAlert("send_failed_no_fallback", { jid, primary: primaryKey });
+    throw new SendFailedError(jid, primaryKey, "no_fallback");
   }
+
+  // Should not reach here
+  throw new SendFailedError(jid, primaryKey, "no_fallback");
 }
 
 /**
@@ -210,13 +181,16 @@ async function historyContains(
   return history.some(m => m.fromMe && m.id === ref.id);
 }
 
-function pickSecondary(dm: DriverManagerShim, primaryKey: "baileys" | "whatsmeow"): WaContract | undefined {
-  const other: "baileys" | "whatsmeow" = primaryKey === "baileys" ? "whatsmeow" : "baileys";
-  return dm.get(other);
+function pickSecondary(dm: DriverManagerShim, primaryKey: string): WaContract | undefined {
+  // Currently Baileys is the only supported driver; returns undefined unless a test registers a secondary
+  return dm.get(primaryKey === "baileys" ? "secondary" : "baileys");
 }
 
 // Minimal structural type so we don't have to import the DriverManager
 // class directly (keeps this module dependency-light and test-friendly).
 interface DriverManagerShim {
-  get(name: "baileys" | "whatsmeow"): WaContract | undefined;
+  get(name: string): WaContract | undefined;
+  isDegraded(name: string): boolean;
+  markDegraded(name: string, durationMs: number): void;
+  clearDegraded(name: string): void;
 }

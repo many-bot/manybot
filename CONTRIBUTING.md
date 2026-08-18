@@ -13,8 +13,6 @@ Thanks for wanting to help! This doc covers everything you need to make a change
 
 - Node.js >= 24
 - npm >= 9
-- Go >= 1.23 — only needed if you're touching the `whatsmeow` driver or `whatsmeow-service/`. The build script (`scripts/build-whatsmeow.mjs`) skips it automatically if `go` isn't on your `PATH`, and the bot runs fine on Baileys alone.
-- `protoc` — only needed if you're changing `whatsmeow-service/pb` (protobuf codegen).
 
 ## Setting up
 
@@ -26,7 +24,7 @@ npm run build
 npm start
 ```
 
-`npm run build` compiles TypeScript to `dist/`, copies locale files and the `.proto` schema, and (if Go is available) builds the `whatsmeow-service` binary. `npm start` then runs the compiled output.
+`npm run build` compiles TypeScript to `dist/` and copies locale files. `npm start` then runs the compiled output.
 
 > If you installed ManyBot from npm globally you don't need any of this — the package already ships with a built `dist/`. This section is only for working on the bot itself.
 

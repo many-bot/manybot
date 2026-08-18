@@ -195,7 +195,6 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
 export type AlertKind =
   | "send_failed_no_fallback"
   | "send_failed_both_drivers"
-  | "whatsmeow_subprocess_halted"
   | (string & {}); // open for future kinds without breaking the union
 
 export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}): void {
@@ -212,12 +211,6 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
       title:   t("alerts.bothDriversFailedTitle"),
       message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
                (details.error ? ` error=${String(details.error)}` : ""),
-    };
-  } else if (kind === "whatsmeow_subprocess_halted") {
-    event = {
-      level:   "critical",
-      title:   t("alerts.whatsmeowHaltedTitle"),
-      message: t("alerts.whatsmeowHaltedMessage", { reason: details.reason ?? "unknown" }) as string,
     };
   } else {
     event = {

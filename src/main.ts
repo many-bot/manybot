@@ -13,8 +13,6 @@ process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
 (Module as unknown as { _initPaths: () => void })._initPaths();
 
 import { baileysContract }            from "#drivers/baileys/index.js";
-import { whatsmeowContract, startWhatsmeowSupervisor, wrapWithSupervisor } from "#drivers/whatsmeow/index.js";
-import { promptWhatsmeowInstall }     from "#drivers/whatsmeow/installer.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
 import { sendAlert }                  from "#kernel/alerts.js";
@@ -26,37 +24,10 @@ import { t }                          from "#i18n";
 
 let shuttingDown = false;
 
-// DriverManager registration: only register drivers that are enabled in
-// the config. whatsmeow.enabled = false means no gRPC
-// subprocess, no Go binary lookup, no extra work at boot — the manager
-// simply doesn't know about it and sendFallbackGuard sees a missing
-// secondary and fires send_failed_no_fallback if needed.
+// DriverManager registration: only Baileys driver now
 const driverManager = getDriverManager();
-driverManager.register(baileysContract, { isPrimary: CONFIG.drivers.primary === "baileys" });
-
-// Whatsmeow supervisor: spawns the Go subprocess when enabled=true,
-// owns the restart/backoff/circuit-breaker logic, and gates the
-// driver's connect()/isReady() until HealthCheck{ready:true}. When
-// enabled=false or the binary can't be located, `supervisor` is null
-// and the whatsmeow driver is simply not registered — ManyBot keeps
-// running on Baileys alone, no fallback.
-let supervisor: Awaited<ReturnType<typeof startWhatsmeowSupervisor>> = null;
-if (CONFIG.drivers.whatsmeow.enabled) {
-  logger.info("[driverManager] whatsmeow enabled — spawning supervisor");
-  supervisor = await startWhatsmeowSupervisor();
-  if (supervisor) {
-    const wrapped = wrapWithSupervisor(whatsmeowContract, supervisor);
-    driverManager.register(wrapped, { isPrimary: CONFIG.drivers.primary === "whatsmeow" });
-    logger.info(`[driverManager] whatsmeow registered (primary=${CONFIG.drivers.primary === "whatsmeow"})`);
-  } else {
-    logger.warn("[driverManager] whatsmeow supervisor failed to start — fallback disabled");
-  }
-} else {
-  logger.info("[driverManager] whatsmeow disabled by config — no fallback");
-}
+driverManager.register(baileysContract, { isPrimary: true });
 const activeDriver = driverManager.active();
-const secondaryName = (activeDriver.name === "baileys" ? "whatsmeow" : "baileys") as "baileys" | "whatsmeow";
-const secondaryDriver = driverManager.get(secondaryName);
 
 async function shutdown(reason: string, isError = false) {
   if (shuttingDown) return;
@@ -92,14 +63,6 @@ async function shutdown(reason: string, isError = false) {
     logger.error(`Error disconnecting driver: ${(err as Error).message}`);
   }
 
-  // Belt-and-suspenders: driverManager.shutdown() should already have
-  // disconnected the wrapped contract, which in turn calls
-  // supervisor.shutdown(). This catches the case where the supervisor
-  // was started but the driver wasn't registered (binary missing).
-  if (supervisor) {
-    try { await supervisor.shutdown(); } catch {}
-  }
-
   process.exit(isError ? 1 : 0);
 }
 
@@ -123,12 +86,7 @@ process.on("SIGINT",  () => shutdown("SIGINT"));
 // the JID to the console, to paste into CHATS in manybot.toml.
 // Does not enter the normal bot flow (plugins are not loaded).
 if (process.argv.includes("--getid")) {
-  // getId? is a Baileys-only diagnostic method. Look it
-  // up on the registered Baileys driver regardless of which one is
-  // active — --getid always uses Baileys, even in a whatsmeow-primary
-  // configuration, because it needs the diagnostic session, not the
-  // bot's normal one.
-  const baileys = driverManager.get("baileys") as (typeof driverManager.get extends (...a: never[]) => infer R ? R : never) | undefined;
+  const baileys = driverManager.get("baileys");
   const getIdFn = (baileys as { getId?: () => Promise<void> } | undefined)?.getId;
   if (!getIdFn) {
     logger.error(`Current driver does not support --getid.`);
@@ -139,15 +97,6 @@ if (process.argv.includes("--getid")) {
     .then(() => process.exit(0))
     .catch((err: Error) => {
       logger.error(`--getid mode failed: ${err.message}`);
-      process.exit(1);
-    });
-} else if (process.argv.includes("--install-whatsmeow")) {
-  // Re-run the whatsmeow installer outside the normal setup flow.
-  // Useful when the initial install failed or the binary was moved.
-  promptWhatsmeowInstall()
-    .then(() => process.exit(0))
-    .catch((err: Error) => {
-      logger.error(`--install-whatsmeow failed: ${err.message}`);
       process.exit(1);
     });
 } else {
@@ -161,25 +110,6 @@ if (process.argv.includes("--getid")) {
   activeDriver.connect()
     .then(() => {
       logger.success(t("bot.ready"));
-
-      // The secondary driver is connected and paired in the
-      // background so sendFallbackGuard can reach for it without first
-      // having to wait through a connect() round-trip when the primary
-      // fails. The secondary does NOT register `messages.upsert` handlers
-      // (no kernel code subscribes on it — only the primary path does),
-      // so connecting it does not duplicate inbound processing. A failure
-      // here is non-fatal: the primary keeps running, fallback just stays
-      // unavailable (sendFallbackGuard's `isReady()` check covers that).
-      if (secondaryDriver) {
-        logger.info(`[driverManager] connecting secondary "${secondaryName}" in background…`);
-        secondaryDriver.connect()
-          .then(() => logger.info(`[driverManager] secondary "${secondaryName}" connected — fallback available`))
-          .catch((err: Error) => logger.warn(
-            `[driverManager] secondary "${secondaryName}" connect failed: ${err.message} — fallback unavailable`
-          ));
-      } else {
-        logger.info(`[driverManager] no secondary driver registered — running on ${activeDriver.name} only`);
-      }
     })
     .catch((err) => {
       shutdown(`Failed to connect driver: ${err.message}`, true);

@@ -136,7 +136,6 @@ export async function setup(ctx: SetupContext): Promise<void> {
   try {
     // Importing normalizeTestChat here keeps the module load cheap
     // when the plugin isn't used in production code paths.
-    // eslint-disable-next-line import/no-extraneous-dependencies
     const { normalizeTestChat } = await import("#kernel/testConfig.js");
     normalized = normalizeTestChat(rawEnv);
   } catch (e) {

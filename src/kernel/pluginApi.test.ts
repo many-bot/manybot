@@ -546,7 +546,7 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     } as unknown as PluginEntry);
 
     store.hydrate({
-      chats: [{ id: "120363000000000@g.us", name: "Test Group" }],
+      chats: [{ id: "120363000000000@g.us", name: "Test Group", ephemeralExpiration: 0 }],
       contacts: {},
       lidMap: [],
     });

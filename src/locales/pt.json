@@ -73,15 +73,13 @@
     "wrongScope": "Este comando não pode ser usado neste ambiente.",
     "cooldown": "Aguarde {{seconds}}s para usar este comando novamente."
   },
-  "alerts": {
+"alerts": {
     "noFallbackTitle": "manybot: sem driver de fallback",
     "bothDriversFailedTitle": "manybot: envio falhou nos dois drivers",
-    "whatsmeowHaltedTitle": "manybot: subprocesso whatsmeow interrompido",
-    "whatsmeowHaltedMessage": "fallback indisponível: {{reason}} — o bot continuará apenas com Baileys",
     "updateAvailableTitle": "Nova versão do manybot disponível",
-    "updateAvailableMessage": "Instalada: {{installed}} → disponível: {{available}}. Veja {{url}} para instruções de atualização.",
-    "reconnectHaltedTitle": "manybot parou de tentar reconectar",
-    "reconnectHaltedMessage": "Desisti após {{attempts}} tentativas — possível restrição de conta. Rode connect() manualmente para tentar de novo."
+    "updateAvailableMessage": "Instalado: {{installed}} → disponível: {{available}}. Veja {{url}} para instruções de atualização.",
+    "reconnectHaltedTitle": "manybot parou de reconectar",
+    "reconnectHaltedMessage": "Desistiu após {{attempts}} tentativas — possível restrição da conta. Execute connect() manualmente para tentar novamente."
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" não corresponde a nenhum participante atual do grupo \"{{group}}\" (confira se a pessoa ainda está no grupo, ou use reply/menção em vez de digitar o número).",
@@ -115,17 +113,5 @@
     "retrying": "Tentando novamente ({{attempt}}/{{max}})...",
     "sessionWiped": "Sessão descartada, tentando parear novamente ({{round}}/{{max}})...",
     "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
-  },
-  "whatsmeow": {
-    "installPrompt": "Instalar driver whatsmeow para suporte a fallback? (EXPERIMENTAL — apenas sendText e histórico funcionam; outros métodos lançam erro)",
-    "unsupportedArch": "Driver whatsmeow não disponível para {{os}}-{{arch}}. O bot usará apenas Baileys.",
-    "fetchingTag": "Buscando última versão do whatsmeow...",
-    "fetchFailed": "Não foi possível acessar o Codeberg. Instalação do whatsmeow ignorada.",
-    "downloading": "Baixando {{url}}...",
-    "downloadFailed": "Download falhou: {{reason}}",
-    "installTitle": "Driver whatsmeow",
-    "installed": "Driver whatsmeow instalado em {{path}}",
-    "restartNotice": "Reinicie o bot para que o driver whatsmeow entre em efeito.",
-    "experimentalNotice": "whatsmeow é EXPERIMENTAL: apenas sendText e getHistory estão implementados. sendImage, sendPoll, groupMetadata e outros métodos lançam erro."
   }
 }

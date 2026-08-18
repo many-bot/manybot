@@ -11,9 +11,7 @@
  * candidate tags (-rc.N) skip npm entirely, and stable releases stay
  * in "staged" on npm until a manual 2FA approval lands, so reading
  * registry.npmjs.org here would either miss an already-published
- * version or notify about one only after a long delay. The WhatsMeow
- * installer follows the same pattern (api.github.com/repos/many-bot/
- * manybot/releases/latest) — keep the two in sync.
+ * version or notify about one only after a long delay.
  *
  * Never throws — a failed check (offline, GitHub down) is logged at
  * debug level and silently skipped; it'll just try again next cycle.

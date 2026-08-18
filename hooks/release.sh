@@ -42,9 +42,6 @@ npm ci
 npm run build
 npm run test --if-present
 
-echo "==> Cross-compilando whatsmeow-service para todas as plataformas"
-node scripts/build-whatsmeow-release.mjs
-
 PREV_TAG="$(git --git-dir="$BARE_REPO" describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
 if [ -n "$PREV_TAG" ]; then
   NOTES="$(git --git-dir="$BARE_REPO" log "${PREV_TAG}..${TAG}" --pretty=format:'- %s (%h)')"
@@ -109,7 +106,7 @@ if [ "$STATUS" = "staged" ]; then
   echo "👉 Falta aprovar. De qualquer máquina com 2FA: npm stage list  (pra achar o id)  e depois  npm stage approve <id>"
 fi
 
-# Cria a Release no GitHub e faz upload dos binários whatsmeow, se houver
+# Cria a Release no GitHub se houver
 # hooks/.env configurado. Opcional — falha aqui não derruba o processo.
 GITHUB_ENV_FILE="$(dirname "${BASH_SOURCE[0]}")/.env"
 if [ -f "$GITHUB_ENV_FILE" ]; then

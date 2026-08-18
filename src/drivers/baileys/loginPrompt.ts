@@ -13,7 +13,6 @@ import * as clack from "@clack/prompts";
 import { CONFIG, persistConfigValue } from "#config";
 import { logger } from "#logger";
 import { t } from "#i18n";
-import { promptWhatsmeowInstall } from "#drivers/whatsmeow/installer.js";
 
 export type LoginMethod = "phone" | "qr";
 
@@ -92,7 +91,6 @@ export async function resolveLoginMethod(): Promise<ResolvedLogin> {
 
   if (needsMethod) {
     method = await promptLoginMethod();
-    await promptWhatsmeowInstall();
   }
 
   if (method === "phone" && !phone) {
