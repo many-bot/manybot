@@ -118,6 +118,22 @@ export function decodeContent(content: unknown): { type: BotMessage["type"]; bod
   else if (m?.audioMessage)                  { type = "audio";                                mimetype = m.audioMessage.mimetype    ?? undefined; }
   else if (m?.documentMessage)               { type = "document"; body = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
   else if (m?.stickerMessage)                { type = "sticker";                              mimetype = m.stickerMessage.mimetype  ?? undefined; }
+  else if (m?.templateMessage) {
+    type = "text";
+    const tpl = m.templateMessage.hydratedTemplate ?? m.templateMessage.hydratedFourRowTemplate;
+    const buttonUrls = tpl?.hydratedButtons?.map((b: { urlButton?: { url?: string } }) => b.urlButton?.url).filter(Boolean).join(" ") ?? "";
+    body = [tpl?.hydratedContentText ?? "", buttonUrls].filter(Boolean).join(" ");
+  }
+  else if (m?.interactiveMessage) {
+    type = "text";
+    const buttonParams = m.interactiveMessage.nativeFlowMessage?.buttons
+      ?.map((b: { buttonParamsJson?: string }) => b.buttonParamsJson).filter(Boolean).join(" ") ?? "";
+    body = [m.interactiveMessage.body?.text ?? "", buttonParams].filter(Boolean).join(" ");
+  }
+  else if (m?.buttonsMessage) {
+    type = "text";
+    body = [m.buttonsMessage.contentText ?? "", m.buttonsMessage.footerText ?? ""].filter(Boolean).join(" ");
+  }
   return { type, body, mimetype };
 }
 
@@ -229,6 +245,10 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       m?.videoMessage?.contextInfo ??
       m?.audioMessage?.contextInfo ??
       m?.documentMessage?.contextInfo ??
+      m?.templateMessage?.hydratedTemplate?.contextInfo ??
+      m?.templateMessage?.hydratedFourRowTemplate?.contextInfo ??
+      m?.interactiveMessage?.contextInfo ??
+      m?.buttonsMessage?.contextInfo ??
       undefined;
 
     const ciTyped = contextInfo as {
@@ -915,3 +935,4 @@ const silentBaileysLogger = {
   warn(obj: unknown, msg?: string)  { logger.warn(`[baileys]`, msg ?? obj); },
   error(obj: unknown, msg?: string) { logger.error(`[baileys]`, msg ?? obj); },
 };
+
