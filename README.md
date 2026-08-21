@@ -55,6 +55,23 @@ manyplug install <plugin-name>
 
 Browse available plugins at **[manybot.org/plugins](https://manybot.org/plugins/)**.
 
+## Testing
+
+ManyBot includes both local unit/contract tests and opt-in real WhatsApp integration tests:
+
+```bash
+# Run unit and mock contract test suite (fast, offline)
+npm test
+
+# Run all verification gates (typecheck + lint + unit tests)
+npm run check
+
+# Run real WhatsApp integration tests (requires TEST_CHAT and live session)
+TEST_CHAT="5516999999999" npm run test:integration
+```
+
+For full details on the test architecture and API coverage classification, see [API_TEST_PLAN.md](API_TEST_PLAN.md).
+
 ## Contributing
 
 All kinds of contributions are welcome:

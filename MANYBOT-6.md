@@ -1,177 +1,161 @@
-# ManyBot 6 — New Commands and Plugins Architecture
+# ManyBot 6 Implementation Plan
 
-> Reference document consolidating all ideas, decisions, and open points discussed up to Aug 16. This is not a final implementation specification — it is design context.
+> [!WARNING] We are moving toward 5.9, not directly to 6.0. Everything must continue working exactly as it does now; the new architecture remains experimental until it matures enough to become the default in 6.0.
 
-## 1. General Scope
+> Based on the decisions already finalized (as of 08/17). The order is based on technical dependencies — each phase assumes the previous one is already in place.
 
-- This architecture enters as **ManyBot 6**, a separate major version — it is **not** an evolution/backport of 5.x.
-- ManyBot 5.x will continue to be maintained and receive updates in parallel for a considerable time (similar to the Ubuntu model maintaining older and newer LTS versions concurrently). This is a release lifecycle decision, not an architectural one.
-- Original motivation: in the current model (v5), plugin A may depend on plugin B, but B's default commands remain always active even if no one wants to use them — with no way to disable them. The reversal in Section 3 resolves this.
-- **"Lib mode"** (ManyBot embedded as a dependency within another product's process, without `.manybot`/plugins scanned from disk) was **discarded for now** — considered too complex for the value confirmed so far (prompted only by a single unconfirmed email contact). A custom plugin importing another plugin as a dependency, but running inside the normal ManyBot runtime, is considered sufficient for the confirmed real use case (advanced users customizing their own bot).
+Important: Everything you change, update MANYBOT-6-STATUS.md
+Delete thing that we don't need, the file need to be smaller, not bigger
 
-## 2. Plugin Contract — v5 (Reference, Still Active)
+## Quick Context
 
-For contrast with what changes in v6:
+* ManyBot 6 is a **separate** version from 5.x, not an evolution/backport — both will be maintained in parallel.
+* Work starts in the **5.8.0** roadmap cycle.
+* "Lib mode" and a custom REST API: discarded for now (Evolution API is the recommended option for external integration).
+* The project remains WhatsApp-first, using Baileys only (WhatsMeow was removed).
 
-- Plugin exports `default async function run(ctx)`, called on every message (mandatory), and optionally `setup(ctx)`, called once after connecting.
-- Loaded via `pluginLoader.ts`; plugins live in `~/.manybot/plugins/<name>/manyplug.json`, with hot-reload via `fs.watch`.
-- Each plugin handles its own internal routing independently (e.g., sticker sub-actions routed via `msg.args[0]` inside a single function).
+## Scope of This Iteration
 
-## 3. Unified Command/Function Model (Central Decision)
+1. `commands.yaml` parser/loader
+2. Central command registry (`ctx.commands`)
+3. Unified command/function model + `api` object + `ctx.plugins`
+4. Permission system (chain inheritance)
+5. Automatic deprecation/rename
+6. Native menu (reusing v5.7.0 Stage 7)
+7. Exclusive chat session (kernel primitive)
+8. Plugin crash alerts (expanded beyond many-ai)
+9. Kernel startup logs (per-plugin log removal, configurable levels)
+10. Automatic `@manybot/types` generation
 
-- **Reversal of previous decision**: it was previously considered that a plugin's default commands would auto-activate without touching `commands.yaml`. This was **reversed** — in v6, **every command must be explicitly declared** in `commands.yaml` to exist, without exception. Considered low effort ("95% is already done, only the command definition is missing").
-  - This reversal cleanly solves the "plugin installed only as a dependency activating unwanted commands" problem without needing an extra flag like "installed as dependency".
-- **Commands and services become a single concept.** There is no separate `api`/`services` object. The exact same function referenced by a command via `function:` in `commands.yaml` is the function another plugin calls directly.
-  - Example: `manyai.question(query)`, consumed via `ctx.plugins.require("plugin-name")`.
-  - The kernel resolves "managed" inputs (media, mentions, etc. — what cannot be declared in YAML) when the function is invoked via a message-triggered command.
-  - A direct call from another plugin passes these inputs manually (the plugin author decides what to pass).
-  - External visibility of a function as "callable from outside" is **implicit** — there is no manifest flag like `has_api`. Consumers simply attempt `ctx.plugins.require(...)` and handle errors if missing.
-- **Conflict warning**: if the same function is referenced both as a command in `commands.yaml` and called directly by another plugin, the kernel may issue a warning — purely for detecting dual use/reference conflicts, not related to permission/cooldown/session bypass.
+Items explicitly out of scope are listed at the end — they do not block this iteration.
 
-### Reference Example (Sticker Plugin)
+---
 
-```yaml
-commands:
-  figurinha:
-    cmd: "f"
-    aliases: ["sticker", "figu"]
-    plugin: figurinha
-    category: media
-    desc: "Creates and manages stickers"
-    manual: "file:./manuals/figurinha.md"
-    permissions: { group_only: true, admin: false }
-    subcommands:
-      criar:   { cmd: "criar",   function: criarFigurinha }
-      extrair: { cmd: "extrair", function: extrairFigurinha }
-      parar:   { cmd: "parar",   function: pararFigurinha }
-```
+> [!NOTE] Overall status (08/20) — see `MANYBOT-6-STATUS.md` for full session history. Phases 1 (now fully complete, incl. `import:`), 2, 5, 6, 7, 9, 10, 11 complete. Phases 3, 4 core complete and fully wired into `messageHandler.ts`. Phase 8 (crash alerts) fully covered. `npm run typecheck && npm run lint && npm test`: 214/214 as of continuation 13; 4 new `import:` tests added this session, pending local validation.
 
-```js
-// plugins/figurinha/index.js
-export async function criarFigurinha(path) { /* ... */ }
-export async function extrairFigurinha(...) { /* ... */ }
-export async function pararFigurinha(...) { /* ... */ }
-```
+## Phase 1 — `commands.yaml` Schema and Parser
 
-```js
-// another plugin consuming directly
-const figurinha = ctx.plugins.require("figurinha");
-await figurinha.criarFigurinha(path);
-```
+Foundation for everything: it must load and validate before any execution logic.
 
-### Related Future Feature (Out of Core)
+* [x] Global `prefix` + `commands:` map (key = stable internal ID, decoupled from `cmd:`)
+* [x] Per-command fields: `cmd`, `aliases`, `plugin`, `function` OR `text` (`file:./path` or inline), `category`, `desc` (optional), `manual` (optional, `file:./...` or `manuals[id]` fallback), `group`, `permissions:`, `subcommands:`
+* [x] Nested `subcommands`: inherit the parent's `permissions` (overridable); explicitly setting `aliases` clears the default; changing `cmd` triggers rename tracking; appear grouped under the parent in the menu
+* [x] Import of auxiliary files (`menu.yaml`, `manual.yaml`): each exclusively owns its top-level sections, with no deep merge — clear error on key conflict — root-level `import:` (string or list), resolved in `commandsConfig.ts`'s `resolveImports()`; first owner of a top-level key wins, later collisions logged and skipped
+* [x] i18n for `desc`/`manual` via the existing `src/i18n`/`src/locales`
+* [x] Validation: missing required field (`cmd`) -> warning + command is not loaded; missing optional field passively (`desc`) -> omitted; actively requested optional field (`manual`) -> kernel placeholder
+* [x] Registrable argument types: `mention`, `url`, `media_direct`, `media_reply` (two distinct types, not unified), `number`, `duration`, `choice`, `boolean`, `quoted_text`, `reply` — free-form text parsing remains the plugin's responsibility
+* [x] Automatic usage example generation from the declared argument type (`renderUsage` in `runCommand.ts`)
 
-- `manyplug rebuild` / `--reconcile` — Nix-inspired idea: reinstall/reconcile plugins strictly from what is declared in `commands.yaml`/`manyplug.json`, ensuring reproducibility (e.g. provisioning the bot from scratch on another machine with identical state). Tracked as a future feature, does not block initial v6.
+## Phase 2 — Central Command Registry
 
-## 4. `commands.yaml` Schema
+* [x] `ctx.commands` exposes registry queries: existence, desc, manual — both point queries and listing (`commandAccess.ts`, exposed through `pluginApi.ts`/`drivers/baileys/api/index.ts`)
+* [x] Main purpose: allowing plugins (especially many-ai) to verify another plugin's command without hallucinating
+* [x] Foundation for the native "command not found" fallback (reuse v5.7.0 Stage 7)
 
-- Global `prefix`.
-- `commands:` as a **map** (key = stable internal ID), decoupled from the `cmd:` field (the trigger word typed by the user) — enables rename detection by comparing saved vs. current `cmd` under the same key without needing an explicit `replaces` field.
-- Fields per command: `cmd`, `aliases`, `plugin` + `function` (exported function triggered by the command), **OR** `text:` (fixed response without a plugin — accepts inline or `file:./path`, read literally without parsing, native WhatsApp formatted), `category`, `desc` (optional — defaults to plugin's own description), `manual` (optional — `file:./path` or fallback to `manuals[id]`), `group` (groups DIFFERENT commands under a single menu item — dedicated field, not the role of `plugin`), `permissions:`, `subcommands:` (nested).
+## Phase 3 — Unified Command/Function Model
 
-### Subcommands
+Central architectural decision (08/14) — the core of the v6 architecture.
 
-- Nested structure (parent command with `subcommands:` block), not separate top-level entries.
-- Inherit parent's `permissions` by default, but can override independently.
-- Only setting `aliases` explicitly clears default aliases for that command — overriding other fields leaves aliases untouched.
-- Only changing `cmd` triggers rename/deprecation tracking.
-- Grouped automatically under the parent in menus (independent of the `group` field).
+* [ ] Every command must be declared in `commands.yaml`, without exception (nothing should auto-enable a plugin's default command) — **not enforced yet**: `buildCommandRegistry` still registers and routes plugin default commands even without a YAML entry (intentional compatibility with the warning at the top of this file — 5.9 must continue working exactly as it does now). Enforcement will happen once YAML becomes the primary path, rather than opt-in.
+* [x] Command function: receives `ctx`, runs as a side effect, and is the same function that can be referenced via `function:` in YAML OR called directly by another plugin — pipeline in `runCommand.ts` (not wired to the message handler yet, see overall status note)
+* [x] `ctx.plugins.require("name")` -> throws if it does not exist (already existed in v5)
+* [x] `ctx.plugins.get("name")` -> returns `null` if it does not exist (already existed in v5)
+* [x] `ctx.plugins.exists("name")` -> boolean (already existed in v5)
+* [x] `api` object (already the real standard in v5, retained): `export const api = { async myFunction(args) {...} }` — `api` functions NEVER receive `ctx`; **08/19**: fixed a bug in `runCommand.ts` that confused this facet (`ctx.plugins.require` -> `PluginEntry.exports`) with the command handler facet (`PluginEntry.commands[fn].handler`, always with `ctx`) — subcommand dispatch was resolving the wrong function. `lookupPluginHandler` now reads `pluginRegistry` (pluginLoader.ts) directly.
+* [x] No `has_api` flag in the manifest — consumers simply attempt `ctx.plugins.require(...)` and handle the error
+* [ ] Kernel warning when the same function is referenced in YAML AND called directly by another plugin (conflict/dual-use detection) — not implemented
+* [x] Free-form output: functions retain full freedom for side effects through `ctx` — same model for commands and direct calls
+* [x] Direct-call entry point (`ctx.plugins.require`): no kernel validation/enforcement — documented as a known exception (comment in `pluginApi.ts`)
 
-### Permissions (`permissions:`)
+## Phase 4 — Permissions
 
-- Cascading inheritance: **category → command → subcommand**, each level can override above.
-- Fields: `admin` (bot and/or user — overrides plugin internal default), `group_only`/`dm_only` (with option to hide from menu when out of allowed scope), owner (specific phone number), per-user cooldown, separate group and user whitelist/blacklist (configurable globally or per command — blacklist takes priority if coexisting with whitelist).
-- All notification messages (must be admin, must be owner, cooldown active, etc.) are customizable.
-- Categories can be hidden from menu using the same `permissions:` mechanism (not a dedicated `hidden` field).
-- **Discarded**: custom roles beyond admin/owner; group size restrictions.
+* [x] Chain inheritance: category -> command -> subcommand — **08/19**: closed the missing link (`categoryHiddenInScope` was calculated in the registry but never affected the resolved `scope`). `resolvePermissions` (`commandRegistry.ts`) gained a `fallbackScope` parameter: top-level commands fall back to the category's `scope` when they do not define their own; subcommands fall back to the parent's already-resolved `scope`. `categoryHiddenInScope` remains separate for future menu use (Phase 6).
+* [x] Fields: `admin` (bot and/or user), `group_only`/`dm_only` (with an option to hide from the menu outside the scope), `dono` (specific number), per-user `cooldown`, group/user whitelist/blacklist (global or per-command; blacklist takes priority)
+* [x] Customizable warning messages by block type
+* [ ] Hidden categories in the menu use the same mechanism (not a separate `hidden` field) — field (`categoryHiddenInScope`) is ready; consumption during menu rendering will happen once Phase 6 is implemented
+* [x] Discarded: custom roles beyond admin/owner; group-size restrictions
 
-### Deprecation / Rename
+## Phase 5 — Automatic Deprecation / Rename
 
-- Automatic when `cmd` changes (same key) or key disappears from YAML (removal).
-- Marks as deprecated for `notify_period_days` (default 7 days); during this window, registering a new command reusing the old name is blocked.
-- Customizable message with `{old}`/`{new}`/`{days}` interpolation placeholders.
-- `notify_changes` toggle across two levels: global (`defaults:`) + command override.
-- **Always a kernel feature** — plugins never implement this independently (legacy cleanup: sticker plugin currently hardcodes this logic).
+* [x] Automatically triggered when `cmd` changes or the key disappears from YAML
+* [x] Marks the command as deprecated for `notify_period_days` (default 7), blocking reuse of the old name during that period
+* [x] Customizable message (`{old}/{new}/{days}`), global `notify_changes` toggle + per-command override
+* [x] ALWAYS a kernel feature — no plugin implements it independently (legacy to migrate: `figurinha currently hardcodes this manually) — migration of `figurinha` itself has not been done yet
 
-### Passive Plugins
+## Phase 6 — Native Menu
 
-- A fully passive plugin (listens to events without activation commands, e.g. antilink) **simply does not appear** in `commands.yaml` — not a special case, just the natural result of having no commands.
-- If the plugin has activation/configuration commands (e.g. `!counting on`), those DO pass through `commands.yaml` normally with full permission engine support.
+* [x] Native kernel feature, not a separate plugin
+* [x] `menu:` block (title/intro/footer interpolating `{prefix}`; aliases: help/man/menu/bot/?)
+* [x] `categories:` map (label + order); sections/categories are 100% optional (can be a single list)
+* [x] Pagination is 100% optional
+* [x] Welcome message based on a configurable time window (default 3 days), not "first time ever"
+* [x] Base: reuse/adapt Stage 7 already implemented in v5.7.0 (marked unstable in 5.x — it was a v6 component that ended up there by mistake)
 
-### Imports and i18n
+> Schema has been ready since Phase 1 (`menu.welcomeMessage/welcomeWindowDays/pageSize`, `categories:`) — only the dispatcher/rendering itself is missing.
 
-- Central `commands.yaml` can import other files (`menu.yaml`, `manual.yaml`, etc.) via `import: [...]`.
-- Each imported file **exclusively** owns entire top-level section(s) — no deep merging across files; duplicate key conflicts raise a clear load error rather than silently deciding a winner.
-- `desc`/`manual` can have multi-language variants using the existing i18n system (`src/i18n`, `src/locales`).
+## Phase 7 — Exclusive Chat Session (Kernel Primitive)
 
-### Central Command Query
+* [x] Kernel prevents another plugin from opening a session in the same chat while one is already open (used by games, figurinha, music downloads, etc.) — `src/kernel/chatSession.ts` (`acquireSession`/`releaseSession`/`isSessionLocked`/`getSessionHolder`), exposed to plugins as `ctx.session` (`pluginApi.ts` `ISession` + `buildSessionApi()` in `drivers/baileys/api/index.ts`, runtime `PluginContext` only — no current chat at setup time, so `SetupContext` does not get `session`)
+* [x] Passive continuation window of many-ai does NOT count toward this lock (separate category) — this module is never called by many-ai's own continuation mechanism; no special-casing needed since the two systems simply don't interact
+* [x] Session/state logic (timeout, media collection from history) remains entirely inside the plugin — YAML only registers commands, never internal flows — the kernel primitive only tracks the (chatId → pluginName) holder, nothing about *why* a plugin wants the lock or for how long
 
-- `ctx` exposes queries to the central command registry (existence, `desc`, `manual` — single lookup and full list) so plugins (especially AI plugins) do not hardcode/hallucinate other plugins' commands.
+> **08/19**: Deliberately not persisted (no settingsDb/SQLite) — a session lock only makes sense for the life of the running process; a restart should never leave a chat "stuck" locked by a plugin that no longer remembers opening it. `acquire()` is idempotent for the current holder (safe to call again on a later message of the same flow); `release()` is a no-op for anyone who isn't the current holder (a plugin can never release someone else's lock).
 
-### Handling Missing Fields
+## Phase 8 — Plugin Crash Alerts
 
-- Mandatory field missing (`cmd`) → warning, command fails to load.
-- Optional field missing displayed passively (`desc`) → omitted.
-- Optional field actively requested (`manual`) → kernel placeholder.
+Motivated by a real-world case: many-ai crashing while attempting multiple tools during a search without generating any alert.
 
-### Argument Types
+* [x] Initial scope: plugin crashes in general, not just many-ai
+* [ ] Does not aim for 100% coverage — first cover the cases already detectable with the current effort
+* [x] Natural capture point in v6: since every command execution goes through the unified function (called via `function:` in YAML), the kernel can wrap the call in a central try/catch without requiring each plugin to handle it manually — `try/catch` in `runCommand.ts` around `runPlugin(...)`
+* [x] Explicitly define what counts as a "crash": unhandled exception + timeout (`err.message.startsWith("timed out")` distinguishes the two `kind`s in the alert)
+* [x] Reuse the existing alert system — expand the trigger, do not recreate it from scratch (`fireAlert("plugin_crash", ...)`)
+* [x] When implementing Phase 3 (unified function), put the error-capture hook in the correct place from the start — avoids having to come back later
 
-- Kernel-managed types remain declarable in YAML: mention, url, media_direct/media_reply, number, duration, choice, boolean, quoted_text, reply.
-- Free-form text parsing remains the plugin's responsibility.
-- Open question: whether the kernel should automatically generate the "missing required argument → error + usage" flow for these types.
+> **Update (08/19)**: `runCommand` is now wired into `messageHandler.ts` — this alert is **active in production** for any matched command whose plugin is dispatched through the unified pipeline. `runCommand.test.ts` (pipeline-level) and `messageHandler.test.ts` (real dispatch path, incl. crash-swallow behavior) both exist and pass — this phase now has full test coverage.
 
-### Administration
+## Phase 9 — Kernel Startup Logs
 
-- "Administration" in the bot is broader than commands like ban — it covers link blocking, auto-banning, mass deletion. Should continue via plugins, not native to the kernel.
+* [x] Remove messages such as `"INFO Plugin Loaded: <>"` — demoted to `logger.debug` (`pluginLoader.ts`), still available with `--debug`
+* [x] Three configurable log levels: `normal`/`clean`/`minimal` — `LOG_LEVEL` in `manybot.toml`, gating in `logger.ts` (`normal`=all, `clean`=drops `info`, `minimal`=only `warn`/`error`), applied via `setLogLevel()` in `main.ts`
+* [x] ASCII art of the logo/mascot on startup, as an optional feature that can be disabled for users who prefer clean logs — existing `printBanner()` (`src/client/banner.ts`) now gated on `LOG_LEVEL === "normal"` (silent at `clean`/`minimal`) and guarded to fire once per process instead of on every reconnect (`bannerShown` in `drivers/baileys/index.ts`)
 
-## 5. Menu (Decisions from Aug 16)
+## Phase 10 — `@manybot/types`
 
-- Menu is a **native kernel feature**, not a separate plugin.
-- Categories **and** pagination are **100% optional**.
-- `menu:` block (title/intro/footer interpolating `{prefix}`; access aliases like `help`/`man`/`menu`/`bot`/`?`).
-- `categories:` as a map (`label` + `order`), referenced by the `category` field of each command.
-- Welcome message (menu + simple text) triggers for first-time users within a configurable time window (default 3 days) — not absolute first-ever contact.
-- **Rework note**: "Stage 7" (native menu overview/category/manual + "command not found" fallback using `commandRegistry`) was already implemented and is in **v5.7.0 in production** — but this was considered a mistake (v6 piece leaked into v5) and marked unstable in v5. Decision: **reuse/adapt this existing code** as the foundation for v6 native menu, rather than rebuilding from scratch.
-- Original idea (Aug 10) prompting native menu: currently a plugin (or AI) cannot reliably reference another plugin's command because the system does not validate its existence — resolved via central queries through `ctx.commands` (Section 4).
+* [x] Package generated automatically during the ManyBot build — **superseded same-session**: a real, hand-maintained `@manybot/types` package already existed (v1.5.0 — real Baileys types via peer-dep, curated public names, en+pt locales, `@example`s, README). Adopted as-is; the auto-generator (`scripts/generate-types.ts`, opaque driver-type stubs) is removed.
+* [x] Endpoints + `@param`s covered, human JSDoc intact — the hand-maintained package already does this natively; no generator needed
+* [x] JSDoc shows up in autocomplete for API consumers — same
+* [x] ~~Marker/anchor preservation~~ — moot once generation isn't automatic; N/A
+* [x] Gap closed by hand: `ctx.commands` (`CommandsApi`+`CommandInfo`), `ctx.session` (`SessionApi`, runtime-only), `ctx.runCommand` (`RunCommandResult` + method on `PluginContext`) added to both `en/index.d.ts` and `pt/index.d.ts`, matching existing style. Version 1.5.0 → 1.6.0.
+* [x] `npm run build:types` now validates (`tsc --noEmit -p packages/types/tsconfig.json`) rather than regenerates
 
-## 6. Confirmed Kernel Primitives as Foundation
+## Phase 11 — Release Readiness Fixes (found in 08/20 pre-release review)
 
-- **Exclusive chat session**: used by games, stickers, music downloaders, etc. The kernel must **block** any other plugin from opening a session in the same chat while a session is already active. Considered part of the foundation, not a future feature.
-  - The AI plugin's passive conversation continuation window (many-ai) **does not count** as a session for this block — separate behavioral category.
-- A plugin's internal session/state logic (timeouts, historical media collection, etc.) remains **entirely within the plugin** — `commands.yaml` only registers commands, never internal flow/logic.
+Not new features — the working tree drifted from what Phase 10's log claims. Fix before shipping.
 
-## 7. Outside Foundation — Future Features (Non-blocking for v6 Initial)
+* [x] `CHANGELOG.md` "Known limitations": remove the `categoryHiddenInScope` line — already consumed in `commandMenu.ts` (4 call sites filtering by scope), limitation no longer exists
+* [x] i18n: `runCommand.ts`'s "Unknown subcommand" reply (unmatched sub-token path) is hardcoded English — added `commandRun.unknownSubcommand` (`{{sub}}`/`{{cmd}}`/`{{valid}}`) to `en`/`pt`/`es` locales, routed through `t()`
 
-- **Generic activation beyond `cmd:` prefix** — API such as `ctx.triggers.onReply/onWord/onFallback`, along with "sent by which plugin" tracking (so a reply trigger doesn't hijack a reply meant for another plugin). Prompted by analyzing the real many-ai plugin (Section 8), which has 5 trigger types with only one (`command`) being an actual command today. Open question on whether this should be code API only or also declarable in manifest/yaml.
-- **`without_prefix: true`** — commands triggered without requiring a prefix character. Undecided: fallback on "command not found" (must not trigger inadvertently), scope (DM vs. group), warnings for common trigger words.
-- **`registerTool`** — mechanism for a plugin to register a handler INSIDE another (e.g., sticker plugin registering a custom tool in many-ai so AI can trigger sticker generation via function calling). Inversion of control — distinct from direct function calls (Section 3): the provider holds the handler and decides when to call it. Considered a good idea, possibly as a generic kernel mechanism (not specific to many-ai), deferred for later. Hot-reload lifecycle for this registration remains to be designed.
-- **`guardOptions` as manifest field** — currently a loose export in plugin code (e.g. `{ timeout: false }` in many-ai for longer AI/search calls than default timeout). Confirmed it should become a declared field in `manyplug.json`, but not part of initial foundation.
-- **Plugin API versioning** — behavior when plugin B changes a function signature breaking dependent plugin A. Undecided.
-- **Standardized per-plugin logging** — format `[pluginName:debug/info/error]`. Currently manual (plugin prepends log tag manually). Will become a kernel standard, implementation design pending.
+---
 
-## 8. External Integration (Outside Command Scope, Related Decision)
+## Out of Scope (Does Not Block This Iteration)
 
-- Context: a small AI company reached out via email wanting to use ManyBot 5 in a proprietary product; provided no details and did not follow up.
-- Decision: **do not build a custom REST API** in ManyBot for this use case — standard recommendation is **Evolution API** (mature REST wrapper over Baileys with QR/pairing, webhooks, multi-instance support) for external HTTP integrations.
-- Exception: when someone specifically needs ManyBot's plugin/command system or anti-detection layer (`sendGuard`) rather than the WhatsApp connection itself. In that case, worth reconsidering.
+* `ctx.triggers.onReply/onWord/onFallback` and activation without a prefix (`without_prefix`)
+* `registerTool` (plugin registering a handler inside another plugin)
+* `guardOptions` as a manifest field
+* API versioning between plugins
+* Standardized per-plugin logging (`[pluginName:debug/info/error]`) as a kernel feature
+* "Mini-plugins" that only extend another plugin
+* Optional return value from command functions beyond side effects
+* `manyplug rebuild --reconcile`
+* Pipelines between plugins
 
-## 9. Case Study: Adapting the `many-ai` Plugin
+## Quick Reference — Finalized Decisions
 
-Analysis conducted on real plugin code (`ai.zip`) to stress-test the model:
-
-- **Current trigger taxonomy** (`getTriggerKind`): `command` (`!ai`), `quote` (reply to bot's own message), `continuation` (conversation window opened per sender+chat, with expiration), `word` (AI name mentioned via regex), `literal` (list of trigger phrases). Only `command` is a true command — the other 4 are completely passive with per-chat state.
-- Existing priority rule: if a message starts with a prefix and isn't the plugin's own command, it bails out immediately (never triggers on the other 4 types) — motivates `ctx.triggers.onFallback` running only after the kernel confirms no command matched (Section 7).
-- `!ai-settings` is currently hand-rolled inside a single handler (manual check of `msg.is(...)`), with per-chat toggles persisted via `ctx.settings`. In v6, this becomes a regular declared subcommand (`settings: { function: handleSettingsCommand }`) — toggle logic remains the plugin's responsibility.
-- `guardOptions = { timeout: false }` is already used to allow AI/search calls longer than default kernel timeout — see Section 7.
-- Concrete discovery that prompted `registerTool`: the `send_sticker` tool in many-ai currently **reimplements** sticker generation from scratch (`stickers.js`, custom manifest, `wa-sticker-formatter`) — completely unrelated to the actual `figurinha` plugin. In the unified model (Section 3), this becomes unnecessary: many-ai would directly call `ctx.plugins.require("figurinha").criarFigurinha(...)`.
-- For tools needing media from the current message (e.g. "make a sticker with the image I just sent"), resolution is already supported via `msg.downloadMedia()` / `msg.getReply().downloadMedia()` — no new design components needed.
-
-## 10. Summary of Open Decisions (Unresolved)
-
-- Generic `ctx.triggers.*`: code only, or also declarable in manifest/yaml?
-- `without_prefix`: fallback, DM/group scope, warning on common words.
-- `registerTool`: generic kernel mechanism or specific to many-ai? Hot-reload lifecycle?
-- API versioning between dependent plugins.
-- Whether the kernel should auto-generate error flows for missing required arguments on kernel types.
-- v5: since Stage 7 was marked an error/unstable, decide whether to remove it from v5 immediately or leave flagged until complete deprecation.
-- v6: to reuse Stage 7 in v6 menu, the `commandRegistry` it queries must reflect only what is explicitly declared in `commands.yaml` (result of Section 3 reversal) — currently likely still populated via the old auto-activation method.
+* v6 is a separate version, not an evolution of 5.x
+* Every command must be in YAML, with no auto-activation
+* `api` object without `ctx` = pure function; command function always receives `ctx`
+* No shape enforcement for direct calls between plugins
+* No pipelines for now (free-form output through `ctx` makes them impractical)
+* Menu and pagination: native to the kernel, but optional
+* Exclusive session is a kernel primitive, but internal logic belongs to the plugin
