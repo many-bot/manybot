@@ -283,8 +283,13 @@ function registerInvocationWithDeprecationGuard(
   byInvocation: Map<string, string>,
   text: string,
   entryId: string,
-  isOverride: boolean
+  isOverride: boolean,
+  notifyChanges: boolean
 ): boolean {
+  if (!notifyChanges) {
+    return registerInvocation(byInvocation, text, entryId, isOverride);
+  }
+
   const deprecation = getActiveDeprecation(text);
   if (deprecation) {
     logger.warn(
@@ -654,9 +659,9 @@ export function buildCommandRegistry(
   }
 
   for (const entry of byId.values()) {
-    registerInvocationWithDeprecationGuard(byInvocation, entry.cmd, entry.id, false);
+    registerInvocationWithDeprecationGuard(byInvocation, entry.cmd, entry.id, false, defaults.notifyChanges);
     for (const alias of entry.aliases) {
-      registerInvocationWithDeprecationGuard(byInvocation, alias, entry.id, false);
+      registerInvocationWithDeprecationGuard(byInvocation, alias, entry.id, false, defaults.notifyChanges);
     }
   }
 

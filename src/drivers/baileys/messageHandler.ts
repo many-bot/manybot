@@ -219,13 +219,13 @@ async function runPluginsForMessage(
   // Deprecated old name: notify the user and stop. We do NOT redirect
   // to the new command and do NOT fall through to the legacy run(ctx).
   if (!matched && command) {
-    const dep = getActiveDeprecation(command);
+    const defaults = registry?.defaults ?? {
+      notifyChanges:    true,
+      notifyPeriodDays: 7,
+      notifyMessage:    null,
+    };
+    const dep = defaults.notifyChanges ? getActiveDeprecation(command) : null;
     if (dep) {
-      const defaults = registry?.defaults ?? {
-        notifyChanges:    true,
-        notifyPeriodDays: 7,
-        notifyMessage:    null,
-      };
       try {
         await msgCtx.reply.text(formatDeprecationMessage(dep, defaults));
       } catch (e) {
