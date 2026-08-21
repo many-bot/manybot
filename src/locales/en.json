@@ -38,10 +38,24 @@
     "sendFailedNoFallback": "manybot: no fallback driver available (jid={{jid}}, primary={{driver}})",
     "sendFailedBothDrivers": "manybot: send failed on both drivers (jid={{jid}}, tried={{primary}} then {{secondary}})",
     "commandsConfigMissingCmd": "commands.yaml: command \"{{id}}\" is missing required field \"cmd\" — skipped",
+    "commandRegistryInvalidPluginCommand": "commandRegistry: plugin \"{{plugin}}\" command \"{{function}}\" ({{id}}) has an invalid or missing \"cmd\" — skipped",
+    "commandsConfigArgumentMissingName": "commands.yaml: argument entry under \"{{id}}\" is missing required field \"name\" — skipped",
+    "commandsConfigArgumentMissingType": "commands.yaml: argument \"{{name}}\" under \"{{id}}\" is missing required field \"type\" — skipped",
+    "commandsConfigUnknownArgType": "commands.yaml: argument \"{{name}}\" under \"{{id}}\" has unknown type \"{{type}}\" — skipped",
+    "commandsConfigChoiceArgumentNoChoices": "commands.yaml: argument \"{{name}}\" under \"{{id}}\" is type \"choice\" but declared no choices — falling back to free placeholder in usage",
+    "commandsConfigArgumentsNotList": "commands.yaml: arguments under \"{{id}}\" must be a list — ignored",
+    "commandsConfigSubcommandMissingCmd": "commands.yaml: subcommand under \"{{id}}\" is missing required field \"cmd\" — skipped",
+    "commandsConfigSubcommandsNotList": "commands.yaml: subcommands under \"{{id}}\" must be a list — ignored",
+    "commandsConfigDuplicateSubcommand": "commands.yaml: duplicate subcommand \"{{cmd}}\" under \"{{id}}\" — keeping the first one",
     "commandsConfigReadFailed": "commands.yaml: could not be read ({{path}}): {{message}}",
     "commandsConfigParseFailed": "commands.yaml: YAML parse error: {{message}}",
     "commandsConfigInvalidRoot": "commands.yaml: top-level must be a map of command entries",
     "commandsConfigInvalidEntry": "commands.yaml: entry \"{{id}}\" is not an object — skipped",
+    "commandsConfigImportReadFailed": "commands.yaml: import \"{{path}}\" could not be read: {{message}}",
+    "commandsConfigImportParseFailed": "commands.yaml: import \"{{path}}\" YAML parse error: {{message}}",
+    "commandsConfigImportInvalidRoot": "commands.yaml: import \"{{path}}\" top-level must be a map of sections — skipped",
+    "commandsConfigImportNested": "commands.yaml: import \"{{path}}\" declares its own \"import\" — nested imports are not supported and were ignored",
+    "commandsConfigImportKeyConflict": "commands.yaml: import \"{{path}}\" redefines \"{{key}}\", already owned by \"{{owner}}\" — keeping the first one",
     "commandRegistryOrphanEntry": "commandRegistry: entry \"{{id}}\" targets {{plugin}}.{{function}} but no active plugin provides it — skipped",
     "commandRegistryInvalidEntry": "commandRegistry: entry \"{{id}}\" has no plugin/function and no text — skipped",
     "commandRegistryInvocationCollision": "commandRegistry: invocation \"{{text}}\" already owned by \"{{winner}}\" — dropping {{loser}} ({{via}})",
@@ -72,6 +86,10 @@
     "ownerOnly": "This command can only be run by the bot owner.",
     "wrongScope": "This command cannot be used in this context.",
     "cooldown": "Wait {{seconds}}s before using this command again."
+  },
+  "commandRun": {
+    "missingRequiredArg": "Missing required argument(s).",
+    "unknownSubcommand": "Unknown subcommand \"{{sub}}\" for !{{cmd}}. Valid: {{valid}}."
   },
   "alerts": {
     "noFallbackTitle": "manybot: no fallback driver",
@@ -115,3 +133,4 @@
     "connectGaveUp": "Couldn't connect after several attempts. Check your network and try again."
   }
 }
+

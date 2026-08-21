@@ -38,10 +38,24 @@
     "sendFailedNoFallback": "manybot: nenhum driver de fallback disponível (jid={{jid}}, primário={{driver}})",
     "sendFailedBothDrivers": "manybot: envio falhou nos dois drivers (jid={{jid}}, tentou {{primary}} depois {{secondary}})",
     "commandsConfigMissingCmd": "commands.yaml: comando \"{{id}}\" sem o campo obrigatório \"cmd\" — ignorado",
+    "commandRegistryInvalidPluginCommand": "commandRegistry: plugin \"{{plugin}}\" comando \"{{function}}\" ({{id}}) tem \"cmd\" inválido ou ausente — ignorado",
+    "commandsConfigArgumentMissingName": "commands.yaml: entrada de argumento sob \"{{id}}\" sem o campo obrigatório \"name\" — ignorada",
+    "commandsConfigArgumentMissingType": "commands.yaml: argumento \"{{name}}\" sob \"{{id}}\" sem o campo obrigatório \"type\" — ignorado",
+    "commandsConfigUnknownArgType": "commands.yaml: argumento \"{{name}}\" sob \"{{id}}\" com tipo desconhecido \"{{type}}\" — ignorado",
+    "commandsConfigChoiceArgumentNoChoices": "commands.yaml: argumento \"{{name}}\" sob \"{{id}}\" é do tipo \"choice\" mas não declarou nenhuma opção — usando placeholder genérico na sugestão de uso",
+    "commandsConfigArgumentsNotList": "commands.yaml: arguments sob \"{{id}}\" precisa ser uma lista — ignorado",
+    "commandsConfigSubcommandMissingCmd": "commands.yaml: subcomando sob \"{{id}}\" sem o campo obrigatório \"cmd\" — ignorado",
+    "commandsConfigSubcommandsNotList": "commands.yaml: subcommands sob \"{{id}}\" precisa ser uma lista — ignorado",
+    "commandsConfigDuplicateSubcommand": "commands.yaml: subcomando duplicado \"{{cmd}}\" sob \"{{id}}\" — mantendo o primeiro",
     "commandsConfigReadFailed": "commands.yaml: não foi possível ler ({{path}}): {{message}}",
     "commandsConfigParseFailed": "commands.yaml: erro de parse YAML: {{message}}",
     "commandsConfigInvalidRoot": "commands.yaml: o nível raiz deve ser um mapa de entradas de comando",
     "commandsConfigInvalidEntry": "commands.yaml: entrada \"{{id}}\" não é um objeto — ignorada",
+    "commandsConfigImportReadFailed": "commands.yaml: não foi possível ler o import \"{{path}}\": {{message}}",
+    "commandsConfigImportParseFailed": "commands.yaml: erro de parse YAML no import \"{{path}}\": {{message}}",
+    "commandsConfigImportInvalidRoot": "commands.yaml: o import \"{{path}}\" precisa ter um mapa de seções no nível raiz — ignorado",
+    "commandsConfigImportNested": "commands.yaml: o import \"{{path}}\" declara seu próprio \"import\" — imports aninhados não são suportados e foram ignorados",
+    "commandsConfigImportKeyConflict": "commands.yaml: o import \"{{path}}\" redefine \"{{key}}\", que já pertence a \"{{owner}}\" — mantendo o primeiro",
     "commandRegistryOrphanEntry": "commandRegistry: entrada \"{{id}}\" aponta para {{plugin}}.{{function}} mas nenhum plugin ativo fornece — ignorada",
     "commandRegistryInvalidEntry": "commandRegistry: entrada \"{{id}}\" não tem plugin/function nem text — ignorada",
     "commandRegistryInvocationCollision": "commandRegistry: invocação \"{{text}}\" já pertence a \"{{winner}}\" — descartando {{loser}} ({{via}})",
@@ -67,11 +81,15 @@
     "description": "Descrição"
   },
   "commandPermissions": {
-    "botNotAdmin": "Este comando requer que o bot seja administrador do grupo.",
+    "botNotAdmin": "Este comando exige que o bot seja administrador do grupo.",
     "senderNotAdmin": "Este comando é restrito a administradores do grupo.",
     "ownerOnly": "Este comando só pode ser executado pelo dono do bot.",
-    "wrongScope": "Este comando não pode ser usado neste ambiente.",
-    "cooldown": "Aguarde {{seconds}}s para usar este comando novamente."
+    "wrongScope": "Este comando não pode ser usado neste contexto.",
+    "cooldown": "Aguarde {{seconds}}s antes de usar este comando novamente."
+  },
+  "commandRun": {
+    "missingRequiredArg": "Faltam argumentos obrigatórios.",
+    "unknownSubcommand": "Subcomando \"{{sub}}\" desconhecido para !{{cmd}}. Válidos: {{valid}}."
   },
 "alerts": {
     "noFallbackTitle": "manybot: sem driver de fallback",
@@ -115,3 +133,4 @@
     "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
   }
 }
+
