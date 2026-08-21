@@ -128,6 +128,7 @@ missingCmd:
       title: { en: "Commands", pt: "Comandos" },
       intro: "Intro",
       footer: "Footer",
+      cmd: "menu",
       aliases: ["help", "?"],
       notFoundFallback: true,
       welcomeMessage: null,
@@ -254,3 +255,4 @@ hello:
     assert.equal(config.specs[0].id, "hello");
   });
 });
+

@@ -306,6 +306,7 @@ const DEFAULT_MENU_CONFIG: MenuConfig = {
     es: "Usa {prefix}<comando> para ejecutarlo o {prefix}help <comando> para ver el manual.",
   },
   footer: null,
+  cmd: "menu",
   aliases: ["help", "man", "menu", "bot", "?"],
   notFoundFallback: false,
   welcomeMessage: null,
@@ -659,9 +660,10 @@ export function buildCommandRegistry(
     }
   }
 
-  // Validate menu aliases against command invocations
+  // Validate menu cmd + aliases against command invocations
   const menuAliases = new Set<string>();
-  for (const alias of menu.aliases) {
+  const menuInvocations = [menu.cmd, ...menu.aliases.filter(a => a !== menu.cmd)];
+  for (const alias of menuInvocations) {
     const existing = byInvocation.get(alias);
     if (existing !== undefined) {
       logger.warn(

@@ -80,6 +80,8 @@ export interface MenuConfig {
   title: LocalizedString | null;
   intro: LocalizedString | null;
   footer: LocalizedString | null;
+  /** Canonical menu command (default: "menu"). */
+  cmd: string;
   aliases: string[];
   /**
    * Replies to otherwise unknown prefixed commands after legacy plugins run.
@@ -456,6 +458,7 @@ const DEFAULT_MENU_CONFIG: MenuConfig = {
     es: "Usa {prefix}<comando> para ejecutarlo o {prefix}help <comando> para ver el manual.",
   },
   footer: null,
+  cmd: "menu",
   aliases: ["help", "man", "menu", "bot", "?"],
   notFoundFallback: false,
   welcomeMessage: null,
@@ -473,6 +476,7 @@ function parseMenu(raw: unknown): MenuConfig {
     title: parseLocalizedString(obj.title) ?? DEFAULT_MENU_CONFIG.title,
     intro: parseLocalizedString(obj.intro) ?? DEFAULT_MENU_CONFIG.intro,
     footer: parseLocalizedString(obj.footer) ?? DEFAULT_MENU_CONFIG.footer,
+    cmd: asString(obj.cmd) ?? DEFAULT_MENU_CONFIG.cmd,
     aliases: aliases.length > 0 ? aliases : [...DEFAULT_MENU_CONFIG.aliases],
     notFoundFallback: asBool(obj.notFoundFallback) ?? DEFAULT_MENU_CONFIG.notFoundFallback,
     welcomeMessage: parseLocalizedString(obj.welcomeMessage) ?? DEFAULT_MENU_CONFIG.welcomeMessage,
@@ -732,3 +736,4 @@ export async function loadCommandsConfig(): Promise<CommandsConfig | null> {
 
   return { defaults, menu, categories, manuals, specs: out };
 }
+

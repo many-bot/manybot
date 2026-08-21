@@ -55,6 +55,7 @@ function createTestRegistry() {
     title: "ManyBot — Menu",
     intro: "Help menu",
     footer: "Footer text",
+    cmd: "help",
     aliases: ["help", "menu"],
     notFoundFallback: false,
     welcomeMessage: { pt: "Bem-vindo ao bot! Use {prefix}help para o menu.", en: "Welcome! Use {prefix}help." },
@@ -135,6 +136,7 @@ describe("kernel/commandMenu", () => {
         title: "Flat",
         intro: null,
         footer: null,
+        cmd: "help",
         aliases: ["help"],
         notFoundFallback: false,
         welcomeMessage: null,
@@ -222,6 +224,7 @@ describe("kernel/commandMenu", () => {
         title: null,
         intro: null,
         footer: null,
+        cmd: "help",
         aliases: ["help"],
         notFoundFallback: false,
         welcomeMessage: null,
@@ -270,3 +273,4 @@ describe("kernel/commandMenu", () => {
     });
   });
 });
+

@@ -65,7 +65,7 @@
     "commandDeprecationFallbackRemoved": "Command \"{{old}}\" is no longer available.",
     "commandDeprecationReservedInvocation": "commandRegistry: invocation \"{{text}}\" is reserved by active deprecation for \"{{id}}\" — refusing registration",
     "commandManualMissing": "No detailed manual available for command \"{{cmd}}\".",
-    "commandNotFound": "Command or category \"{{cmd}}\" not found. Use {{prefix}}help to view the command list.",
+    "commandNotFound": "Command or category \"{{cmd}}\" not found. Use {{prefix}}{{menuCmd}} to view the command list.",
     "commandRegistryMenuAliasCollision": "commandRegistry: menu alias \"{{alias}}\" collided with real command \"{{winner}}\" — menu alias ignored"
   },
   "errors": {

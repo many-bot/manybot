@@ -268,7 +268,8 @@ export function renderManual(entry: CommandEntry, registry: CommandRegistry, lan
 }
 
 export function renderNotFound(invocation: string, registry: CommandRegistry, lang?: string): string {
-  return tFor(lang, "system.commandNotFound", { cmd: invocation, prefix: CMD_PREFIX }) as string;
+  const menuCmd = registry.menu.cmd;
+  return tFor(lang, "system.commandNotFound", { cmd: invocation, prefix: CMD_PREFIX, menuCmd }) as string;
 }
 
 export function handleMenuCommand(
