@@ -19,8 +19,10 @@ describe("config", () => {
     assert.ok(Array.isArray(CONFIG.CHATS));
     assert.ok(Array.isArray(CONFIG.EXCLUDE_CHATS));
     assert.ok(["low", "medium", "high"].includes(CONFIG.SECURITY_LEVEL));
+    assert.ok(["normal", "clean", "minimal"].includes(CONFIG.LOG_LEVEL));
     assert.ok(CONFIG.drivers);
     assert.ok(CONFIG.drivers.primary === "baileys");
     assert.ok(typeof CONFIG.drivers.baileys.enabled === "boolean");
   });
 });
+

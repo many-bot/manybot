@@ -229,6 +229,11 @@ PHONE_NUMBER  = ""
 # but reduce the risk of WhatsApp flagging the account.
 SECURITY_LEVEL = "medium"
 
+# Startup log verbosity: "normal" (everything), "clean" (hides routine
+# chatter, keeps success/warnings/errors), or "minimal" (warnings/errors
+# only — silent on the happy path).
+LOG_LEVEL = "normal"
+
 # ── Local alerts (critical warnings, update notices) ──────────────────────
 # Phone number (or full JID) that receives WhatsApp alerts when the bot
 # itself is up — e.g. "5511999999999" or "5511999999999@s.whatsapp.net".
@@ -284,6 +289,11 @@ PHONE_NUMBER  = ""
 # Níveis mais altos deixam o bot mais lento (menos chats simultâneos, atrasos
 # maiores), mas reduzem o risco do WhatsApp sinalizar a conta.
 SECURITY_LEVEL = "medium"
+
+# Verbosidade dos logs de inicialização: "normal" (tudo), "clean" (esconde
+# ruído de rotina, mantém sucesso/avisos/erros), ou "minimal" (só avisos
+# e erros — silencioso quando está tudo bem).
+LOG_LEVEL = "normal"
 
 # ── Avisos locais (alertas críticos, aviso de update) ──────────────────────
 # Número de telefone (ou JID completo) que recebe alertas via WhatsApp
@@ -380,6 +390,7 @@ export interface Config {
   CHATS:         string[];
   EXCLUDE_CHATS: string[];
   SECURITY_LEVEL: "low" | "medium" | "high";
+  LOG_LEVEL: "normal" | "clean" | "minimal";
   PLUGINS:       string[];
   LANGUAGE:      string;
   PHONE_NUMBER:  string | null;
@@ -428,6 +439,7 @@ const DEFAULTS: Config = {
   CHATS:         [],
   EXCLUDE_CHATS: [],
   SECURITY_LEVEL: "medium",
+  LOG_LEVEL:      "normal",
   PLUGINS:       [],
   LANGUAGE:      "en",
   PHONE_NUMBER:  null,
@@ -476,6 +488,10 @@ function normalize(cfg: Config): Config {
 
   if (!["low", "medium", "high"].includes(cfg.SECURITY_LEVEL)) {
     cfg.SECURITY_LEVEL = "medium";
+  }
+
+  if (!["normal", "clean", "minimal"].includes(cfg.LOG_LEVEL)) {
+    cfg.LOG_LEVEL = "normal";
   }
 
   // Legacy .conf values arrive as strings; TOML gives real types already —
@@ -579,6 +595,7 @@ export const CMD_PREFIX    = CONFIG.CMD_PREFIX;
 export const CHATS         = CONFIG.CHATS;
 export const EXCLUDE_CHATS = CONFIG.EXCLUDE_CHATS;
 export const SECURITY_LEVEL = CONFIG.SECURITY_LEVEL;
+export const LOG_LEVEL      = CONFIG.LOG_LEVEL;
 export const PLUGINS       = CONFIG.PLUGINS;
 export const LANGUAGE      = CONFIG.LANGUAGE;
 export const PHONE_NUMBER  = CONFIG.PHONE_NUMBER;

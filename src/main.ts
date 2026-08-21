@@ -18,9 +18,11 @@ import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
 import { sendAlert }                  from "#kernel/alerts.js";
 import { startStatusServer }          from "#kernel/statusServer.js";
 import { getDriverManager }           from "#kernel/driverManager.js";
-import { CONFIG, STATUS_ENABLED, STATUS_PORT } from "#config";
-import { logger }                     from "#logger";
+import { CONFIG, STATUS_ENABLED, STATUS_PORT, LOG_LEVEL } from "#config";
+import { logger, setLogLevel }        from "#logger";
 import { t }                          from "#i18n";
+
+setLogLevel(LOG_LEVEL);
 
 let shuttingDown = false;
 
@@ -115,3 +117,4 @@ if (process.argv.includes("--getid")) {
       shutdown(`Failed to connect driver: ${err.message}`, true);
     });
 }
+

@@ -12,6 +12,7 @@ const C = {
 import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import path from "path";
+import { getLogLevel } from "#logger";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,7 +24,16 @@ const v = JSON.parse(
   )
 ).version;
 
+/**
+ * Startup ASCII banner. Optional — respects `LOG_LEVEL` (Phase 9): shown
+ * only at `"normal"`, silent at `"clean"`/`"minimal"` for users who prefer
+ * quiet logs. Caller is responsible for only invoking this once per process
+ * (see `drivers/baileys/index.ts`'s `bannerShown` guard) — reconnects
+ * shouldn't reprint it.
+ */
 export function printBanner(): void {
+  if (getLogLevel() !== "normal") return;
+
   const banner = [
     `                             _           _  `,
     `                            | |         | | `,
@@ -55,3 +65,4 @@ export function printBanner(): void {
 
   console.log();
 }
+
