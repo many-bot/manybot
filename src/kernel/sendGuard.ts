@@ -9,9 +9,10 @@
  *   3. Human jitter          — random delay to break robotic timing patterns
  *   4. Chat-concurrency gate — caps how many different chats the bot can be
  *                              actively answering at the same time
- *   5. Edit throttle         — removed (was: jittered minimum gap + cap on
- *                              edits per message). Edit timing is now left
- *                              to the caller.
+ *   5. Edit throttle         — jittered minimum gap + cap on edits per
+ *                              message. Only active at SECURITY_LEVEL
+ *                              "high"; low/medium leave edit timing to the
+ *                              caller.
  *
  * All of the above scale with SECURITY_LEVEL ("low" | "medium" | "high").
  * Higher levels are slower and more conservative — lower risk of WhatsApp's
@@ -33,6 +34,11 @@ interface SecurityProfile {
   jitterMs:            { min: number; max: number };
   concurrency:         number; // max chats answered at the same time, globally
   typingMaxMs:         number; // cap on the "typing..." indicator, regardless of text length
+  /** Edit throttle. Only set on the "high" profile — low/medium have no edit throttle. */
+  editThrottle?: {
+    minGapMs:           { min: number; max: number };
+    maxEditsPerMessage: number;
+  };
 }
 
 const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
@@ -56,6 +62,10 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     jitterMs:           { min: 150, max: 500 },
     concurrency:        1,
     typingMaxMs:        8000,
+    editThrottle: {
+      minGapMs:           { min: 800, max: 2000 },
+      maxEditsPerMessage: 5,
+    },
   },
 };
 
@@ -199,6 +209,43 @@ export async function waitForSendSlot(jid: string, { cooldown = true, jitter = t
   if (jitter) await sleep(randomBetween(currentProfile().jitterMs));
 
   recordSend(jid);
+}
+
+// ── Edit throttle ─────────────────────────────────────────────────────────────
+// Only enforced when the active profile defines `editThrottle` (currently
+// just "high"). low/medium always allow immediately.
+
+const editState = new Map<string, { count: number; lastEditAt: number }>();
+
+/**
+ * Wait for a safe edit slot for `messageId`, then record the edit.
+ * Returns `false` if the per-message edit cap has been reached — the
+ * caller should drop the edit instead of sending it.
+ *
+ * @param {string} messageId
+ * @returns {Promise<boolean>} whether the edit is allowed to proceed
+ */
+export async function waitForEditSlot(messageId: string): Promise<boolean> {
+  const throttle = currentProfile().editThrottle;
+  if (!throttle) return true;
+
+  const state = editState.get(messageId) ?? { count: 0, lastEditAt: 0 };
+
+  if (state.count >= throttle.maxEditsPerMessage) {
+    logger.debug(`[sendGuard] edit cap (${throttle.maxEditsPerMessage}) reached for message ${messageId} — dropping edit`);
+    return false;
+  }
+
+  const gap     = randomBetween(throttle.minGapMs);
+  const elapsed = Date.now() - state.lastEditAt;
+  if (state.lastEditAt > 0 && elapsed < gap) {
+    await sleep(gap - elapsed);
+  }
+
+  state.count++;
+  state.lastEditAt = Date.now();
+  editState.set(messageId, state);
+  return true;
 }
 
 /**

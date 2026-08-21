@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- **`sendGuard` edit throttle scoped to `high` only** — `edit()` no longer waits on a jittered minimum gap / per-message edit cap at `low`/`medium`; edits at those levels fire immediately. `high` keeps the throttle (800–2000ms jittered gap between edits to the same message, capped at 5 edits per message) — plugins on `high` that exceed the cap have their edit silently dropped.
+
 ### Removed
 - **Driver fallback support** — Fallback between drivers was removed entirely. Driver selection is now mutually exclusive: if `driver_primary` is disabled or its supervisor fails to start, the bot exits with an error instead of silently switching to Baileys. WhatsMeow remains an optional, experimental driver; Baileys is the only driver in production. The idea was sound on paper but introduced complexity and reliability issues in practice.
 - Dead config keys `driver_fallback_cooldown_ms` / `driver_verify_window_ms`, and the now-unreachable `AlertKind`s / i18n strings tied to fallback (`sendFailedNoFallback`, `sendFailedBothDrivers`, `alerts.noFallback`, `alerts.bothDriversFailed`) across `en`/`pt`/`es` locales.
@@ -62,3 +65,4 @@
 ---
 
 Previous releases are tracked via Git tags.
+

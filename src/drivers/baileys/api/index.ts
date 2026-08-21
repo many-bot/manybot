@@ -23,6 +23,7 @@ import { t, createPluginT,
          getCurrentLang }            from "#i18n";
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { enqueue }                   from "#download";
+import { waitForEditSlot }           from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
 import { emptyFolder }               from "#utils/file.js";
 import { normalizeJid, denormalizeJid, toWireJid } from "#drivers/jid.js";
@@ -1032,6 +1033,8 @@ export function buildMessageContext(
         throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
       }
       if (!msg.id) return;
+      const allowed = await waitForEditSlot(msg.id);
+      if (!allowed) return;
       await contract.editMessage(rawJid, {
         id:          msg.id,
         remoteJid:   msg.chatId,
@@ -1174,6 +1177,8 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
       throw new Error("[pluginApi] edit() can only be used on the bot's own messages");
     }
     if (!msg.id) return;
+    const allowed = await waitForEditSlot(msg.id);
+    if (!allowed) return;
     await this._contract.editMessage(msg.chatId, {
       id:          msg.id,
       remoteJid:   msg.chatId,
