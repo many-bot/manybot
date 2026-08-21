@@ -121,13 +121,13 @@ export function decodeContent(content: unknown): { type: BotMessage["type"]; bod
   else if (m?.templateMessage) {
     type = "text";
     const tpl = m.templateMessage.hydratedTemplate ?? m.templateMessage.hydratedFourRowTemplate;
-    const buttonUrls = tpl?.hydratedButtons?.map((b: { urlButton?: { url?: string } }) => b.urlButton?.url).filter(Boolean).join(" ") ?? "";
+    const buttonUrls = tpl?.hydratedButtons?.map((b) => b.urlButton?.url).filter(Boolean).join(" ") ?? "";
     body = [tpl?.hydratedContentText ?? "", buttonUrls].filter(Boolean).join(" ");
   }
   else if (m?.interactiveMessage) {
     type = "text";
     const buttonParams = m.interactiveMessage.nativeFlowMessage?.buttons
-      ?.map((b: { buttonParamsJson?: string }) => b.buttonParamsJson).filter(Boolean).join(" ") ?? "";
+      ?.map((b) => b.buttonParamsJson).filter(Boolean).join(" ") ?? "";
     body = [m.interactiveMessage.body?.text ?? "", buttonParams].filter(Boolean).join(" ");
   }
   else if (m?.buttonsMessage) {
@@ -245,8 +245,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       m?.videoMessage?.contextInfo ??
       m?.audioMessage?.contextInfo ??
       m?.documentMessage?.contextInfo ??
-      m?.templateMessage?.hydratedTemplate?.contextInfo ??
-      m?.templateMessage?.hydratedFourRowTemplate?.contextInfo ??
+      m?.templateMessage?.contextInfo ??
       m?.interactiveMessage?.contextInfo ??
       m?.buttonsMessage?.contextInfo ??
       undefined;

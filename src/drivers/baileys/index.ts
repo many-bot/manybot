@@ -599,6 +599,13 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
         audioMessage?:    { mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
         documentMessage?: { caption?: string; mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
         stickerMessage?:  { mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
+        templateMessage?: {
+          hydratedTemplate?: { hydratedContentText?: string; hydratedButtons?: Array<{ urlButton?: { url?: string } }> };
+          hydratedFourRowTemplate?: { hydratedContentText?: string; hydratedButtons?: Array<{ urlButton?: { url?: string } }> };
+          contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] };
+        };
+        interactiveMessage?: { body?: { text?: string }; nativeFlowMessage?: { buttons?: Array<{ name?: string; buttonParamsJson?: string }> }; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
+        buttonsMessage?: { contentText?: string; footerText?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
         messageContextInfo?: { messageSecret?: number[] | Uint8Array };
       }
     | null
@@ -614,6 +621,22 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
   else if (m?.audioMessage)                  { type = "audio";    text = ""; mimetype = m.audioMessage.mimetype ?? undefined; }
   else if (m?.documentMessage)               { type = "document"; text = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
   else if (m?.stickerMessage)                { type = "sticker";  text = ""; mimetype = m.stickerMessage.mimetype ?? undefined; }
+  else if (m?.templateMessage) {
+    type = "text";
+    const tpl = m.templateMessage.hydratedTemplate ?? m.templateMessage.hydratedFourRowTemplate;
+    const buttonUrls = tpl?.hydratedButtons?.map((b) => b.urlButton?.url).filter(Boolean).join(" ") ?? "";
+    text = [tpl?.hydratedContentText ?? "", buttonUrls].filter(Boolean).join(" ");
+  }
+  else if (m?.interactiveMessage) {
+    type = "text";
+    const buttonParams = m.interactiveMessage.nativeFlowMessage?.buttons
+      ?.map((b) => b.buttonParamsJson).filter(Boolean).join(" ") ?? "";
+    text = [m.interactiveMessage.body?.text ?? "", buttonParams].filter(Boolean).join(" ");
+  }
+  else if (m?.buttonsMessage) {
+    type = "text";
+    text = [m.buttonsMessage.contentText ?? "", m.buttonsMessage.footerText ?? ""].filter(Boolean).join(" ");
+  }
 
   const key = msg.key as unknown as {
     participant?: string; participantAlt?: string;
@@ -625,6 +648,9 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
     m?.videoMessage?.contextInfo ??
     m?.audioMessage?.contextInfo ??
     m?.documentMessage?.contextInfo ??
+    m?.templateMessage?.contextInfo ??
+    m?.interactiveMessage?.contextInfo ??
+    m?.buttonsMessage?.contextInfo ??
     undefined;
 
   return {
