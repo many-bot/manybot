@@ -24,7 +24,7 @@ import { getCommandByInvocation, getCommandRegistry } from "#kernel/commandRegis
 import { resolveDispatch, runCommand } from "#kernel/runCommand.js";
 import { getActiveDeprecation, formatDeprecationMessage } from "#kernel/commandDeprecation.js";
 import { checkPermission } from "#kernel/commandPermissions.js";
-import { handleMenuCommand, renderNotFound, resolveLocalizedString } from "#kernel/commandMenu.js";
+import { handleMenuCommand, renderNotFound, resolveLocalizedString, checkAndTriggerWelcomeMessage } from "#kernel/commandMenu.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
@@ -145,6 +145,19 @@ async function runPluginsForMessage(
 ): Promise<void> {
   const command = extractCommand(msgCtx.body, CMD_PREFIX);
   const registry = getCommandRegistry();
+
+  // 0. Welcome message (first message within the configured window)
+  if (registry) {
+    const welcomeMsg = checkAndTriggerWelcomeMessage(msgCtx.sender, registry);
+    if (welcomeMsg) {
+      try {
+        await msgCtx.reply.text(welcomeMsg);
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        logger.warn(`[messageHandler] welcome reply failed: ${err.message}`);
+      }
+    }
+  }
 
   // 1. Menu aliases match (overview / category / manual / notFound)
   if (command && registry && registry.menuAliases.has(command)) {
