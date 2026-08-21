@@ -1,6 +1,6 @@
 # ManyBot 6 Implementation Plan
 
-> [!WARNING] We are moving toward 5.9, not directly to 6.0. Everything must continue working exactly as it does now; the new architecture remains experimental until it matures enough to become the default in 6.0.
+> [!WARNING] We are moving toward 5.8, not directly to 6.0. Everything must continue working exactly as it does now; the new architecture remains experimental until it matures enough to become the default in 6.0.
 
 > Based on the decisions already finalized (as of 08/17). The order is based on technical dependencies — each phase assumes the previous one is already in place.
 
@@ -56,7 +56,7 @@ Foundation for everything: it must load and validate before any execution logic.
 
 Central architectural decision (08/14) — the core of the v6 architecture.
 
-* [ ] Every command must be declared in `commands.yaml`, without exception (nothing should auto-enable a plugin's default command) — **not enforced yet**: `buildCommandRegistry` still registers and routes plugin default commands even without a YAML entry (intentional compatibility with the warning at the top of this file — 5.9 must continue working exactly as it does now). Enforcement will happen once YAML becomes the primary path, rather than opt-in.
+* [ ] Every command must be declared in `commands.yaml`, without exception (nothing should auto-enable a plugin's default command) — **not enforced yet**: `buildCommandRegistry` still registers and routes plugin default commands even without a YAML entry (intentional compatibility with the warning at the top of this file — 5.8 must continue working exactly as it does now). Enforcement will happen once YAML becomes the primary path, rather than opt-in.
 * [x] Command function: receives `ctx`, runs as a side effect, and is the same function that can be referenced via `function:` in YAML OR called directly by another plugin — pipeline in `runCommand.ts` (not wired to the message handler yet, see overall status note)
 * [x] `ctx.plugins.require("name")` -> throws if it does not exist (already existed in v5)
 * [x] `ctx.plugins.get("name")` -> returns `null` if it does not exist (already existed in v5)
