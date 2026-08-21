@@ -61,7 +61,7 @@ describe("kernel/pluginLoader", () => {
     assert.equal(plugin.status, "active");
     assert.equal(typeof plugin.run, "function");
     assert.equal(typeof plugin.setup, "function");
-    assert.equal(plugin.commands?.greet.cmd, "greet");
+    assert.equal((plugin.commands?.greet as { cmd?: string })?.cmd, "greet");
     assert.deepEqual(plugin.exports, { version: 1 });
     assert.deepEqual(plugin.guardOptions, { retries: 2 });
     assert.equal(plugin.errorCount, 0);
@@ -93,3 +93,4 @@ describe("kernel/pluginLoader", () => {
     assert.equal(plugin?.errorCount, 0);
   });
 });
+

@@ -51,11 +51,24 @@ function withTimeout(promise: Promise<unknown>, ms: number, pluginName: string):
  * plugin.guardOptions (optional, read from plugin's own export):
  *   @param {boolean} [plugin.guardOptions.timeout=true]
  */
+export interface RunPluginOptions {
+  /**
+   * Re-throw after the usual bookkeeping (errorCount, disabling past
+   * 3 strikes, logging) instead of swallowing the error. Default
+   * `false` — the legacy per-message `run(ctx)` loop relies on
+   * runPlugin() never throwing ("never crashes the bot"). Callers
+   * that need to react to the failure themselves (e.g. `runCommand.ts`'s
+   * Phase-8 crash-alert hook) opt in explicitly.
+   */
+  rethrow?: boolean;
+}
+
 export async function runPlugin(
   plugin: PluginEntry,
   context: unknown,
   handler?: CommandHandler,
-  input?: unknown
+  input?: unknown,
+  options?: RunPluginOptions
 ): Promise<void> {
   if (plugin.status !== "active") return;
 
@@ -87,6 +100,7 @@ export async function runPlugin(
         const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
         logger.error(`  at      : ${frame}`);
       }
+      if (options?.rethrow) throw error;
     } else {
       pluginRegistry.set(plugin.name, plugin);
       logger.warn(`[pluginGuard] Plugin "${plugin.name}" threw an error (attempt ${errorCount}/3). Reloading...`);
@@ -95,6 +109,8 @@ export async function runPlugin(
         const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
         logger.warn(`  at      : ${frame}`);
       }
+
+      if (options?.rethrow) throw error;
 
       // Reload the plugin dynamically to avoid circular dependency
       import("#kernel/pluginLoader.js").then(({ reloadPlugin }) => {

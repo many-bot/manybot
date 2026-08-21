@@ -13,6 +13,7 @@ import {
 } from "#kernel/pluginApi.js";
 import type { PluginEntry } from "#kernel/pluginLoader.js";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
+import { __resetSessionsForTests } from "#kernel/chatSession.js";
 
 // Setup temp config directory for tests
 const testTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-pluginapi-test-"));
@@ -379,6 +380,7 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
   afterEach(() => {
     cleanupPluginEvents("test_plugin", mockContract);
     _resetDriverManagerForTests();
+    __resetSessionsForTests();
   });
 
   test("buildApi provides full runtime context and resolves group admin checks", async () => {
@@ -513,6 +515,50 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       directThenCalled = true;
     });
     assert.equal(directThenCalled, true);
+  });
+
+  test("ctx.session enforces one exclusive lock per chat across plugins (Phase 7)", async () => {
+    const msg = makeBotMessage();
+    const chat = {
+      id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
+      name: "Test Group",
+      isGroup: true,
+    };
+
+    const gameCtx = buildApi({
+      msg, chat, contract: mockContract, store, pluginRegistry,
+      pluginName: "gamePlugin",
+      guardOptions: { cooldown: false, jitter: false },
+    });
+    const figurinhaCtx = buildApi({
+      msg, chat, contract: mockContract, store, pluginRegistry,
+      pluginName: "figurinhaPlugin",
+      guardOptions: { cooldown: false, jitter: false },
+    });
+
+    // Free chat: the first plugin to ask gets the lock.
+    assert.equal(gameCtx.session.isLocked(), false);
+    assert.equal(gameCtx.session.acquire(), true);
+    assert.equal(gameCtx.session.isMine(), true);
+    assert.equal(gameCtx.session.isLocked(), true);
+
+    // A second plugin in the SAME chat cannot also open a session.
+    assert.equal(figurinhaCtx.session.isLocked(), true);
+    assert.equal(figurinhaCtx.session.acquire(), false);
+    assert.equal(figurinhaCtx.session.isMine(), false);
+
+    // The holder re-acquiring its own session is a harmless no-op.
+    assert.equal(gameCtx.session.acquire(), true);
+
+    // The non-holder cannot release someone else's session.
+    figurinhaCtx.session.release();
+    assert.equal(gameCtx.session.isLocked(), true, "release from a non-holder must not affect the lock");
+
+    // Once the real holder releases it, another plugin can acquire it.
+    gameCtx.session.release();
+    assert.equal(gameCtx.session.isLocked(), false);
+    assert.equal(figurinhaCtx.session.acquire(), true);
+    assert.equal(figurinhaCtx.session.isMine(), true);
   });
 
   test("events.once and cleanup removes listeners", async () => {

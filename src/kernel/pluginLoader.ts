@@ -22,14 +22,43 @@ import type { BotStore } from "#client/store.js";
 
 import type { CommandPermissions, LocalizedString } from "./commandsConfig.js";
 
+export type PluginCommandHandler = (ctx: unknown, input?: unknown) => Promise<unknown>;
+
+/**
+ * Full-shape plugin command default — a plugin MAY ship its own `cmd`/
+ * `aliases`/etc. as a convenience so it auto-registers even without a
+ * commands.yaml entry. Optional now: a "pure function" plugin (identity
+ * lives entirely in commands.yaml) omits all of this and just exports
+ * the handler — see {@link PluginCommandExport}.
+ */
 export interface PluginCommandDefault {
-  cmd: string;
+  cmd?: string;
   aliases?: string[];
   desc?: LocalizedString;
   category?: string;
   manual?: LocalizedString;
   permissions?: CommandPermissions;
-  handler: (ctx: unknown, input?: unknown) => Promise<unknown>;
+  handler: PluginCommandHandler;
+}
+
+/**
+ * What a plugin may put under `export const commands = { fnName: ... }`.
+ * Either the bare async handler (pure-function style — commands.yaml is
+ * the sole source of `cmd`/aliases/etc.) or the fuller
+ * `PluginCommandDefault` object (handler + optional built-in identity).
+ */
+export type PluginCommandExport = PluginCommandHandler | PluginCommandDefault;
+
+/**
+ * Resolves the actual handler function out of either shape a plugin may
+ * export under `commands[fnName]`. Shared by the registry build step
+ * (commandRegistry.ts) and the dispatch step (runCommand.ts) so both
+ * agree on what counts as "this function is callable".
+ */
+export function resolvePluginCommandHandler(def: PluginCommandExport | undefined | null): PluginCommandHandler | null {
+  if (typeof def === "function") return def;
+  if (def && typeof def === "object" && typeof def.handler === "function") return def.handler;
+  return null;
 }
 
 export interface PluginEntry {
@@ -37,7 +66,7 @@ export interface PluginEntry {
   status: "active" | "disabled" | "error";
   run: ((ctx: unknown) => Promise<void>) | null;
   setup: ((ctx: unknown) => Promise<void>) | null;
-  commands: Record<string, PluginCommandDefault> | null;
+  commands: Record<string, PluginCommandExport> | null;
   exports: unknown;
   error: Error | null;
   guardOptions: Record<string, unknown>;
@@ -244,14 +273,18 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       status:  "active",
       run:     mod.default,
       setup:   mod.setup ?? null,
-      commands: (mod.commands as Record<string, PluginCommandDefault> | undefined) ?? null,
+      commands: (mod.commands as Record<string, PluginCommandExport> | undefined) ?? null,
       exports: mod.api ?? null,
       error:   null,
       guardOptions: mod.guardOptions ?? {},
       errorCount: 0,
     });
 
-    logger.info(t(isReload ? "system.pluginReloaded" : "system.pluginLoaded", { name }));
+    // Phase 9: a plugin is a library of ready-to-use functions invoked as
+    // commands, not something that loads all its logic at boot — a line
+    // per plugin no longer earns its place in default startup output.
+    // Still available with --debug.
+    logger.debug(t(isReload ? "system.pluginReloaded" : "system.pluginLoaded", { name }));
 
     if (isReload) {
       await initCommandRegistry();
@@ -520,5 +553,4 @@ export async function loadIntegrationPlugin(): Promise<PluginEntry> {
     throw err;
   }
 }
-
 

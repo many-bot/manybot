@@ -164,6 +164,55 @@ export interface IChats {
   all(): IChatSummary[];
 }
 
+// Sub-facet: command registry queries (Phase 2, MANYBOT-6.md). Read-only —
+// lets a plugin check whether another command exists, or read its desc/
+// manual, without ctx.plugins.require()'ing the owning plugin.
+export interface ICommands {
+  exists(invocation: string): boolean;
+  desc(invocation: string, lang?: string): string | null;
+  manual(invocation: string, lang?: string): string | null;
+  list(lang?: string): Array<{
+    id: string;
+    cmd: string;
+    aliases: string[];
+    category: string | null;
+    desc: string | null;
+  }>;
+  isMenuAlias(text: string): boolean;
+}
+
+// Sub-facet: exclusive chat session (Phase 7, MANYBOT-6.md). A kernel-level
+// lock scoped to the current chat + the calling plugin — used by
+// interactive flows (games, figurinha's timeout session, music-download
+// prompts) so two plugins can't run one at the same time in the same chat.
+// The kernel only tracks WHO holds the lock; all session state (timeout,
+// collected media, turn logic, ...) stays inside the plugin.
+export interface ISession {
+  /**
+   * Opens the session for this plugin in the current chat. Returns
+   * `true` if acquired (or already held by this same plugin — safe to
+   * call again on a later message of the same flow); `false` if another
+   * plugin currently holds it.
+   */
+  acquire(): boolean;
+  /** Releases the session, but only if this plugin currently holds it. */
+  release(): void;
+  /** Whether the current chat has an open session (held by anyone). */
+  isLocked(): boolean;
+  /** Whether THIS plugin is the one currently holding the session. */
+  isMine(): boolean;
+}
+
+// Result of `ctx.runCommand(...)` — mirrors `RunCommandResult` from
+// `kernel/runCommand.ts` (Phase 3/8 unified dispatcher). Re-declared
+// here (not re-imported) to keep the contract self-contained; the
+// implementation is annotated to satisfy this shape.
+export interface IRunCommandResult {
+  status: "executed" | "permission_denied" | "argument_missing" | "unknown_sub" | "no_dispatch";
+  sentReply: string | null;
+  suggestedReply: string | null;
+}
+
 // Sub-facet: contacts. The reading methods (`get`, `getPfpUrl`, …) plus
 // the mutating ones (`block`, `unblock`). All methods tolerate unknown
 // JIDs by resolving to `null` / `false`.
@@ -322,6 +371,24 @@ export interface PluginContext {
   contacts: IContacts;
   storage: IStorage;
   botId: string | null;
+  commands: ICommands;
+
+  /**
+   * Invoke another registered command through the same kernel pipeline
+   * used for real inbound messages (permission check → subcommand
+   * routing → required-argument validation → handler dispatch →
+   * Phase-8 crash alert on throw). `invocation` is the bare command
+   * token or alias, without the prefix (e.g. "sticker", not "!sticker").
+   * `rawArgs` is the remainder of the line, unparsed.
+   *
+   * Runs against a context scoped to the TARGET command's owning
+   * plugin (own `storage`, `plugins`, guard options), not the caller's
+   * — same principle as `ctx.plugins.require()`, but for the command
+   * surface instead of the `api` export surface. Text-only (fixed
+   * reply) commands and unknown invocations resolve with
+   * `status: "no_dispatch"` instead of throwing.
+   */
+  runCommand(invocation: string, rawArgs?: string): Promise<IRunCommandResult>;
 
   // Send — returns a thenable `MessageHandle` per method (which awaits to
   // a `WAMessageContext | undefined`). See WAMessageSender for the full
@@ -360,6 +427,11 @@ export interface PluginContext {
 
   // Settings: `global` is plugin-scoped; `chat` is per-chat.
   settings: ISettings;
+
+  // Exclusive chat session lock (Phase 7, MANYBOT-6.md). Scoped to the
+  // current chat + this plugin. Not present on SetupContext — there is
+  // no current chat to lock at setup time.
+  session: ISession;
 }
 
 /**
@@ -384,6 +456,7 @@ export interface SetupContext {
   contacts: IContacts;
   storage: IStorage;
   botId: string | null;
+  commands: ICommands;
 
   send: {
     to(targetJid: string): WAMessageSender;
@@ -396,3 +469,4 @@ export interface SetupContext {
   events: IEvents;
   settings: { global: ScopedAccessor };
 }
+
