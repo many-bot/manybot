@@ -1,0 +1,48 @@
+{
+  "name": "@manybot/types",
+  "version": "1.6.0",
+  "description": "Type definitions for building ManyBot plugins (ctx, PluginContext, SetupContext)",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./en/index.d.ts",
+    "./en": "./en/index.d.ts",
+    "./pt": "./pt/index.d.ts"
+  },
+  "files": [
+    "index.d.ts",
+    "en",
+    "pt",
+    "README.md"
+  ],
+  "keywords": [
+    "manybot",
+    "whatsapp",
+    "plugin",
+    "types",
+    "typescript",
+    "baileys"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/many-bot/manybot.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@whiskeysockets/baileys": "^6.7.23"
+  },
+  "peerDependenciesMeta": {
+    "@whiskeysockets/baileys": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@whiskeysockets/baileys": "^6.7.23",
+    "typescript": "^5.7.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
