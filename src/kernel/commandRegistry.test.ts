@@ -46,6 +46,35 @@ describe("kernel/commandRegistry", () => {
     assert.equal(registry.byInvocation.get("p"), "pingPlugin::pingFn");
   });
 
+  test("skips plugin commands with a non-string cmd instead of throwing", () => {
+    const plugins = createMockPluginRegistry([
+      {
+        name: "brokenPlugin",
+        commands: {
+          badFn: {
+            cmd: true,
+            handler: async () => "x",
+          },
+          goodFn: {
+            cmd: "ok",
+            aliases: [1, "valid", null],
+            handler: async () => "x",
+          },
+        },
+      },
+    ]);
+
+    assert.doesNotThrow(() => buildCommandRegistry(null, plugins));
+
+    const registry = buildCommandRegistry(null, plugins);
+    assert.equal(registry.byId.has("brokenPlugin::badFn"), false);
+
+    const good = registry.byId.get("brokenPlugin::goodFn");
+    assert.ok(good);
+    assert.equal(good?.cmd, "ok");
+    assert.deepEqual(good?.aliases, ["valid"]);
+  });
+
   test("applies spec overrides to plugin commands", () => {
     const plugins = createMockPluginRegistry([
       {
@@ -69,12 +98,15 @@ describe("kernel/commandRegistry", () => {
         aliases: ["tj"],
         desc: "Overridden desc",
         category: "Fun",
+        group: null,
         manual: null,
         text: null,
         deprecatedMessage: null,
         notifyChanges: null,
         permissions: { admin: true },
         messages: null,
+        arguments: [],
+        subcommands: [],
       },
     ];
 
@@ -104,12 +136,15 @@ describe("kernel/commandRegistry", () => {
         aliases: ["hi"],
         desc: "Says hello",
         category: "General",
+        group: null,
         manual: null,
         text: "Hello World!",
         deprecatedMessage: null,
         notifyChanges: null,
         permissions: null,
         messages: null,
+        arguments: [],
+        subcommands: [],
       },
     ];
 
@@ -140,3 +175,4 @@ describe("kernel/commandRegistry", () => {
     assert.equal(registry.byInvocation.has("disabledCmd"), false);
   });
 });
+

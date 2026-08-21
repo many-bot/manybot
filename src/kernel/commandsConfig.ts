@@ -30,6 +30,52 @@ export interface CommandMessages {
   cooldown?: string;
 }
 
+/**
+ * Argument types accepted by `commands.yaml`'s `arguments:` block.
+ *
+ * Each entry is a single kernel-recognised shape; free-form text parsing
+ * remains the plugin's responsibility (the kernel only handles the
+ * structured types below).
+ */
+export type ArgumentType =
+  | "mention"
+  | "url"
+  | "media_direct"
+  | "media_reply"
+  | "number"
+  | "duration"
+  | "choice"
+  | "boolean"
+  | "quoted_text"
+  | "reply";
+
+export interface CommandArgument {
+  /** Name used for the `--<name>=…` form in usage lines. */
+  name: string;
+  /** Recognised kind; unknown kinds are dropped by the parser with a warning. */
+  type: ArgumentType;
+  /** Whether the command can be dispatched without this argument. */
+  required: boolean;
+  /** Choice list — only meaningful when type === "choice". */
+  choices?: string[];
+}
+
+export interface CommandSubcommandSpec {
+  /** Stable internal id, derived from the parent's id + the subcommand cmd. */
+  id: string;
+  /** Invocation token used after the parent cmd (e.g. "add" for `!todo add`). */
+  cmd: string;
+  /** Optional aliases for the sub token; explicit `aliases: []` clears defaults. */
+  aliases: string[];
+  /** Plugin function name. When omitted, defaults to the parent's function. */
+  function: string | null;
+  desc: LocalizedString | null;
+  manual: LocalizedString | null;
+  arguments: CommandArgument[];
+  permissions: CommandPermissions | null;
+  messages: CommandMessages | null;
+}
+
 export interface MenuConfig {
   title: LocalizedString | null;
   intro: LocalizedString | null;
@@ -41,11 +87,25 @@ export interface MenuConfig {
    * produce an extra reply; keep it opt-in.
    */
   notFoundFallback: boolean;
+  /** Welcome message shown to new users within welcomeWindowDays. Supports {prefix} interpolation. */
+  welcomeMessage: LocalizedString | null;
+  /** Time window in days to show the welcome message (default: 3). */
+  welcomeWindowDays: number;
+  /** Page size for menu pagination (default: 15). */
+  pageSize: number;
 }
 
 export interface CategoryConfig {
   label: LocalizedString;
   order: number;
+  /** Default scope inherited by top-level commands in this category. */
+  scope?: "group" | "dm" | "any" | null;
+  /**
+   * Scope under which the category is hidden from the menu. When the
+   * active scope does not match this value, the category is suppressed
+   * in the rendered menu (Phase 6 will consume this).
+   */
+  hiddenInScope?: "group" | "dm" | "any" | null;
 }
 
 export interface CommandYamlSpec {
@@ -56,11 +116,14 @@ export interface CommandYamlSpec {
   text?: unknown;
   desc?: unknown;
   category?: unknown;
+  group?: unknown;
   manual?: unknown;
   deprecatedMessage?: unknown;
   notifyChanges?: unknown;
   permissions?: unknown;
   messages?: unknown;
+  arguments?: unknown;
+  subcommands?: unknown;
 }
 
 export interface CommandSpec {
@@ -72,11 +135,15 @@ export interface CommandSpec {
   text: LocalizedString | null;
   desc: LocalizedString | null;
   category: string | null;
+  /** Group id this command belongs to (used by the menu grouping). */
+  group: string | null;
   manual: LocalizedString | null;
   deprecatedMessage: string | null;
   notifyChanges: boolean | null;
   permissions: CommandPermissions | null;
   messages: CommandMessages | null;
+  arguments: CommandArgument[];
+  subcommands: CommandSubcommandSpec[];
 }
 
 export interface CommandDefaults {
@@ -113,6 +180,14 @@ function asAliasList(value: unknown): string[] {
     if (trimmed.length > 0) out.push(trimmed);
   }
   return out;
+}
+
+function asImportList(value: unknown): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+  return asAliasList(value);
 }
 
 function asBool(value: unknown): boolean | null {
@@ -255,6 +330,124 @@ function parseMessages(raw: unknown): CommandMessages | null {
   };
 }
 
+const ARGUMENT_TYPES = new Set<ArgumentType>([
+  "mention", "url", "media_direct", "media_reply", "number",
+  "duration", "choice", "boolean", "quoted_text", "reply",
+]);
+
+function parseArgument(raw: unknown, parentId: string): CommandArgument | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+
+  const name = asString(obj.name);
+  if (!name) {
+    logger.warn(
+      t("system.commandsConfigArgumentMissingName", { id: parentId })
+    );
+    return null;
+  }
+  const typeStr = asString(obj.type);
+  if (!typeStr) {
+    logger.warn(
+      t("system.commandsConfigArgumentMissingType", { id: parentId, name })
+    );
+    return null;
+  }
+  if (!ARGUMENT_TYPES.has(typeStr as ArgumentType)) {
+    logger.warn(
+      t("system.commandsConfigUnknownArgType", { id: parentId, name, type: typeStr })
+    );
+    return null;
+  }
+
+  const required = asBool(obj.required) ?? false;
+
+  let choices: string[] | undefined;
+  if (typeStr === "choice") {
+    choices = asAliasList(obj.choices);
+    if (choices.length === 0) {
+      logger.warn(
+        t("system.commandsConfigChoiceArgumentNoChoices", { id: parentId, name })
+      );
+      // Still allow the argument; renderUsage just falls back to "<name>".
+    }
+  }
+
+  return {
+    name,
+    type: typeStr as ArgumentType,
+    required,
+    choices,
+  };
+}
+
+function parseArguments(raw: unknown, parentId: string): CommandArgument[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    logger.warn(
+      t("system.commandsConfigArgumentsNotList", { id: parentId })
+    );
+    return [];
+  }
+  const out: CommandArgument[] = [];
+  for (const item of raw) {
+    const arg = parseArgument(item, parentId);
+    if (arg) out.push(arg);
+  }
+  return out;
+}
+
+async function parseSubcommand(
+  parentId: string,
+  raw: unknown
+): Promise<CommandSubcommandSpec | null> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+
+  const cmd = asString(obj.cmd);
+  if (!cmd) {
+    logger.warn(
+      t("system.commandsConfigSubcommandMissingCmd", { id: parentId })
+    );
+    return null;
+  }
+
+  const id = `${parentId}::${cmd}`;
+  const rawManual = parseLocalizedString(obj.manual);
+  const manual = rawManual ? await resolveFileRef(rawManual) : null;
+
+  return {
+    id,
+    cmd,
+    aliases:    asAliasList(obj.aliases),
+    function:   asString(obj.function),
+    desc:       parseLocalizedString(obj.desc),
+    manual,
+    arguments:  parseArguments(obj.arguments, id),
+    permissions: parsePermissions(obj.permissions),
+    messages:   parseMessages(obj.messages),
+  };
+}
+
+async function parseSubcommands(
+  raw: unknown,
+  parentId: string
+): Promise<CommandSubcommandSpec[]> {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    logger.warn(
+      t("system.commandsConfigSubcommandsNotList", { id: parentId })
+    );
+    return [];
+  }
+  const out: CommandSubcommandSpec[] = [];
+  for (const item of raw) {
+    const sub = await parseSubcommand(parentId, item);
+    if (sub) out.push(sub);
+  }
+  return out;
+}
+
 const DEFAULT_MENU_CONFIG: MenuConfig = {
   title: "🤖 ManyBot — Menu",
   intro: {
@@ -265,6 +458,9 @@ const DEFAULT_MENU_CONFIG: MenuConfig = {
   footer: null,
   aliases: ["help", "man", "menu", "bot", "?"],
   notFoundFallback: false,
+  welcomeMessage: null,
+  welcomeWindowDays: 3,
+  pageSize: 15,
 };
 
 function parseMenu(raw: unknown): MenuConfig {
@@ -279,7 +475,16 @@ function parseMenu(raw: unknown): MenuConfig {
     footer: parseLocalizedString(obj.footer) ?? DEFAULT_MENU_CONFIG.footer,
     aliases: aliases.length > 0 ? aliases : [...DEFAULT_MENU_CONFIG.aliases],
     notFoundFallback: asBool(obj.notFoundFallback) ?? DEFAULT_MENU_CONFIG.notFoundFallback,
+    welcomeMessage: parseLocalizedString(obj.welcomeMessage) ?? DEFAULT_MENU_CONFIG.welcomeMessage,
+    welcomeWindowDays: asPositiveInt(obj.welcomeWindowDays, DEFAULT_MENU_CONFIG.welcomeWindowDays),
+    pageSize: asPositiveInt(obj.pageSize, DEFAULT_MENU_CONFIG.pageSize),
   };
+}
+
+function parseScopeValue(raw: unknown): "group" | "dm" | "any" | null {
+  const s = asString(raw)?.toLowerCase();
+  if (s === "group" || s === "dm" || s === "any") return s;
+  return null;
 }
 
 function parseCategories(raw: unknown): Record<string, CategoryConfig> {
@@ -291,7 +496,14 @@ function parseCategories(raw: unknown): Record<string, CategoryConfig> {
     const catObj = value as Record<string, unknown>;
     const label = parseLocalizedString(catObj.label) ?? catKey;
     const order = typeof catObj.order === "number" && Number.isFinite(catObj.order) ? catObj.order : 999;
-    out[catKey] = { label, order };
+    const scope = parseScopeValue(catObj.scope);
+    const hiddenInScope = parseScopeValue(catObj.hiddenInScope);
+    out[catKey] = {
+      label,
+      order,
+      scope: scope ?? null,
+      hiddenInScope: hiddenInScope ?? null,
+    };
   }
   return out;
 }
@@ -360,15 +572,87 @@ async function parseEntry(id: string, raw: CommandYamlSpec): Promise<CommandSpec
     text,
     desc:             parseLocalizedString(raw.desc),
     category:         asString(raw.category),
+    group:            asString(raw.group),
     manual,
     deprecatedMessage: asString(raw.deprecatedMessage),
     notifyChanges:    asBool(raw.notifyChanges),
     permissions:      parsePermissions(raw.permissions),
     messages:         parseMessages(raw.messages),
+    arguments:        parseArguments(raw.arguments, id),
+    subcommands:      await parseSubcommands(raw.subcommands, id),
   };
 }
 
-const RESERVED_KEYS = new Set(["defaults", "menu", "categories", "manuals"]);
+const RESERVED_KEYS = new Set(["defaults", "menu", "categories", "manuals", "import"]);
+
+/**
+ * Resolves `import:` (a path or list of paths, relative to PATHS.HOME) by
+ * reading each referenced YAML file and folding its top-level sections
+ * into the main root object. Each top-level key (`menu`, `manuals`, a
+ * command id, ...) may be owned by exactly one source file — no deep
+ * merge, first owner wins and any later collision is reported as an
+ * error and skipped, keeping the rest of that import file usable.
+ */
+async function resolveImports(root: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const importPaths = asImportList(root.import);
+  if (importPaths.length === 0) return root;
+
+  const merged: Record<string, unknown> = { ...root };
+  delete merged.import;
+
+  const owner = new Map<string, string>();
+  for (const key of Object.keys(merged)) owner.set(key, COMMANDS_FILE);
+
+  for (const relPath of importPaths) {
+    const fullPath = path.resolve(PATHS.HOME, relPath);
+
+    let raw: string;
+    try {
+      raw = await fs.readFile(fullPath, "utf8");
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      logger.error(
+        t("system.commandsConfigImportReadFailed", { path: fullPath, message: err.message })
+      );
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = yaml.load(raw, { filename: fullPath });
+    } catch (e) {
+      const err = e as Error;
+      logger.error(
+        t("system.commandsConfigImportParseFailed", { path: fullPath, message: err.message })
+      );
+      continue;
+    }
+
+    if (parsed === null || parsed === undefined) continue;
+    if (typeof parsed !== "object" || Array.isArray(parsed)) {
+      logger.error(t("system.commandsConfigImportInvalidRoot", { path: fullPath }));
+      continue;
+    }
+
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (key === "import") {
+        logger.warn(t("system.commandsConfigImportNested", { path: fullPath }));
+        continue;
+      }
+      const existingOwner = owner.get(key);
+      if (existingOwner !== undefined) {
+        logger.error(
+          t("system.commandsConfigImportKeyConflict", { key, path: fullPath, owner: existingOwner })
+        );
+        continue;
+      }
+      merged[key] = value;
+      owner.set(key, fullPath);
+    }
+  }
+
+  return merged;
+}
 
 export async function loadCommandsConfig(): Promise<CommandsConfig | null> {
   let raw: string;
@@ -424,7 +708,7 @@ export async function loadCommandsConfig(): Promise<CommandsConfig | null> {
     return null;
   }
 
-  const root = parsed as Record<string, unknown>;
+  const root = await resolveImports(parsed as Record<string, unknown>);
   const defaults = parseDefaults(root.defaults);
   const menu = parseMenu(root.menu);
   const categories = parseCategories(root.categories);

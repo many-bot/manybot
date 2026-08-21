@@ -41,12 +41,17 @@ function createMockEntry(
     aliases: [],
     desc: "Test command",
     category: null,
+    group: null,
     manual: null,
     source: "plugin",
     pluginName: "testPlugin",
+    function: null,
     handler: async () => "ok",
     text: null,
     permissions,
+    arguments: [],
+    subcommands: {},
+    categoryHiddenInScope: null,
   };
 }
 
@@ -180,7 +185,7 @@ describe("commandPermissions", () => {
     const res2 = await checkPermission(entry, ctx);
     assert.equal(res2.allowed, false);
     if (!res2.allowed) {
-      assert.match(res2.message, /Wait 30s/);
+      assert.match(res2.message ?? "", /Wait 30s/);
     }
 
     // Resetting cooldown allows next call
@@ -207,3 +212,4 @@ describe("commandPermissions", () => {
     assert.equal(res2.allowed, true);
   });
 });
+

@@ -28,7 +28,7 @@ export interface PermissionContext {
 
 export type PermissionCheckResult =
   | { allowed: true }
-  | { allowed: false; message: string };
+  | { allowed: false; message?: string };
 
 const cooldownMap = new Map<string, number>();
 
@@ -157,3 +157,4 @@ export async function checkPermission(
 
   return { allowed: true };
 }
+

@@ -130,10 +130,13 @@ missingCmd:
       footer: "Footer",
       aliases: ["help", "?"],
       notFoundFallback: true,
+      welcomeMessage: null,
+      welcomeWindowDays: 3,
+      pageSize: 15,
     });
     assert.deepEqual(config.categories, {
-      fun: { label: { en: "Fun" }, order: 2 },
-      uncategorized: { label: "uncategorized", order: 999 },
+      fun: { label: { en: "Fun" }, order: 2, scope: null, hiddenInScope: null },
+      uncategorized: { label: "uncategorized", order: 999, scope: null, hiddenInScope: null },
     });
     assert.deepEqual(config.manuals, { greeting: "Manual em português" });
     assert.equal(config.specs.length, 1);
@@ -146,6 +149,7 @@ missingCmd:
       text: "Reply from file",
       desc: { en: "Say hello", pt: "Diga oi" },
       category: "fun",
+      group: null,
       manual: { pt: "Manual em português", en: "Plain manual" },
       deprecatedMessage: "Old command",
       notifyChanges: false,
@@ -159,6 +163,8 @@ missingCmd:
         blacklist: { groups: undefined, users: ["blocked@c.us"] },
       },
       messages: { botNotAdmin: undefined, senderNotAdmin: undefined, ownerOnly: "Owners only", wrongScope: undefined, cooldown: undefined },
+      arguments: [],
+      subcommands: [],
     });
   });
 
@@ -168,5 +174,83 @@ missingCmd:
       en: "file: missing.txt",
       pt: "Texto",
     });
+  });
+
+  test("import: merges top-level sections from auxiliary files", async () => {
+    await fs.writeFile(path.join(configDir, "menu.yaml"), `
+menu:
+  title: "Imported Menu"
+  aliases: ["ajuda"]
+`, "utf8");
+    await fs.writeFile(path.join(configDir, "manual.yaml"), `
+manuals:
+  hello: "Imported manual"
+`, "utf8");
+    await fs.writeFile(commandsFile, `
+import:
+  - menu.yaml
+  - manual.yaml
+hello:
+  cmd: hello
+  plugin: sample
+  function: greet
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.equal(config.menu.title, "Imported Menu");
+    assert.deepEqual(config.menu.aliases, ["ajuda"]);
+    assert.deepEqual(config.manuals, { hello: "Imported manual" });
+    assert.equal(config.specs.length, 1);
+    assert.equal(config.specs[0].id, "hello");
+  });
+
+  test("import: accepts a single path (not wrapped in a list)", async () => {
+    await fs.writeFile(path.join(configDir, "menu.yaml"), `
+menu:
+  title: "Solo Import"
+`, "utf8");
+    await fs.writeFile(commandsFile, `
+import: menu.yaml
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.equal(config.menu.title, "Solo Import");
+  });
+
+  test("import: a key already owned by the main file or an earlier import is kept, not overwritten", async () => {
+    await fs.writeFile(path.join(configDir, "menu.yaml"), `
+menu:
+  title: "Should be ignored"
+`, "utf8");
+    await fs.writeFile(commandsFile, `
+import:
+  - menu.yaml
+menu:
+  title: "Main file wins"
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.equal(config.menu.title, "Main file wins");
+  });
+
+  test("import: a missing or malformed import file is skipped without failing the whole load", async () => {
+    await fs.writeFile(path.join(configDir, "broken.yaml"), "not: [a, valid\n", "utf8");
+    await fs.writeFile(commandsFile, `
+import:
+  - does-not-exist.yaml
+  - broken.yaml
+hello:
+  cmd: hello
+  plugin: sample
+  function: greet
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.equal(config.specs.length, 1);
+    assert.equal(config.specs[0].id, "hello");
   });
 });

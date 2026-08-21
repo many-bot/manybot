@@ -6,8 +6,35 @@
 
 import { CMD_PREFIX } from "#config";
 import { getCurrentLang, tFor } from "#i18n";
+import { buildSettingsApi } from "./settingsDb.js";
 import type { CommandRegistry, CommandEntry } from "./commandRegistry.js";
 import type { LocalizedString } from "./commandsConfig.js";
+
+/**
+ * Checks if the user should be shown the welcome message,
+ * and marks them as seen if so.
+ */
+export function checkAndTriggerWelcomeMessage(
+  userId: string,
+  registry: CommandRegistry,
+  lang?: string
+): string | null {
+  if (!registry.menu.welcomeMessage) return null;
+
+  const settings = buildSettingsApi("kernel", userId);
+  const lastSeen = settings.get("last_welcome_seen") as number | undefined;
+  const now = Math.floor(Date.now() / 1000);
+  const windowSeconds = (registry.menu.welcomeWindowDays || 3) * 86400;
+
+  if (!lastSeen || now - lastSeen > windowSeconds) {
+    settings.set("last_welcome_seen", now);
+    const rawMsg = resolveLocalizedString(registry.menu.welcomeMessage, lang);
+    if (!rawMsg) return null;
+    return rawMsg.replace(/\{prefix\}/g, CMD_PREFIX);
+  }
+
+  return null;
+}
 
 /**
  * Resolves a LocalizedString (string | Record<string, string>) to a single
@@ -32,7 +59,12 @@ export function resolveLocalizedString(
   return null;
 }
 
-export function renderOverview(registry: CommandRegistry, lang?: string): string {
+export function renderOverview(
+  registry: CommandRegistry,
+  lang?: string,
+  page?: number,
+  scope?: "group" | "dm"
+): string {
   const parts: string[] = [];
 
   const titleStr = resolveLocalizedString(registry.menu.title, lang) ?? "🤖 ManyBot — Menu";
@@ -45,16 +77,26 @@ export function renderOverview(registry: CommandRegistry, lang?: string): string
   parts.push(""); // blank line before categories/commands
 
   const allEntries = Array.from(registry.byId.values());
-  const categoryEntries = Object.entries(registry.categories);
+  const categories = Object.entries(registry.categories);
+  const pageSize = registry.menu.pageSize ?? 15;
 
-  if (categoryEntries.length > 0) {
+  if (categories.length > 0) {
     // Sort defined categories by order ascending
-    const sortedCategories = categoryEntries.sort((a, b) => a[1].order - b[1].order);
+    const sortedCategories = categories.sort((a, b) => a[1].order - b[1].order);
     const assignedIds = new Set<string>();
 
     for (const [catKey, catConfig] of sortedCategories) {
+      if (scope && catConfig.scope && catConfig.scope !== scope) {
+        continue;
+      }
+
       const entries = allEntries
         .filter(e => e.category === catKey)
+        .filter(e => {
+          if (!scope) return true;
+          if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+          return true;
+        })
         .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
       if (entries.length === 0) continue;
@@ -77,6 +119,11 @@ export function renderOverview(registry: CommandRegistry, lang?: string): string
     // Uncategorized entries
     const uncategorized = allEntries
       .filter(e => !assignedIds.has(e.id))
+      .filter(e => {
+        if (!scope) return true;
+        if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+        return true;
+      })
       .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
     if (uncategorized.length > 0) {
@@ -93,9 +140,15 @@ export function renderOverview(registry: CommandRegistry, lang?: string): string
       parts.push("");
     }
   } else {
-    // Flat command list
-    const sortedEntries = allEntries.sort((a, b) => a.cmd.localeCompare(b.cmd));
-    for (const entry of sortedEntries) {
+    // Flat command list with pagination
+    const filteredEntries = allEntries.filter(e => {
+      if (!scope) return true;
+      if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+      return true;
+    });
+    const startIdx = page ? (page - 1) * pageSize : 0;
+    const visibleEntries = filteredEntries.slice(startIdx, startIdx + pageSize);
+    for (const entry of visibleEntries) {
       const descStr = resolveLocalizedString(entry.desc, lang);
       if (descStr) {
         parts.push(`• ${CMD_PREFIX}${entry.cmd} — ${descStr}`);
@@ -114,7 +167,12 @@ export function renderOverview(registry: CommandRegistry, lang?: string): string
   return parts.join("\n").trim();
 }
 
-export function renderCategory(registry: CommandRegistry, categoryKey: string, lang?: string): string | null {
+export function renderCategory(
+  registry: CommandRegistry,
+  categoryKey: string,
+  lang?: string,
+  scope?: "group" | "dm"
+): string | null {
   const normTarget = categoryKey.trim().toLowerCase();
 
   // Match category key or category label
@@ -122,6 +180,9 @@ export function renderCategory(registry: CommandRegistry, categoryKey: string, l
   let matchedLabel: string | null = null;
 
   for (const [catKey, catConfig] of Object.entries(registry.categories)) {
+    if (scope && catConfig.scope && catConfig.scope !== scope) {
+      continue;
+    }
     const labelStr = resolveLocalizedString(catConfig.label, lang) ?? catKey;
     if (catKey.toLowerCase() === normTarget || labelStr.toLowerCase() === normTarget) {
       matchedKey = catKey;
@@ -141,8 +202,19 @@ export function renderCategory(registry: CommandRegistry, categoryKey: string, l
     }
   }
 
+  // If we have a scope and the matched category has a scope that doesn't match, return null
+  if (scope && matchedKey && registry.categories[matchedKey]?.scope && registry.categories[matchedKey]!.scope !== scope) {
+    return null;
+  }
+
   const entries = Array.from(registry.byId.values())
     .filter(e => e.category?.toLowerCase() === matchedKey!.toLowerCase())
+    .filter(e => {
+      if (!scope) return true;
+      // If entry has a specific scope defined and it doesn't match the requested scope, exclude it
+      if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+      return true;
+    })
     .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
   if (entries.length === 0) return null;
@@ -160,7 +232,7 @@ export function renderCategory(registry: CommandRegistry, categoryKey: string, l
     }
   }
 
-  return parts.join("\n").trim();
+  return parts.join("\\n").trim();
 }
 
 export function renderManual(entry: CommandEntry, registry: CommandRegistry, lang?: string): string {
@@ -203,18 +275,26 @@ export function handleMenuCommand(
   command: string,
   rawArgs: string,
   registry: CommandRegistry,
-  lang?: string
+  lang?: string,
+  scope?: "group" | "dm"
 ): string {
   const trimmed = rawArgs.trim();
   if (!trimmed) {
-    return renderOverview(registry, lang);
+    return renderOverview(registry, lang, undefined, scope);
+  }
+
+  // Check if rawArgs is a page number or starts with "page <number>"
+  const pageMatch = trimmed.match(/^(?:page\s+)?(\d+)$/i);
+  if (pageMatch) {
+    const pageNum = parseInt(pageMatch[1], 10);
+    return renderOverview(registry, lang, pageNum, scope);
   }
 
   const arg1 = trimmed.split(/\s+/)[0].toLowerCase();
   const cleanArg = arg1.startsWith(CMD_PREFIX) ? arg1.slice(CMD_PREFIX.length) : arg1;
 
   // 1. Match category
-  const categoryResult = renderCategory(registry, cleanArg, lang);
+  const categoryResult = renderCategory(registry, cleanArg, lang, scope);
   if (categoryResult) {
     return categoryResult;
   }
@@ -229,3 +309,4 @@ export function handleMenuCommand(
   // 3. Fallback not-found
   return renderNotFound(cleanArg, registry, lang);
 }
+

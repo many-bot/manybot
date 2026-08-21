@@ -15,9 +15,11 @@ function createMockEntry(id: string, cmd: string): CommandEntry {
     aliases: [],
     desc: null,
     category: null,
+    group: null,
     manual: null,
     source: "plugin",
     pluginName: "testPlugin",
+    function: null,
     handler: null,
     text: null,
     permissions: {
@@ -30,6 +32,9 @@ function createMockEntry(id: string, cmd: string): CommandEntry {
       blacklist: null,
       messages: {} as any,
     },
+    arguments: [],
+    subcommands: {},
+    categoryHiddenInScope: null,
   };
 }
 
@@ -100,12 +105,15 @@ describe("kernel/commandDeprecation", () => {
       aliases: [],
       desc: null,
       category: null,
+      group: null,
       manual: null,
       text: null,
       deprecatedMessage: null,
       notifyChanges: false,
       permissions: null,
       messages: null,
+      arguments: [],
+      subcommands: [],
     }];
     syncCommandHistory(byId1, defaults, specs1);
 
