@@ -21,6 +21,7 @@ import { buildApi,
          buildMessageContext } from "./api/index.js";
 import { pluginRegistry }     from "#kernel/pluginLoader.js";
 import { getCommandByInvocation, getCommandRegistry } from "#kernel/commandRegistry.js";
+import { resolveDispatch, runCommand } from "#kernel/runCommand.js";
 import { getActiveDeprecation, formatDeprecationMessage } from "#kernel/commandDeprecation.js";
 import { checkPermission } from "#kernel/commandPermissions.js";
 import { handleMenuCommand, renderNotFound, resolveLocalizedString } from "#kernel/commandMenu.js";
@@ -148,7 +149,8 @@ async function runPluginsForMessage(
   // 1. Menu aliases match (overview / category / manual / notFound)
   if (command && registry && registry.menuAliases.has(command)) {
     const rawArgs = msgCtx.body.trim().slice(CMD_PREFIX.length + command.length).trim();
-    const menuResponse = handleMenuCommand(command, rawArgs, registry);
+    const scope = chat.isGroup ? "group" : "dm";
+    const menuResponse = handleMenuCommand(command, rawArgs, registry, undefined, scope);
     try {
       await msgCtx.reply.text(menuResponse);
     } catch (e) {
@@ -159,6 +161,15 @@ async function runPluginsForMessage(
   }
 
   const matched = command ? getCommandByInvocation(command) : null;
+
+  // Full v6 dispatch resolution (parent vs. subcommand) for the matched
+  // entry, if any — feeds `runCommand()` below so subcommand routing,
+  // required-argument validation, and the Phase-8 crash-alert hook are
+  // active in production. Kept separate from the `matched` top-level
+  // permission pre-check further down (unchanged, still gates the whole
+  // per-message plugin loop exactly as before `runCommand` existed).
+  const rawArgsForDispatch = command ? msgCtx.body.trim().slice(CMD_PREFIX.length + command.length).trim() : "";
+  const resolution = command ? resolveDispatch(command, rawArgsForDispatch) : { target: { kind: "none" as const } };
 
   if (matched) {
     const permApi = buildApi({
@@ -180,11 +191,13 @@ async function runPluginsForMessage(
     });
 
     if (!permResult.allowed) {
-      try {
-        await msgCtx.reply.text(permResult.message);
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        logger.warn(`[messageHandler] permission reply failed: ${err.message}`);
+      if (permResult.message) {
+        try {
+          await msgCtx.reply.text(permResult.message);
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          logger.warn(`[messageHandler] permission reply failed: ${err.message}`);
+        }
       }
       return;
     }
@@ -248,12 +261,24 @@ async function runPluginsForMessage(
 
     try {
       // If this plugin owns the matched registry entry, skip the legacy
-      // run(ctx) and invoke the new handler directly — avoids double-firing
-      // for a migrated command. Other plugins (and other invocations of
+      // run(ctx) and go through the unified v6 dispatcher instead — avoids
+      // double-firing for a migrated command and activates subcommand
+      // routing, required-argument validation, and the Phase-8 crash-alert
+      // hook (`runCommand.ts`), none of which the direct `runPlugin` call
+      // below it used to provide. Other plugins (and other invocations of
       // this same plugin that did NOT match the registry) keep their legacy
       // run(ctx).
       if (matchedPlugin && matchedPlugin.pluginName === plugin.name && matchedPlugin.handler) {
-        await runPlugin(plugin, ctx, matchedPlugin.handler, msgCtx.args);
+        // runCommand() opts into rethrow so its Phase-8 fireAlert("plugin_crash")
+        // catch actually runs (runPlugin() swallows by default — see pluginGuard.ts).
+        // Swallow here too, at the boundary: this loop must never crash the bot,
+        // same guarantee the legacy runPlugin(plugin, ctx) branch below already has.
+        try {
+          await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply });
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          logger.warn(`[messageHandler] runCommand crashed for plugin "${plugin.name}": ${err.message}`);
+        }
       } else {
         await runPlugin(plugin, ctx);
       }
@@ -278,3 +303,4 @@ async function runPluginsForMessage(
     }
   }
 }
+

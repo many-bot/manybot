@@ -38,6 +38,9 @@ import { waitForSendSlot, simulateState,
          typingDuration, mediaDuration }  from "#sendguard";
 import { sendWithFallback }          from "#kernel/sendFallbackGuard.js";
 import { buildSettingsApi }          from "#settingsdb";
+import * as commandAccess            from "#kernel/commandAccess.js";
+import * as chatSession              from "#kernel/chatSession.js";
+import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult } from "#kernel/runCommand.js";
 import WebP                          from "node-webpmux";
 import {
   jidNormalizedUser,
@@ -586,6 +589,29 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
 }
 
 // ── Chats API ─────────────────────────────────────────────────────────────────
+
+function buildCommandsApi() {
+  return {
+    exists:      commandAccess.exists,
+    desc:        commandAccess.desc,
+    manual:      commandAccess.manual,
+    list:        commandAccess.list,
+    isMenuAlias: commandAccess.isMenuAlias,
+  };
+}
+
+// ── Session API (Phase 7, MANYBOT-6.md) ─────────────────────────────────────
+// Scoped to the current chat (normJid) + the calling plugin. Only built in
+// buildApi() (runtime), not buildBaseApi() — there is no "current chat" at
+// setup time to lock.
+function buildSessionApi(chatId: string, pluginName: string) {
+  return {
+    acquire: () => chatSession.acquireSession(chatId, pluginName),
+    release: () => { chatSession.releaseSession(chatId, pluginName); },
+    isLocked: () => chatSession.isSessionLocked(chatId),
+    isMine: () => chatSession.getSessionHolder(chatId) === pluginName,
+  };
+}
 
 function buildChatsApi(store: BotStore) {
   return {
@@ -2188,6 +2214,7 @@ function buildBaseApi(
     contacts:  buildContactsApi(contract, store, botJid),
     storage:   buildStorageApi(pluginName),
     botId:     botJid,
+    commands:  buildCommandsApi(),
   };
 }
 
@@ -2216,6 +2243,58 @@ export function buildSetupApi(
     events:   buildEventsApi(contract, pluginName),
     me:       buildMeApi(contract),
     settings: { global: buildSettingsApi(pluginName, "_global").global },
+  };
+}
+
+// ── ctx.runCommand facet ─────────────────────────────────────────────────────
+
+/**
+ * Builds the `ctx.runCommand(invocation, rawArgs?)` facet for a runtime
+ * ctx bound to `msg`/`chat`. Deliberately built AFTER `buildApi` is
+ * declared (function declarations hoist) so it can call `buildApi`
+ * again, recursively, to build a context scoped to the TARGET
+ * command's owning plugin rather than reusing the caller's — same
+ * "own storage/plugins facet, not the caller's" principle as
+ * `ctx.plugins.require()`.
+ *
+ * @param {BotMessage}      msg
+ * @param {WAChat}          chat
+ * @param {WaContract}      contract
+ * @param {BotStore}        store
+ * @param {Map}             pluginRegistry
+ * @param {string}          callerPluginName
+ */
+function buildRunCommandFacet(
+  msg:            BotMessage,
+  chat:           WAChat,
+  contract:       WaContract,
+  store:          BotStore,
+  pluginRegistry: Map<string, PluginEntry>,
+  callerPluginName: string,
+) {
+  return async function runCommandFacet(invocation: string, rawArgs = ""): Promise<RunCommandResult> {
+    const resolution = resolveDispatch(invocation, rawArgs);
+    if (resolution.target.kind === "none") {
+      return { status: "no_dispatch", sentReply: null, suggestedReply: null };
+    }
+
+    const entry = resolution.target.kind === "sub" ? resolution.target.parent : resolution.target.entry;
+    const targetPluginName = entry.source === "plugin" ? entry.pluginName : null;
+
+    const targetCtx = targetPluginName && targetPluginName !== callerPluginName
+      ? buildApi({
+          msg, chat, contract, store, pluginRegistry,
+          pluginName:   targetPluginName,
+          guardOptions: pluginRegistry.get(targetPluginName)?.guardOptions ?? {},
+        })
+      : buildApi({ msg, chat, contract, store, pluginRegistry, pluginName: callerPluginName });
+
+    return dispatchCommand({
+      pluginName: targetPluginName,
+      ctx:        targetCtx,
+      resolution,
+      reply:      targetCtx.msg.reply,
+    });
   };
 }
 
@@ -2287,6 +2366,10 @@ export function buildApi({
   return {
     ...buildBaseApi(contract, store, pluginRegistry, pluginName),
     ...buildSendApi(contract, store, rawJid, guardOptions),
+
+    runCommand: buildRunCommandFacet(msg, chat, contract, store, pluginRegistry, pluginName),
+
+    session: buildSessionApi(normJid, pluginName),
 
     // ── msg ──────────────────────────────────────────────────────────────────
 
@@ -2434,3 +2517,4 @@ export function buildApi({
     dc: null,
   };
 }
+

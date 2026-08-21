@@ -57,6 +57,7 @@ let halted = false;
 let cacheHydrated = false;
 let cacheSaveTimer: NodeJS.Timeout | null = null;
 let contactRefreshTimer: NodeJS.Timeout | null = null;
+let bannerShown = false;
 
 registerAlertSockProvider(() => currentSock);
 
@@ -224,7 +225,10 @@ async function startBot() {
       setStatus(true);
       logger.success(t("system.connected"));
       logger.info(t("system.clientId", { id: CLIENT_ID }));
-      printBanner();
+      if (!bannerShown) {
+        bannerShown = true;
+        printBanner();
+      }
 
       if (!pluginsReady) {
         pluginsReady = true;
