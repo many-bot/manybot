@@ -5,7 +5,7 @@
     "name": "SyntaxError!",
     "email": "me@stxerr.dev"
   },
-  "version": "5.8.0",
+  "version": "5.8.0-rc.1",
   "license": "GPL-3.0-only",
   "private": false,
   "engines": {
@@ -25,7 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "npm i && tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\" && npm run build:types",
+    "build": "tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\" && npm run build:types",
     "build:types": "tsc --noEmit -p packages/types/tsconfig.json",
     "start": "node dist/main.js",
     "lint": "eslint .",
