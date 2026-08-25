@@ -1,6 +1,3 @@
-> [!WARNING]
-> Versions 5.6.x and 5.7.x are UNSTABLE because of management error. Please use 5.5.4 instead. 
-
 <div align="center">
 
 ![ManyBot Logo](logo.png)
