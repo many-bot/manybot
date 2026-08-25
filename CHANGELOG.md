@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v5.8.0 - 2026-08-24
 
 ### Changed
 - **`sendGuard` edit throttle scoped to `high` only** — `edit()` no longer waits on a jittered minimum gap / per-message edit cap at `low`/`medium`; edits at those levels fire immediately. `high` keeps the throttle (800–2000ms jittered gap between edits to the same message, capped at 5 edits per message) — plugins on `high` that exceed the cap have their edit silently dropped.
