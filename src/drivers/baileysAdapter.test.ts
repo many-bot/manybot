@@ -328,3 +328,33 @@ test("Baileys adapter aggregatePollVotes returns empty array when no poll data",
   } as never);
   assert.deepStrictEqual(result, []);
 });
+
+test("Baileys adapter passes through the real group-participants.update shape (author/action, string[] participants)", async () => {
+  const store = createStore();
+  const sock = {
+    ev: new EventEmitter(),
+    user: { id: "bot@s.whatsapp.net" },
+  } as unknown as RawSocket;
+  const { contract } = createBaileysAdapter({ sock, store });
+
+  const received: unknown[] = [];
+  contract.on("group-participants.update", (payload) => received.push(payload));
+
+  // Baileys' actual raw shape: `participants` is a flat array of JIDs and
+  // `action` is a single field for the whole batch — never per participant.
+  // See https://github.com/WhiskeySockets/Baileys BaileysEventMap.
+  sock.ev.emit("group-participants.update", {
+    id: "120363402117932687@g.us",
+    author: "bot@s.whatsapp.net",
+    participants: ["69119495901215@lid"],
+    action: "add",
+  });
+
+  assert.deepStrictEqual(received, [{
+    id: "120363402117932687@g.us",
+    author: "bot@s.whatsapp.net",
+    participants: ["69119495901215@lid"],
+    action: "add",
+  }]);
+});
+

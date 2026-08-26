@@ -822,8 +822,13 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       emit("contacts.update", { updates: (arg as RawStoreContact[]).map(contactSummary) });
     });
     register("group-participants.update", (arg) => {
-      const { id, participants } = arg as { id: string; participants: Array<{ id: string; action: "add" | "remove" | "promote" | "demote" }> };
-      emit("group-participants.update", { id, participants });
+      const { id, author, participants, action } = arg as {
+        id: string;
+        author: string;
+        participants: string[];
+        action: "add" | "remove" | "promote" | "demote";
+      };
+      emit("group-participants.update", { id, author, participants, action });
     });
     register("groups.upsert", (arg) => {
       const groups = arg as Array<{ id: string; subject?: string }>;

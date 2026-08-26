@@ -77,7 +77,9 @@ export interface ContactsUpdateEvent {
 /** Payload of `group-participants.update`. */
 export interface GroupParticipantsUpdateEvent {
   id: string;
-  participants: Array<{ id: string; action: "add" | "remove" | "promote" | "demote" }>;
+  author: string;
+  participants: string[];
+  action: "add" | "remove" | "promote" | "demote";
 }
 
 /** Payload of `groups.upsert`. */
@@ -386,3 +388,4 @@ export interface PollVoteAggregate {
   name:   string;
   voters: string[];
 }
+
