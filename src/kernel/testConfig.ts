@@ -12,6 +12,15 @@
  *        c. otherwise absent (`chat === null`) — integration tests skip
  *           with an explanatory message instead of crashing.
  *
+ *      This module accepts any chat shape `normalizeTestChat()` allows,
+ *      including a group (`@g.us`) — it has no opinion on what a given
+ *      test file actually needs. Individual suites are the ones with
+ *      that requirement: contacts.integration.test.ts, for instance,
+ *      needs an individual chat (a phone number, or a JID ending in
+ *      `@s.whatsapp.net`/`@c.us`/`@lid`) because it asserts on
+ *      per-person contact fields (LID, number, country) that a group
+ *      simply doesn't have — see that file's own header for details.
+ *
  *   2. `runWhatsApp` — explicit opt-in flag (env `MANYBOT_RUN_WHATSAPP_TESTS=1`).
  *      A saved WhatsApp session plus a `TEST_CHAT` is NOT enough to fire real
  *      messages; this is the single, deliberate signal that the operator
@@ -232,3 +241,4 @@ export function _resetTestConfigForTests(): void {
 // do, and so future test fixtures that need to point at a different
 // config dir (e.g. MANYBOT_CONFIG_DIR) keep working.
 void CONFIG_DIR;
+

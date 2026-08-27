@@ -147,7 +147,26 @@ async function runPluginsForMessage(
   const registry = getCommandRegistry();
 
   // 0. Welcome message (first message within the configured window)
-  if (registry) {
+  //
+  // Two gates before we even consider firing the welcome:
+  //
+  //   - `!msg.fromMe`: skip when the bot itself "sent" the message
+  //     that triggered this dispatch. Baileys' history-sync replays
+  //     the bot's own outgoing messages as `messages.upsert` with
+  //     `fromMe=true` on every reconnect — without this gate, the
+  //     bot would greet itself in its own DM/group on every restart
+  //     the moment history-sync completes. The welcome is for
+  //     *incoming* messages only.
+  //
+  //   - `!chat.isGroup`: skip when the message arrived in a group.
+  //     A new member joining a group shouldn't get a per-member
+  //     welcome reply inside the group's conversation — it's noise
+  //     and reads weird in front of everyone else. The welcome is
+  //     only meaningful in a 1:1 (DM) chat where the message
+  //     originates from the user being greeted, and where the reply
+  //     goes back to the same chat (`msgCtx.reply` already targets
+  //     the source chat).
+  if (registry && !msg.fromMe && !chat.isGroup) {
     const welcomeMsg = checkAndTriggerWelcomeMessage(msgCtx.sender, registry);
     if (welcomeMsg) {
       try {

@@ -291,8 +291,33 @@ export type WAMessageType =
  * and {@link ContactsApi.get}.
  */
 export interface NormalizedContact {
-  id: string;
-  number: string;
+  /**
+   * The contact's primary identifier. For users, this is the `@lid` JID when
+   * known, or `null` if the LID could not be resolved. For groups, this is the
+   * `@g.us` JID.
+   */
+  id: string | null;
+  /**
+   * The contact's phone number in canonical E.164 format (with leading `+`),
+   * or `null` when unresolved or not a valid phone number.
+   */
+  number: string | null;
+  /**
+   * Phone number digits only (no `+`), or `null`.
+   */
+  numberRaw: string | null;
+  /**
+   * International formatted phone number (e.g. `+55 16 99999 9999`), or `null`.
+   */
+  numberPretty: string | null;
+  /**
+   * ISO 3166-1 alpha-2 country code (e.g. `BR`, `PH`, `US`), or `null`.
+   */
+  country: string | null;
+  /**
+   * ITU country calling code (e.g. `55`, `63`, `1`), or `null`.
+   */
+  countryCallingCode: string | null;
   pushname: string | null;
   name: string | null;
   shortName: null;

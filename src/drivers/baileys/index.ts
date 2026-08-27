@@ -24,7 +24,8 @@ import { createSocket, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.
 import { createBaileysAdapter } from "./adapter.js";
 import { handleMessage } from "./messageHandler.js";
 import { normalizeJid } from "#drivers/jid.js";
-import { loadPlugins, setupPlugins } from "#kernel/pluginLoader.js";
+import { loadPlugins, setupPlugins, loadIntegrationPlugin } from "#kernel/pluginLoader.js";
+import { isIntegrationOptIn }        from "#kernel/integrationMode.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
 import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
@@ -234,6 +235,23 @@ async function startBot() {
         pluginsReady = true;
         await loadPlugins(PLUGINS);
         await setupPlugins(contract, store);
+        // Opt-in: when the operator is running the integration test
+        // suite (`MANYBOT_RUN_WHATSAPP_TESTS=1`), also load the
+        // reserved integration plugin so its public API
+        // (`waitForMarker`, `testChat`, ...) is available for the
+        // test harness. Done after setupPlugins() so the integration
+        // plugin's own setup() can subscribe to events already wired
+        // up by the regular plugins. Production runs (no opt-in flag)
+        // are completely unaffected — `loadIntegrationPlugin()` itself
+        // throws on missing opt-in, so we gate it here too for an
+        // early, clean skip.
+        if (isIntegrationOptIn()) {
+          try {
+            await loadIntegrationPlugin();
+          } catch (e) {
+            logger.warn(`[baileys] integration plugin failed to load: ${(e as Error).message}`);
+          }
+        }
       }
       startCacheAutosave(store);
       startContactRefreshSweep(contract);

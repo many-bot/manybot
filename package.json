@@ -33,7 +33,7 @@
     "test:integration": "NODE_ENV=test MANYBOT_RUN_WHATSAPP_TESTS=1 bash -O globstar -c 'tsx --conditions development --test src/**/*.integration.test.ts'",
     "test:integration:local": "NODE_ENV=test MANYBOT_RUN_WHATSAPP_TESTS=1 bash -O globstar -c 'tsx --conditions development --import ./src/main.ts --test src/**/*.integration.test.ts'",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check": "npm run typecheck && npm run lint && npm run test && npx tsx scripts/check-types-drift.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -51,8 +51,9 @@
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.7.15",
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "6.7.24",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
     "js-yaml": "^5.2.3",
+    "libphonenumber-js": "^1.13.11",
     "node-cron": "^4.6.0",
     "node-webpmux": "^3.2.1",
     "nodemailer": "^9.0.3",

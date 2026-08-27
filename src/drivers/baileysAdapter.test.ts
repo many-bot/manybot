@@ -329,7 +329,7 @@ test("Baileys adapter aggregatePollVotes returns empty array when no poll data",
   assert.deepStrictEqual(result, []);
 });
 
-test("Baileys adapter passes through the real group-participants.update shape (author/action, string[] participants)", async () => {
+test("Baileys adapter passes through the real group-participants.update shape (author/action, string[] participants) and feeds LID↔PN cache", async () => {
   const store = createStore();
   const sock = {
     ev: new EventEmitter(),
@@ -340,21 +340,36 @@ test("Baileys adapter passes through the real group-participants.update shape (a
   const received: unknown[] = [];
   contract.on("group-participants.update", (payload) => received.push(payload));
 
-  // Baileys' actual raw shape: `participants` is a flat array of JIDs and
-  // `action` is a single field for the whole batch — never per participant.
-  // See https://github.com/WhiskeySockets/Baileys BaileysEventMap.
+  // Baileys v7 ships `participants` as GroupParticipant[] (Contact & { admin?… })
+  // — each entry carries `id` (LID form, the addressing mode the group uses),
+  // `lid?` (explicit LID alias), and `phoneNumber?` (PN form). The adapter
+  // projects to a flat JID list for the kernel, but also feeds the LID↔PN
+  // cache from the richer data while it has it. See BaileysEventMap.
   sock.ev.emit("group-participants.update", {
     id: "120363402117932687@g.us",
-    author: "bot@s.whatsapp.net",
-    participants: ["69119495901215@lid"],
+    author: "99999@lid",
+    authorPn: "5516999999999@s.whatsapp.net",
+    participants: [
+      { id: "69119495901215@lid", phoneNumber: "5516111222333@s.whatsapp.net" },
+      { id: "69119495901216@lid", phoneNumber: "5516111222444@s.whatsapp.net" },
+    ],
     action: "add",
   });
 
   assert.deepStrictEqual(received, [{
     id: "120363402117932687@g.us",
-    author: "bot@s.whatsapp.net",
-    participants: ["69119495901215@lid"],
+    author: "99999@lid",
+    participants: [
+      "69119495901215@lid",
+      "69119495901216@lid",
+    ],
     action: "add",
   }]);
+
+  // Passive LID↔PN cache filled from the richer payload — both directions
+  // (resolveJid returns the PN, resolvePn returns the LID).
+  assert.equal(store.resolveJid("69119495901215@lid"), "5516111222333@s.whatsapp.net");
+  assert.equal(store.resolvePn("5516111222444@s.whatsapp.net"), "69119495901216@lid");
+  assert.equal(store.resolveJid("99999@lid"), "5516999999999@s.whatsapp.net");
 });
 

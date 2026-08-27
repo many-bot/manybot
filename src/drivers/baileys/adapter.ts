@@ -229,7 +229,15 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
     return hash.digest("hex");
   }
 
-  /** Translate a Baileys WAMessage into the neutral BotMessage envelope. */
+  /** Normalize a mentioned JID: convert PN JIDs to LID when a mapping is known. */
+  function normalizeMentionedJid(jid: string): string {
+    if (!jid) return jid;
+    // Already LID — pass through.
+    if (jid.endsWith("@lid")) return jid;
+    // Phone-based JID: look up the LID in the reverse map.
+    const lid = store.resolvePn(jid);
+    return lid ?? jid;
+  }
   function toBotMessage(msg: RawMessage): BotMessage {
     const m = normalizeMessageContent(msg.message) ?? undefined;
     const { type, body, mimetype } = decodeContent(msg.message);
@@ -267,7 +275,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       body,
       mimetype:     mimetype ?? undefined,
       pushName:     (msg as unknown as { pushName?: string }).pushName,
-      mentionedJid: ciTyped?.mentionedJid ?? undefined,
+      mentionedJid: ciTyped?.mentionedJid?.map(normalizeMentionedJid) ?? undefined,
       quotedKey: ciTyped?.stanzaId ? {
         id:          ciTyped.stanzaId,
         remoteJid:   msg.key.remoteJid ?? undefined,
@@ -551,6 +559,15 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       if (rawDuration !== undefined) {
         store.setChatEphemeralExpiration(jid, Number(rawDuration) || 0);
       }
+      // Baileys v7's GroupMetadata carries per-participant `id` (LID, the
+      // addressing mode the group uses) AND `phoneNumber` (the traditional
+      // PN form). Feed the LID↔PN store for any participant that carries
+      // both — passive cache, never a network call.
+      for (const p of meta.participants) {
+        const lid   = (p as unknown as { id?: string }).id;
+        const phone = (p as unknown as { phoneNumber?: string }).phoneNumber;
+        if (lid && phone) store.learnLid(lid, phone);
+      }
       return {
         subject: meta.subject,
         participants: meta.participants.map(p => ({
@@ -822,13 +839,39 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       emit("contacts.update", { updates: (arg as RawStoreContact[]).map(contactSummary) });
     });
     register("group-participants.update", (arg) => {
-      const { id, author, participants, action } = arg as {
+      // Baileys v7 ships `participants` as GroupParticipant[] (Contact & { admin… }),
+      // carrying `id`, `lid?`, and `phoneNumber?` per entry. The kernel-public
+      // contract still uses `string[]` of JIDs (one per participant), so we
+      // project `id` down here — but we also take the opportunity to feed the
+      // LID↔PN store from the richer data while we have it: when a single
+      // payload delivers both forms of the same identity, that's the cleanest
+      // mapping we can ever hope to learn.
+      const a = arg as {
         id: string;
         author: string;
-        participants: string[];
-        action: "add" | "remove" | "promote" | "demote";
+        authorPn?: string;
+        participants: Array<{ id: string; lid?: string; phoneNumber?: string }>;
+        action: "add" | "remove" | "promote" | "demote" | "modify";
       };
-      emit("group-participants.update", { id, author, participants, action });
+      const jids = a.participants.map(p => jidNormalizedUser(p.id));
+      for (const p of a.participants) {
+        // v7 sometimes provides both forms; sometimes only one. Use whichever
+        // is available — learnLid() filters out incomplete or non-LID inputs.
+        // The richest case is `lid` + `phoneNumber` both explicit; otherwise
+        // we accept `lid`+`id` or `id`+`phoneNumber` (Baileys commonly puts
+        // the LID in `id` and the PN in `phoneNumber` on group metadata).
+        if (p.lid && p.phoneNumber) store.learnLid(p.lid, p.phoneNumber);
+        else if (p.lid && p.id)     store.learnLid(p.lid, p.id);
+        else if (p.id && p.phoneNumber) store.learnLid(p.id, p.phoneNumber);
+      }
+      // authorPn (the inviter's PN) is the same source of truth — feed it too.
+      if (a.author && a.authorPn) store.learnLid(a.author, a.authorPn);
+      emit("group-participants.update", {
+        id: a.id,
+        author: a.author,
+        participants: jids,
+        action: a.action,
+      });
     });
     register("groups.upsert", (arg) => {
       const groups = arg as Array<{ id: string; subject?: string }>;
@@ -838,13 +881,19 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       emit("groups.update", { updates: arg as Array<{ id: string }> });
     });
     register("group.join-request", (arg) => {
+      // Baileys v7 emits `participantPn` (and `authorPn`) on the join-request
+      // payload — feed the LID↔PN store from those while we have both sides.
       const a = arg as {
         id: string;
         author: string;
+        authorPn?: string;
         participant: string;
+        participantPn?: string;
         action: "created" | "revoked" | "rejected";
         method: "invite_link" | "linked_group_join" | "non_admin_add" | undefined;
       };
+      if (a.participant && a.participantPn) store.learnLid(a.participant, a.participantPn);
+      if (a.author && a.authorPn)           store.learnLid(a.author, a.authorPn);
       emit("group.join-request", {
         id: a.id,
         author: a.author,

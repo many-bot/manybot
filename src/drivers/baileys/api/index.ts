@@ -26,6 +26,7 @@ import { enqueue }                   from "#download";
 import { waitForEditSlot }           from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
 import { emptyFolder }               from "#utils/file.js";
+import { parsePhone }                from "#utils/phoneNumber.js";
 import { normalizeJid, denormalizeJid, toWireJid } from "#drivers/jid.js";
 
 import { mkdirSync }                 from "fs";
@@ -534,13 +535,71 @@ function mentionDisplayName(jid: string): string {
  * Build a normalized contact object from a JID and optional store metadata.
  * isBusiness is resolved via contract.getBusinessProfile(jid) — it resolves
  * to a profile only for WhatsApp Business accounts, undefined otherwise.
+ *
+ * `id` invariant: the returned ID is the LID form whenever the bot can
+ * guarantee it (input was a `@lid`, or we resolved a `@s.whatsapp.net`
+ * JID through the LID↔PN cache). When the input is a phone-based JID
+ * and we don't have a LID mapping yet, `id` is `null` — handing back a
+ * PN in that case would be a lie about the user's preferred identity
+ * (LID is now the internal addressing mode WhatsApp uses; see MANYBOT-7
+ * and the Baileys 7 LID rollout).
+ *
+ * Phone fields (`number`/`numberRaw`/`numberPretty`/`country`/
+ * `countryCallingCode`) are populated by {@link parsePhone} once a PN
+ * form is known. If we have neither a PN nor a resolvable LID, every
+ * phone field stays `null`.
+ *
+ * Groups keep their `@g.us` JID as `id` — they're not subject to the
+ * LID/PN distinction and never have a phone number to parse.
+ *
  * @param {string}              jid
  * @param {RawStoreContact}     [info]
  * @param {string|null}         [botJid]
  * @param {WaContract}          [contract]
  */
-async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract?: WaContract) {
-  const number = jid.split("@")[0];
+async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract: WaContract | undefined, store: BotStore) {
+  // Compute the canonical ID form (LID for users, group JID for groups,
+  // null when we can't pin a LID) and the resolved PN form (if any) in
+  // one pass — both are derived from the same LID↔PN cache + protocol-level
+  // resolver lookups, and a successful PN resolution feeds learnLid() so
+  // the next call is fully synchronous.
+  const isGroup = jid.endsWith("@g.us");
+
+  let resolvedId: string | null = isGroup ? jid : null;
+  let resolvedPn: string | null = null;
+
+  if (!isGroup) {
+    if (jid.endsWith("@lid")) {
+      // Input is already LID — that's the canonical ID; look up the PN.
+      resolvedId = jid;
+      const cached = store.resolveJid(jid);
+      if (cached && cached !== jid) {
+        resolvedPn = cached;
+      } else if (contract?.resolveLid) {
+        try {
+          const fresh = await contract.resolveLid(jid);
+          if (fresh) {
+            store.learnLid(jid, fresh);
+            resolvedPn = fresh;
+          }
+        } catch { /* fall through to null — caller decides */ }
+      }
+    } else if (jid.endsWith("@s.whatsapp.net") || jid.endsWith("@c.us")) {
+      // Input is PN. Prefer the LID form for `id`; cache lookup is sync.
+      const lid = store.resolvePn(jid);
+      if (lid) {
+        resolvedId = lid;
+        resolvedPn = normalizeJid(jid);
+      } else {
+        // No LID mapping yet — id stays null per the invariant.
+        resolvedPn = normalizeJid(jid);
+      }
+    }
+    // Anything else (status broadcast, newsletter, meta AI…) — id = null.
+  }
+
+  const phone = parsePhone(resolvedPn);
+
   let isBusiness = false;
   // We already have a contact record for this jid (learned from a real
   // contacts.upsert or an actual message from them) — that alone proves
@@ -549,7 +608,7 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
   // raw @lid we've never resolved to a phone number (returns a false
   // "doesn't exist" instead of throwing).
   let isWAAccount = Boolean(info);
-  if (!isWAAccount && contract && !jid.endsWith("@g.us")) {
+  if (!isWAAccount && contract && !isGroup) {
     try {
       const results = await contract.onWhatsApp(jid);
       isWAAccount = Boolean(results?.[0]?.exists);
@@ -562,8 +621,8 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
   // which we can't verify this way) — nothing backs this contact.
   // Matches the old whatsapp-web.js contract: getContactById() threw /
   // resolved to null for an unknown ID instead of returning a hollow object.
-  if (!jid.endsWith("@g.us") && !isWAAccount) return null;
-  if (contract && !jid.endsWith("@g.us")) {
+  if (!isGroup && !isWAAccount) return null;
+  if (contract && !isGroup) {
     try {
       isBusiness = Boolean(await contract.getBusinessProfile(jid));
     } catch {
@@ -571,21 +630,36 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
     }
   }
   return {
-    id:           jid,
-    number,
-    pushname:     info?.notify ?? null,
-    name:         info?.name ?? info?.verifiedName ?? null,
+    id:                 resolvedId,
+    number:             phone.number,
+    numberRaw:          phone.numberRaw,
+    numberPretty:       phone.numberPretty,
+    country:            phone.country,
+    countryCallingCode: phone.countryCallingCode,
+    pushname:           info?.notify ?? null,
+    name:               info?.name ?? info?.verifiedName ?? null,
     // Baileys' Contact type has no "short name" equivalent (that's a
     // whatsapp-web.js/vCard concept) — always null here, not a bug.
-    shortName:    null,
+    shortName:          null,
     isBusiness,
-    isEnterprise: false,
-    isBlocked:    false,
-    isMe:         botJid ? jid === normalizeJid(botJid) : false,
+    isEnterprise:       false,
+    isBlocked:          false,
+    isMe:               botJid ? jid === normalizeJid(botJid) : false,
     isWAAccount,
-    isUser:       !jid.endsWith("@g.us"),
-    isGroup:      jid.endsWith("@g.us"),
-    mention:      { text: `@${mentionDisplayName(jid)}`, mentions: [toWireJid(jid)] },
+    isUser:             !isGroup,
+    isGroup,
+    // Mention text: prefer the pretty form when we have one (so the
+    // chat shows "+55 16 99999 9999" or "+63 938 346-4136" instead of
+    // just digits), fall back to the raw digits, and finally to a
+    // LID-derived display name when nothing phone-shaped is available.
+    mention: {
+      text: phone.numberPretty
+        ? `@${phone.numberPretty}`
+        : phone.numberRaw
+        ? `@${phone.numberRaw}`
+        : `@${mentionDisplayName(jid)}`,
+      mentions: [toWireJid(jid)],
+    },
   };
 }
 
@@ -632,7 +706,7 @@ function buildChatsApi(store: BotStore) {
 
 // ── Contact API ───────────────────────────────────────────────────────────────
 
-function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null) {
+export function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null) {
   return {
     /**
      * Get a normalized contact object by JID.
@@ -731,7 +805,7 @@ function buildContactsApi(contract: WaContract, store: BotStore, botJid: string 
         notify:       resolvedInfo?.notify ?? raw?.notify,
         verifiedName: resolvedInfo?.verifiedName ?? raw?.verifiedName,
       } : undefined;
-      return normalizeContact(resolved, info, botJid, contract);
+      return normalizeContact(resolved, info, botJid, contract, store);
     },
 
     /**
@@ -1059,7 +1133,7 @@ export function buildMessageContext(
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[store.resolveJid(msg.fromPn ?? "")]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(store.resolveJid(msg.fromPn ?? ""))];
       const botJid = contract.me().id ? jidNormalizedUser(contract.me().id) : null;
-      return normalizeContact(sender, info, botJid, contract);
+      return normalizeContact(sender, info, botJid, contract, store);
     },
   };
 }

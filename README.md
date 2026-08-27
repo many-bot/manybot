@@ -63,11 +63,22 @@ npm test
 # Run all verification gates (typecheck + lint + unit tests)
 npm run check
 
-# Run real WhatsApp integration tests (requires TEST_CHAT and live session)
-TEST_CHAT="5516999999999" npm run test:integration
-```
+# Run real WhatsApp integration tests against a live account.
+# Requires: TEST_CHAT, MANYBOT_RUN_WHATSAPP_TESTS=1, and a saved
+# WhatsApp session in your CONFIG_DIR. The bare variant below
+# always skips every test (no live socket). Use `:local` to boot
+# the bot first — it preloads src/main.ts so the driver connects
+# before the test runner kicks in.
+TEST_CHAT="5516999999999" MANYBOT_RUN_WHATSAPP_TESTS=1 npm run test:integration:local
 
-For full details on the test architecture and API coverage classification, see [API_TEST_PLAN.md](API_TEST_PLAN.md).
+# Manual smoke probe: connects, runs a few marker round-trips, and
+# prints the IContact shape (id / number / numberRaw / numberPretty /
+# country / countryCallingCode) returned by contacts.get(...) — useful
+# for verifying the LID-aware contact API against your real account
+# without the full test runner overhead.
+TEST_CHAT="5516999999999" MANYBOT_RUN_WHATSAPP_TESTS=1 \
+  node --import ./src/main.ts scripts/probe-contacts.mjs
+```
 
 ## Contributing
 

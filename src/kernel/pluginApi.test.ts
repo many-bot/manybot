@@ -453,7 +453,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     // Contacts helper
     const contact = await ctx.contacts.get("5516999999999@s.whatsapp.net");
     assert.ok(contact);
-    assert.equal(contact?.number, "5516999999999");
+    // normalizeContact now returns E.164 (with leading "+") per the
+    // new contract invariant; assert accordingly.
+    assert.equal(contact?.number, "+5516999999999");
     assert.equal(contact?.isMe, true);
 
     await ctx.contacts.block("5516777777777@s.whatsapp.net");
@@ -693,10 +695,15 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     await ctx.send.poll("Favorite color?", ["Red", "Blue"]);
     assert.equal(calls.sentPolls.length, 1);
 
-    // contacts.get() with a raw @lid routes through contract.resolveLid()
+// contacts.get() with a raw @lid routes through contract.resolveLid()
     // (mock: "12345@lid" -> "5516777777777@s.whatsapp.net").
     const contact = await ctx.contacts.get("12345@lid");
-    assert.equal(contact?.id, "5516777777777@c.us");
+    // normalizeContact now keeps the ID as the LID form ("12345@lid")
+    // when known, per the invariant that user IDs are LID-or-null; plugins
+    // should treat contact.id as the canonical JID for addressing and
+    // contact.number/contact.numberRaw as the dialable string.
+    assert.equal(contact?.id, "12345@lid");
+    assert.equal(contact?.number, "+5516777777777");
   });
 });
 

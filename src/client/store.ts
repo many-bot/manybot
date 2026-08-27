@@ -23,6 +23,7 @@ import type {
   RawMessage, RawChat, RawContact, RawStoreContact,
   RawEventEmitter,
 } from "#drivers/baileys/sdk/baileysSock.js";
+import { normalizeJid } from "#drivers/jid.js";
 
 // ── Store types ───────────────────────────────────────────────────────────────
 
@@ -48,6 +49,12 @@ export interface StoreSnapshot {
   chats:    StoreChat[];
   contacts: Record<string, RawStoreContact>;
   lidMap:   [string, string][];
+  /**
+   * Reverse-direction mapping (PN → LID). Newer snapshots include this
+   * directly; older snapshots are reconstructed from `lidMap` during
+   * `hydrate()` so saved data stays valid across this change.
+   */
+  pnMap?:   [string, string][];
 }
 
 export interface BotStore {
@@ -88,6 +95,12 @@ export interface BotStore {
    */
   forgetLid(lid: string): void;
   /**
+   * Resolve a traditional `@s.whatsapp.net` JID to its `@lid` JID when a
+   * mapping has been learned. Returns the input unchanged if it's not a known
+   * `@s.whatsapp.net` JID or no mapping is known yet.
+   */
+  resolvePn(pn: string): string | null;
+  /**
    * Record the disappearing-message timer for a chat learned from a
    * source outside the store's own event listeners — e.g. a live
    * `groupMetadata()` lookup, which carries WhatsApp's own current
@@ -124,9 +137,24 @@ export function createStore(): BotStore {
   // @lid JID → traditional @s.whatsapp.net JID, learned from contact and
   // message-key pairs (Baileys exposes both forms during the LID rollout).
   const lidMap      = new Map<string, string>();
+  // traditional @s.whatsapp.net JID → @lid JID, reverse mapping for lookups.
+  const pnMap       = new Map<string, string>();
 
   function learnLid(lid?: string | null, pn?: string | null) {
-    if (lid && pn && lid.endsWith("@lid") && !pn.endsWith("@lid")) lidMap.set(lid, pn);
+    if (lid && pn && lid.endsWith("@lid") && !pn.endsWith("@lid")) {
+      // lidMap keeps the wire-format value as given — resolveJid()
+      // consumers (e.g. adapter.ts building self/participant candidates
+      // via jidNormalizedUser) expect the raw "@s.whatsapp.net" shape.
+      lidMap.set(lid, pn);
+      // pnMap's key is canonicalized to ManyBot's internal "@c.us" form
+      // so a lookup matches regardless of which format the caller has on
+      // hand — callers deep in the driver (adapter.ts) query it with raw
+      // wire JIDs, while callers in the plugin-facing API (index.ts) query
+      // it with already-normalized JIDs. Without this, pn entries learned
+      // in one format silently never matched a resolvePn() call made in
+      // the other.
+      pnMap.set(normalizeJid(pn), lid);
+    }
   }
 
   function resolveJid(jid: string): string {
@@ -135,7 +163,14 @@ export function createStore(): BotStore {
   }
 
   function forgetLid(lid: string): void {
+    const pn = lidMap.get(lid);
+    if (pn) pnMap.delete(normalizeJid(pn));
     lidMap.delete(lid);
+  }
+
+  function resolvePn(pn: string): string | null {
+    if (!pn) return null;
+    return pnMap.get(normalizeJid(pn)) ?? null;
   }
 
   // Coerce the various shapes Baileys delivers `ephemeralExpiration` in
@@ -323,6 +358,7 @@ export function createStore(): BotStore {
       chats:    [...chatsMap.values()],
       contacts: { ...contacts },
       lidMap:   [...lidMap.entries()],
+      pnMap:    [...pnMap.entries()],
     };
   }
 
@@ -331,6 +367,15 @@ export function createStore(): BotStore {
     for (const [id, contact] of Object.entries(snapshot.contacts ?? {})) {
       contacts[id] = { ...contacts[id], ...contact };
     }
+    // learnLid() always mirrors into both lidMap and pnMap, so replaying
+    // snapshot.lidMap alone fully reconstructs pnMap too — every pnMap
+    // entry has a corresponding lidMap entry, they're never written
+    // independently. snapshot.pnMap itself is redundant to replay here:
+    // it exists only so `toJSON()`'s output is self-describing/inspectable,
+    // and re-learning from it a second time would re-derive pnMap's key
+    // (already-canonicalized "@c.us" form) as if it were lidMap's raw
+    // wire-format value, corrupting the wire-format invariant lidMap's
+    // consumers (e.g. adapter.ts) depend on.
     for (const [lid, pn] of snapshot.lidMap ?? []) learnLid(lid, pn);
   }
 
@@ -344,9 +389,11 @@ export function createStore(): BotStore {
     resolveJid,
     learnLid,
     forgetLid,
+    resolvePn,
     setChatEphemeralExpiration,
     bind,
     toJSON,
     hydrate,
   };
 }
+

@@ -7,8 +7,9 @@ import { handleMessage } from "#drivers/baileys/messageHandler.js";
 import { pluginRegistry } from "#kernel/pluginLoader.js";
 import type { PluginEntry } from "#kernel/pluginLoader.js";
 import { buildCommandRegistry, __setRegistryForTests, type CommandRegistry } from "#kernel/commandRegistry.js";
-import type { CommandSpec, CommandSubcommandSpec } from "#kernel/commandsConfig.js";
+import type { CommandSpec, CommandSubcommandSpec, MenuConfig } from "#kernel/commandsConfig.js";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
+import { buildSettingsApi } from "#kernel/settingsDb.js";
 
 // ── Minimal spec builders (mirrors kernel/runCommand.test.ts conventions) ──
 
@@ -121,8 +122,25 @@ function makeBotMessage(overrides: Partial<BotMessage> = {}): BotMessage {
   };
 }
 
-function buildRegistry(specs: CommandSpec[]): CommandRegistry {
-  return buildCommandRegistry(specs, pluginRegistry);
+function buildRegistry(specs: CommandSpec[], menu?: Partial<MenuConfig>): CommandRegistry {
+  if (!menu) return buildCommandRegistry(specs, pluginRegistry);
+  return buildCommandRegistry(
+    specs,
+    pluginRegistry,
+    undefined,
+    {
+      title: "ManyBot — Menu",
+      intro: "Help menu",
+      footer: null,
+      cmd: "help",
+      aliases: ["help", "menu"],
+      notFoundFallback: false,
+      welcomeMessage: null,
+      welcomeWindowDays: 3,
+      pageSize: 15,
+      ...menu,
+    } as MenuConfig
+  );
 }
 
 describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
@@ -237,4 +255,83 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
     assert.equal(sentTexts.length, 1);
     assert.equal(sentTexts[0].text, "done");
   });
+
+  // ── Welcome message gating ──────────────────────────────────────────────
+  // Regression coverage for the false-positive welcome: history-sync
+  // replays the bot's own past outgoing messages as `messages.upsert`
+  // (fromMe=true) on every reconnect, and welcome must never fire for a
+  // group chat either — only for a genuinely incoming DM.
+  describe("welcome message gating", () => {
+    const WELCOME_TEXT = "Bem-vindo! Use {prefix}help.";
+
+    function buildWelcomeRegistry(): CommandRegistry {
+      return buildRegistry([emptySpec({})], {
+        welcomeMessage: WELCOME_TEXT,
+        welcomeWindowDays: 3,
+      });
+    }
+
+    // Each test uses its own sender so the shared (in-memory) settings DB
+    // never leaks "already seen" state between tests, and clears it
+    // up front regardless, mirroring kernel/commandMenu.test.ts.
+    function freshSender(id: string): { chatId: string; fromPn: string } {
+      const jid = `55110000${id}@s.whatsapp.net`;
+      buildSettingsApi("kernel", jid).delete("last_welcome_seen");
+      return { chatId: jid, fromPn: jid };
+    }
+
+    test("fires on a genuine first incoming DM", async () => {
+      const { chatId, fromPn } = freshSender("0001");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: false, body: "oi" }), contract, store);
+
+      assert.equal(sentTexts.length, 1, "welcome was sent");
+      assert.equal(sentTexts[0].text, "Bem-vindo! Use !help.");
+    });
+
+    test("does not fire for a history-sync replay of the bot's own message (fromMe=true)", async () => {
+      const { chatId, fromPn } = freshSender("0002");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: true, body: "oi" }), contract, store);
+
+      assert.equal(sentTexts.length, 0, "no welcome sent for a fromMe message");
+    });
+
+    test("does not fire for a message received in a group chat", async () => {
+      const { fromPn } = freshSender("0003");
+      const groupChatId = "120363000000000000@g.us";
+      buildSettingsApi("kernel", groupChatId).delete("last_welcome_seen");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      await handleMessage(
+        makeBotMessage({ chatId: groupChatId, fromPn, fromMe: false, body: "oi" }),
+        contract,
+        store
+      );
+
+      assert.equal(sentTexts.length, 0, "no welcome sent for a group message");
+    });
+
+    test("does not fire twice within the welcome window for the same sender", async () => {
+      const { chatId, fromPn } = freshSender("0004");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: false, body: "oi" }), contract, store);
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: false, body: "oi de novo" }), contract, store);
+
+      assert.equal(sentTexts.length, 1, "welcome only sent once inside the window");
+    });
+
+    test("does not fire when the registry has no welcomeMessage configured", async () => {
+      const { chatId, fromPn } = freshSender("0005");
+      __setRegistryForTests(buildRegistry([emptySpec({})])); // default menu: welcomeMessage: null
+
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: false, body: "oi" }), contract, store);
+
+      assert.equal(sentTexts.length, 0, "no welcome sent when unconfigured");
+    });
+  });
 });
+

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, describe, test } from "node:test";
 import type { PluginContext, SetupContext } from "#kernel/pluginApi.js";
+import { _resetTestConfigForTests } from "#kernel/testConfig.js";
 
 const integrationPluginUrl = new URL(
   "../../plugins/__manybot_integration__/index.ts",
@@ -14,14 +15,25 @@ describe("plugins/__manybot_integration__", () => {
     // Use a cache-busting query so each test gets a fresh module
     // (and therefore a fresh ring buffer + EventEmitter).
     mod = await import(`${integrationPluginUrl}?t=${Date.now()}-${Math.random()}`);
+
+    // setup() now falls back to kernel/testConfig.js's getTestConfig()
+    // for the TEST_CHAT-only case (see setup()'s comment), and that
+    // module caches its result in-process after the first read. Tests
+    // in this file mutate TEST_CHAT/MANYBOT_TEST_CHAT freely between
+    // cases, so the cache must be dropped before every test or a
+    // stale resolution from an earlier test leaks in.
+    _resetTestConfigForTests();
   });
 
   after(async () => {
     // Best-effort cleanup; nothing in the plugin subscribes to
     // process-level resources, but we re-clear the configured
-    // chat so a subsequent suite (e.g. loadIntegrationPlugin.test.ts)
-    // starts blank.
+    // chat (and the testConfig cache it now feeds through) so a
+    // subsequent suite (e.g. loadIntegrationPlugin.test.ts) starts
+    // blank.
     process.env.MANYBOT_TEST_CHAT = "";
+    delete process.env.TEST_CHAT;
+    _resetTestConfigForTests();
   });
 
   test("exports default, setup, and api", () => {
@@ -39,11 +51,14 @@ describe("plugins/__manybot_integration__", () => {
     assert.deepEqual(mod.api.recentBodies(), []);
   });
 
-  test("setup() throws when MANYBOT_TEST_CHAT is unset", async () => {
-    delete process.env.MANYBOT_TEST_CHAT;
-    const { ctx } = makeSetupCtx();
-    await assert.rejects(mod.setup(ctx), /MANYBOT_TEST_CHAT/);
-  });
+  // Note: the previous "setup() throws when MANYBOT_TEST_CHAT is unset" test
+  // was removed when the resolution path was widened to env-or-toml (see the
+  // `setup() agrees with integrationMode's own gate` regression test below).
+  // With toml resolution in scope, "unset" can only be asserted by also
+  // clearing the toml — that's testConfig.test.ts's territory, not this
+  // plugin's. The plugin-specific throw cases (invalid format, missing
+  // MANYBOT_TEST_CHAT override while TEST_CHAT is empty, etc.) are covered
+  // by the remaining tests below.
 
   test("setup() captures the test chat and isTestChat accepts it", async () => {
     process.env.MANYBOT_TEST_CHAT = "5516999999999@s.whatsapp.net";
@@ -154,10 +169,35 @@ describe("plugins/__manybot_integration__", () => {
     assert.equal(mod.api.isTestChat("5516999998888@s.whatsapp.net"), true);
   });
 
+  test("setup() agrees with integrationMode's own gate (both resolve TEST_CHAT via getTestConfig)", async () => {
+    // Regression test: setup() used to read process.env.TEST_CHAT
+    // directly, which diverged from kernel/integrationMode.ts's gate
+    // (getIntegrationModeStatus -> getTestConfig, env-or-toml). That
+    // let the gate report "ready" off a value setup() couldn't see —
+    // this pins the two to the same resolution instead.
+    delete process.env.MANYBOT_TEST_CHAT;
+    process.env.TEST_CHAT = "5516999997777@s.whatsapp.net";
+
+    const { getTestConfig } = await import("#kernel/testConfig.js");
+    const { getIntegrationModeStatus } = await import("#kernel/integrationMode.js");
+    _resetTestConfigForTests();
+
+    const gateStatus = await getIntegrationModeStatus();
+    const { ctx } = makeSetupCtx();
+    await mod.setup(ctx);
+
+    assert.equal(gateStatus.chat, mod.api.testChat, "gate and setup() must resolve the same chat");
+    assert.equal(mod.api.testChat, "5516999997777@s.whatsapp.net");
+
+    // Sanity: both are backed by the same cached getTestConfig() call.
+    const cfg = await getTestConfig();
+    assert.equal(cfg.chat, mod.api.testChat);
+  });
+
   test("setup() throws when given an invalid test chat format", async () => {
     process.env.MANYBOT_TEST_CHAT = "not_a_valid_jid";
     const { ctx } = makeSetupCtx();
-    await assert.rejects(mod.setup(ctx), /invalid test chat provided/);
+    await assert.rejects(mod.setup(ctx), /invalid MANYBOT_TEST_CHAT provided/);
   });
 
   test("ring buffer caps at 50 messages and evicts oldest", async () => {
@@ -235,3 +275,4 @@ function makeMessageCtx(chatId: string): { ctx: PluginContext; replyCalls: strin
   };
   return { ctx: mock as unknown as PluginContext, replyCalls: mock.replyCalls };
 }
+

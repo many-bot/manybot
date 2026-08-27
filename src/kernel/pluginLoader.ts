@@ -80,6 +80,23 @@ export const pluginRegistry = new Map<string, PluginEntry>();
 let globalContract: WaContract | null = null;
 let globalStore: BotStore | null = null;
 
+/**
+ * Live WaContract + BotStore the kernel most-recently wired through
+ * `setupPlugins()`. Exposed for the integration-test harness only
+ * (see `src/plugins/__manybot_integration__/` and the
+ * `*.integration.test.ts` suite under the project root): production
+ * code paths go through `ctx.wa.contract` / `ctx.store`, not through
+ * this module-scoped singleton.
+ *
+ * Returns `null` when the bot hasn't connected yet (or after a
+ * disconnect). The integration suite waits for a non-null value
+ * before issuing any real round-trip.
+ */
+export function getGlobalKernelRefs(): { contract: WaContract; store: BotStore } | null {
+  if (!globalContract || !globalStore) return null;
+  return { contract: globalContract, store: globalStore };
+}
+
 const pluginWatchers = new Map<string, fs.FSWatcher[]>();
 
 // fs.watch's `recursive: true` emulates recursion on Linux by opening one

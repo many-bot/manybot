@@ -78,8 +78,17 @@ export interface ContactsUpdateEvent {
 export interface GroupParticipantsUpdateEvent {
   id: string;
   author: string;
+  /**
+   * JIDs of the affected participants, normalized to user-server form.
+   * In v7 of the underlying driver each entry carries `lid` and
+   * `phoneNumber` separately, but the kernel keeps the simple
+   * string-list shape so plugin authors don't have to walk a richer
+   * object — the LID↔PN cache is fed at the adapter boundary instead.
+   */
   participants: string[];
-  action: "add" | "remove" | "promote" | "demote";
+  /** "modify" was added in Baileys v7 for membership-metadata tweaks (e.g.
+   *  contact-card updates); the kernel surface mirrors the underlying driver. */
+  action: "add" | "remove" | "promote" | "demote" | "modify";
 }
 
 /** Payload of `groups.upsert`. */

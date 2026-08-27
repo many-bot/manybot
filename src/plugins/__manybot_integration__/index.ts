@@ -120,28 +120,44 @@ export const api: IntegrationPublicApi = {
 export async function setup(ctx: SetupContext): Promise<void> {
   // The integration chat is decided by the harness BEFORE
   // setupPlugins() is called. Historically the harness set
-  // MANYBOT_TEST_CHAT, but users often set TEST_CHAT (per docs).
-  // Accept either, normalizing the value to the canonical JID form.
-  // Keep behavior strict: if neither is set, fail.
-  const rawEnv = process.env.MANYBOT_TEST_CHAT ?? process.env.TEST_CHAT;
-  if (!rawEnv) {
-    throw new Error(
-      `[${INTEGRATION_PLUGIN_NAME}] setup() called without MANYBOT_TEST_CHAT or TEST_CHAT — ` +
-      `set MANYBOT_TEST_CHAT (preferred) or TEST_CHAT before setupPlugins().`
-    );
-  }
+  // MANYBOT_TEST_CHAT, but users often set TEST_CHAT (per docs) —
+  // either as an env var or as a `TEST_CHAT` key in manybot.toml.
+  //
+  // `kernel/integrationMode.ts`'s own gate (`getIntegrationModeStatus`,
+  // which is what decided integration mode was "ready" and logged as
+  // much before this plugin's setup() ever ran) resolves TEST_CHAT via
+  // `getTestConfig()` — env var first, then manybot.toml. Reading
+  // straight off `process.env.TEST_CHAT` here (as this used to)
+  // silently diverged from that: the gate would report ready off a
+  // toml-only value while this threw "no TEST_CHAT set", because it
+  // never looked at the toml. Importing normalizeTestChat/getTestConfig
+  // here (rather than at module top) keeps the module load cheap when
+  // the plugin isn't used in production code paths.
+  //
+  // MANYBOT_TEST_CHAT remains a preferred override on top of that, for
+  // callers that want to point this specific plugin at a different
+  // chat than the gate's own resolution.
+  const { getTestConfig, normalizeTestChat } = await import("#kernel/testConfig.js");
 
-  // Normalize and validate the provided chat identifier.
   let normalized: string;
-  try {
-    // Importing normalizeTestChat here keeps the module load cheap
-    // when the plugin isn't used in production code paths.
-    const { normalizeTestChat } = await import("#kernel/testConfig.js");
-    normalized = normalizeTestChat(rawEnv);
-  } catch (e) {
-    throw new Error(
-      `[${INTEGRATION_PLUGIN_NAME}] invalid test chat provided: ${(e as Error).message}`
-    );
+  const overrideEnv = process.env.MANYBOT_TEST_CHAT;
+  if (overrideEnv) {
+    try {
+      normalized = normalizeTestChat(overrideEnv);
+    } catch (e) {
+      throw new Error(
+        `[${INTEGRATION_PLUGIN_NAME}] invalid MANYBOT_TEST_CHAT provided: ${(e as Error).message}`
+      );
+    }
+  } else {
+    const cfg = await getTestConfig();
+    if (!cfg.chat) {
+      throw new Error(
+        `[${INTEGRATION_PLUGIN_NAME}] setup() called without MANYBOT_TEST_CHAT or TEST_CHAT — ` +
+        `set MANYBOT_TEST_CHAT (preferred), or TEST_CHAT (env var or manybot.toml), before setupPlugins().`
+      );
+    }
+    normalized = cfg.chat;
   }
 
   configuredTestChat = normalized;
@@ -196,3 +212,4 @@ export default async function handle(ctx: PluginContext): Promise<void> {
   // for the round-trip. Keeping the plugin passive here is what
   // makes the suite easy to reason about.
 }
+

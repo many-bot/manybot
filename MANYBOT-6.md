@@ -31,7 +31,7 @@ Items explicitly out of scope are listed at the end — they do not block this i
 
 ---
 
-> [!NOTE] Overall status (08/20) — see `MANYBOT-6-STATUS.md` for full session history. Phases 1 (now fully complete, incl. `import:`), 2, 5, 6, 7, 9, 10, 11 complete. Phases 3, 4 core complete and fully wired into `messageHandler.ts`. Phase 8 (crash alerts) fully covered. `npm run typecheck && npm run lint && npm test`: 214/214 as of continuation 13; 4 new `import:` tests added this session, pending local validation.
+> [!NOTE] Overall status (08/26) — see `MANYBOT-6-STATUS.md` for full session history. Phases 1-11 complete (the v6 architecture is shipped and stable in production; the gate is green at 233 pass / 10 integration skipped / 0 fail). The two v6-specific loose ends remain intentionally deferred (see `MANYBOT-6-STATUS.md` → Pending): Phase 3 hard-enforcement of "every command in `commands.yaml`" (deliberately non-breaking for the 5.x line), and Phase 3 dual-use conflict warning (additive but needs a design pass).
 
 ## Phase 1 — `commands.yaml` Schema and Parser
 
@@ -72,7 +72,7 @@ Central architectural decision (08/14) — the core of the v6 architecture.
 * [x] Chain inheritance: category -> command -> subcommand — **08/19**: closed the missing link (`categoryHiddenInScope` was calculated in the registry but never affected the resolved `scope`). `resolvePermissions` (`commandRegistry.ts`) gained a `fallbackScope` parameter: top-level commands fall back to the category's `scope` when they do not define their own; subcommands fall back to the parent's already-resolved `scope`. `categoryHiddenInScope` remains separate for future menu use (Phase 6).
 * [x] Fields: `admin` (bot and/or user), `group_only`/`dm_only` (with an option to hide from the menu outside the scope), `dono` (specific number), per-user `cooldown`, group/user whitelist/blacklist (global or per-command; blacklist takes priority)
 * [x] Customizable warning messages by block type
-* [ ] Hidden categories in the menu use the same mechanism (not a separate `hidden` field) — field (`categoryHiddenInScope`) is ready; consumption during menu rendering will happen once Phase 6 is implemented
+* [x] Hidden categories in the menu use the same mechanism (not a separate `hidden` field) — `categoryHiddenInScope` is consumed at 4 call sites in `commandMenu.ts` (lines 97, 124, 146, 215), filtering entries from the categorized list, uncategorized list, flat pagination, and per-category views. Same gating shape as `scope` resolution in `commandRegistry.ts` — no separate `hidden` field needed.
 * [x] Discarded: custom roles beyond admin/owner; group-size restrictions
 
 ## Phase 5 — Automatic Deprecation / Rename
