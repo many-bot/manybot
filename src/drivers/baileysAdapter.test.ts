@@ -49,6 +49,72 @@ test("Baileys sends messages with the chat's disappearing-message timer", async 
   assert.equal((calls.at(-1)?.[2] as { ephemeralExpiration?: number }).ephemeralExpiration, 604800);
 });
 
+test("toBotMessage resolves LID/PN by suffix, not by field position (addressingMode 'lid')", async () => {
+  // Modern default WhatsApp addressing: `participant` is ALREADY the LID,
+  // `participantAlt` carries the PN companion — the reverse of the legacy
+  // "pn" mode. See https://baileys.wiki/concepts/jids.
+  const store = createStore();
+  const sock = { ev: new EventEmitter(), user: { id: "bot@s.whatsapp.net" } } as unknown as RawSocket;
+  const { contract } = createBaileysAdapter({ sock, store });
+
+  const received: unknown[] = [];
+  contract.on("messages.upsert", (payload) => received.push(payload));
+
+  sock.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [{
+      key: {
+        remoteJid:      "120363999999999999@g.us",
+        fromMe:         false,
+        id:             "MSG1",
+        participant:    "98765@lid",                       // already LID
+        participantAlt: "5511999999999@s.whatsapp.net",    // PN companion
+        addressingMode: "lid",
+      },
+      messageTimestamp: 1700000000,
+      pushName: "Alice",
+      message: { conversation: "oi" },
+    }],
+  });
+
+  const batch = received[0] as { messages: Array<{ fromLid?: string; fromPn?: string; participantAlt?: string }> };
+  const msg = batch.messages[0];
+  assert.equal(msg.fromLid, "98765@lid", "fromLid must be the value that's actually @lid, regardless of which field it came from");
+  assert.equal(msg.fromPn, "5511999999999@s.whatsapp.net", "fromPn must be the value that's actually NOT @lid");
+  assert.equal(msg.participantAlt, "98765@lid", "participantAlt (consumed directly by getMsgSender) must also be suffix-verified");
+});
+
+test("toBotMessage resolves LID/PN by suffix, not by field position (legacy addressingMode 'pn')", async () => {
+  const store = createStore();
+  const sock = { ev: new EventEmitter(), user: { id: "bot@s.whatsapp.net" } } as unknown as RawSocket;
+  const { contract } = createBaileysAdapter({ sock, store });
+
+  const received: unknown[] = [];
+  contract.on("messages.upsert", (payload) => received.push(payload));
+
+  sock.ev.emit("messages.upsert", {
+    type: "notify",
+    messages: [{
+      key: {
+        remoteJid:      "120363999999999999@g.us",
+        fromMe:         false,
+        id:             "MSG2",
+        participant:    "5511999999999@s.whatsapp.net",  // PN
+        participantAlt: "98765@lid",                     // LID companion
+        addressingMode: "pn",
+      },
+      messageTimestamp: 1700000000,
+      pushName: "Bob",
+      message: { conversation: "oi" },
+    }],
+  });
+
+  const batch = received[0] as { messages: Array<{ fromLid?: string; fromPn?: string }> };
+  const msg = batch.messages[0];
+  assert.equal(msg.fromLid, "98765@lid");
+  assert.equal(msg.fromPn, "5511999999999@s.whatsapp.net");
+});
+
 test("Baileys adapter getBusinessProfile handles success and failure", async () => {
   const store = createStore();
   const jid = "12345678@s.whatsapp.net";

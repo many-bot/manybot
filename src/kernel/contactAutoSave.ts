@@ -97,10 +97,10 @@ function randomInt(min: number, max: number): number {
  * failure would be mistaken for a real save and never retried.
  */
 async function addContact(contract: WaContract, jid: string, name: string): Promise<boolean> {
-  // `jid` here is this framework's internal "@c.us" form (see
-  // getMsgSender()/normalizeJid()) — Baileys needs the real wire JID or
-  // it silently no-ops instead of throwing, which is exactly how this
-  // went unnoticed before.
+  // `jid` here is LID-canonical (see getMsgSender()) — Baileys needs the
+  // real wire JID or it silently no-ops instead of throwing, which is
+  // exactly how this went unnoticed before. toWireJid() passes @lid
+  // through unchanged, so no extra handling is needed here.
   const wireJid = toWireJid(jid);
   try {
     await contract.addOrEditContact(wireJid, {
@@ -123,7 +123,7 @@ async function addContact(contract: WaContract, jid: string, name: string): Prom
  *
  * @param {WaContract}   contract
  * @param {BotMessage}   msg         — driver-neutral incoming message envelope
- * @param {string}       senderJid   — normalized sender JID (never a group JID)
+ * @param {string|null}  senderJid   — normalized sender JID (LID-canonical; never a group JID), or null when no LID is known yet for this contact — those messages are skipped, since there's no stable id to track progress against
  * @param {boolean}      isGroup     — whether this message came from a group chat
  * @param {boolean}      triggeredBot — true if this message invoked the bot
  *                                     (command prefix). Ignored outside groups.
@@ -131,13 +131,13 @@ async function addContact(contract: WaContract, jid: string, name: string): Prom
 export async function trackIncomingForContactSave(
   contract:     WaContract,
   msg:          BotMessage,
-  senderJid:    string,
+  senderJid:    string | null,
   isGroup:      boolean,
   triggeredBot: boolean
 ): Promise<void> {
   try {
     const pushName = msg.pushName?.trim();
-    if (!pushName || senderJid.endsWith("@g.us")) return;
+    if (!pushName || !senderJid || senderJid.endsWith("@g.us")) return;
 
     let s = getSenderState(senderJid);
 
@@ -230,3 +230,4 @@ export async function runContactRefreshSweep(contract: WaContract): Promise<void
     }
   }
 }
+

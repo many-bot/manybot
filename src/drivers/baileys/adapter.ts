@@ -47,6 +47,7 @@ import { Boom } from "@hapi/boom";
 import { createHash } from "node:crypto";
 
 import { logger } from "#logger";
+import { splitLidPn } from "#drivers/jid.js";
 
 // ── Baileys event-emitter shape ─────────────────────────────────────────────
 //
@@ -265,6 +266,12 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       quotedMessage?: unknown;
     } | undefined;
 
+    // See splitLidPn() — `key.participant`/`key.remoteJid` are only the PN
+    // form under legacy `addressingMode: "pn"`; under the modern default
+    // "lid" mode they're already the LID and the *Alt field carries the PN.
+    const participantIds = splitLidPn(key.participant, key.participantAlt);
+    const remoteJidIds    = splitLidPn(key.remoteJid,   key.remoteJidAlt);
+
     return {
       id:           msg.key.id ?? "",
       chatId:       msg.key.remoteJid ?? "",
@@ -282,10 +289,16 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
         fromMe:      false,
         participant: ciTyped.participant ?? undefined,
       } : undefined,
-      fromLid:        key.participantAlt,
-      fromPn:         key.participant,
-      participantAlt: key.participantAlt,
-      remoteJidAlt:   key.remoteJidAlt,
+      // Resolve LID/PN by actual JID suffix, not by field position — see
+      // splitLidPn() for why `key.participantAlt` can't be trusted to
+      // always be the LID. `participantAlt`/`remoteJidAlt` below are
+      // reassigned to the suffix-verified LID (or `undefined` if neither
+      // candidate is one), so every existing consumer that reads them
+      // directly gets the corrected value for free.
+      fromLid:        participantIds.lid,
+      fromPn:         participantIds.pn,
+      participantAlt: participantIds.lid,
+      remoteJidAlt:   remoteJidIds.lid,
       // Driver-specific escape hatches:
       //   - pollEncKeyRaw: poll-decryption key for vote decryption
       //   - contextInfo:   full IContextInfo (incl. embedded quotedMessage)

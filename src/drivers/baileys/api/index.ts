@@ -169,14 +169,34 @@ function msgIsGif(msg: BotMessage, store: BotStore): boolean {
 }
 
 /** Sender JID — group participant or DM remote JID, normalized. */
-function getMsgSender(msg: BotMessage, store: BotStore): string {
-  // Prefer the @s.whatsapp.net form when we know it (Baileys-advisor split
-  // exposes both forms on incoming messages). The adapter fills
-  // `fromPn` when known; fall back to `chatId` for DMs.
-  const participant = (msg._raw as { key?: { participant?: string } } | undefined)?.key?.participant
-                    ?? msg.fromPn;
-  const raw = participant ?? msg.chatId;
-  return normalizeJid(store.resolveJid(normalizeJid(raw)));
+function getMsgSender(msg: BotMessage): string | null {
+  // LID-canonical, matching normalizeContact()'s `id` and every other
+  // participant lookup in this file (`participantAlt ?? fromLid ?? fromPn
+  // ?? null`). `participantAlt` carries the alt-LID on group messages;
+  // `remoteJidAlt` carries it on DMs (Baileys puts the DM alt-LID on the
+  // key's remoteJidAlt, not participantAlt — there's no participant field
+  // at all in a 1:1 chat). When the account is already LID-addressed
+  // (addressingMode "lid"), `chatId` itself IS the @lid form and
+  // `remoteJidAlt` may hold the PN alt instead — check chatId first so
+  // that case isn't missed. No PN fallback: null is the correct, expected
+  // value when no LID has been learned for this contact yet, not a
+  // reason to silently hand back a legacy @c.us identity.
+  const dmLid = msg.chatId?.endsWith("@lid") ? msg.chatId : msg.remoteJidAlt;
+  const lid = msg.participantAlt ?? msg.fromLid ?? dmLid ?? null;
+  return lid ? normalizeJid(lid) : null;
+}
+
+/**
+ * PN companion of getMsgSender(), for the few internal consumers (command
+ * permissions today) that still need to match against phone-number-based
+ * config the way it's always been written. Never exposed on ctx.msg —
+ * `sender` there is LID-canonical only, per Baileys' own "migrate to LID,
+ * don't try to restore PN" guidance.
+ */
+function getMsgSenderPn(msg: BotMessage): string | null {
+  if (msg.fromPn) return normalizeJid(msg.fromPn);
+  if (msg.chatId && !msg.chatId.endsWith("@lid")) return normalizeJid(msg.chatId);
+  return null;
 }
 
 /** Quoted-message metadata as the rest of the api uses it. */
@@ -899,7 +919,10 @@ export interface WAMessageContext {
   body:       string;
   type:       string;
   fromMe:     boolean;
-  sender:     string;
+  /** LID-canonical sender JID (`@lid`), or `null` when no LID is known yet for this contact. */
+  sender:     string | null;
+  /** Phone-number form (`@c.us`) of the sender, or `null` when not available. For matching against phone-number-based config; prefer `sender` for identity. */
+  senderPn:   string | null;
   senderName: string;
   command:    string;
   args:       string[];
@@ -928,7 +951,7 @@ export interface WAMessageContext {
 export interface WAHistoryArray extends Array<WAMessageContext> {
   /** Last `n` messages (oldest → newest). Omit `n` for the full list. */
   last(n?: number): WAHistoryArray;
-  /** Only messages sent by `senderId`. */
+  /** Only messages sent by `senderId` (accepts either a phone number or a `@lid`). */
   from(senderId: string): WAHistoryArray;
 }
 
@@ -937,7 +960,14 @@ function makeHistoryArray(entries: WAMessageContext[], store: BotStore): WAHisto
   arr.last = (n?: number) =>
     makeHistoryArray(typeof n === "number" ? entries.slice(-n) : entries.slice(), store);
   arr.from = (senderId: string) => {
-    const target = normalizeJid(store.resolveJid(normalizeJid(senderId)));
+    // `e.sender` is LID-canonical (see getMsgSender()) — resolve a
+    // phone-number input to its LID before comparing. If it's already
+    // `@lid`, pass through unchanged. If no LID mapping is known for a
+    // PN input, there's nothing to match against (filters to empty),
+    // same as e.sender being null for that contact.
+    const normalized = normalizeJid(senderId.trim());
+    const target = normalized.endsWith("@lid") ? normalized : store.resolvePn(normalized);
+    if (!target) return makeHistoryArray([], store);
     return makeHistoryArray(entries.filter((e) => e.sender === target), store);
   };
   return arr;
@@ -956,8 +986,13 @@ export function buildMessageContext(
   const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
-  const rawJid   = msg.chatId;
-  const sender   = getMsgSender(msg, store);
+  const rawJid    = msg.chatId;
+  const sender    = getMsgSender(msg);
+  const senderPn  = getMsgSenderPn(msg);
+  // Best-known identity for anything that still needs a non-null jid
+  // internally (contact lookup, the sender-name fallback below) — prefers
+  // LID, falls back to PN, and finally the chat itself so it's never empty.
+  const contactId = sender ?? senderPn ?? msg.chatId;
   const cooldown = guardOptions.cooldown ?? true;
   const jitter   = guardOptions.jitter ?? true;
 
@@ -1044,7 +1079,8 @@ export function buildMessageContext(
     type:       getMsgType(msg),
     fromMe:     msg.fromMe,
     sender,
-    senderName: msg.pushName ?? sender.replace(/(:\d+)?@.*$/, ""),
+    senderPn,
+    senderName: msg.pushName ?? contactId.replace(/(:\d+)?@.*$/, ""),
     command,
     args: rawArgs.slice(1),
     is(cmd: string) {
@@ -1130,12 +1166,12 @@ export function buildMessageContext(
      * @returns {Promise<object|null>} null if the sender can't be confirmed as a real WhatsApp account.
      */
     async getContact() {
-      const info = (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[sender]
-                ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(sender)]
+      const info = (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[contactId]
+                ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(contactId)]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[store.resolveJid(msg.fromPn ?? "")]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(store.resolveJid(msg.fromPn ?? ""))];
       const botJid = contract.me().id ? jidNormalizedUser(contract.me().id) : null;
-      return normalizeContact(sender, info, botJid, contract, store);
+      return normalizeContact(contactId, info, botJid, contract, store);
     },
   };
 }
@@ -2420,7 +2456,7 @@ export function buildApi({
 
   const rawJid   = msg.chatId;
   const normJid  = normalizeJid(rawJid);
-  const sender   = getMsgSender(msg, store);
+  const sender   = getMsgSender(msg);
   const cooldown = (guardOptions.cooldown ?? true) as boolean;
   const jitter   = (guardOptions.jitter   ?? true) as boolean;
 

@@ -23,7 +23,7 @@
 import { createSocket, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { createBaileysAdapter } from "./adapter.js";
 import { handleMessage } from "./messageHandler.js";
-import { normalizeJid } from "#drivers/jid.js";
+import { normalizeJid, splitLidPn } from "#drivers/jid.js";
 import { loadPlugins, setupPlugins, loadIntegrationPlugin } from "#kernel/pluginLoader.js";
 import { isIntegrationOptIn }        from "#kernel/integrationMode.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
@@ -671,6 +671,12 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
     m?.buttonsMessage?.contextInfo ??
     undefined;
 
+  // See splitLidPn() in #drivers/jid.js — `key.participant` is only the PN
+  // form under legacy `addressingMode: "pn"`; under the modern default
+  // "lid" mode it's already the LID and `key.participantAlt` carries the
+  // PN instead. Resolve by JID suffix, not by field position.
+  const participantIds = splitLidPn(key.participant, key.participantAlt);
+
   return {
     id:          msg.key?.id ?? "",
     chatId:      normalizeJid(msg.key?.remoteJid ?? ""),
@@ -688,10 +694,10 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
       fromMe:      false,
       participant: contextInfo.participant ?? undefined,
     } : undefined,
-    fromLid:        key.participantAlt,
-    fromPn:         key.participant,
-    participantAlt: key.participantAlt,
-    remoteJidAlt:   key.remoteJidAlt,
+    fromLid:        participantIds.lid,
+    fromPn:         participantIds.pn,
+    participantAlt: participantIds.lid,
+    remoteJidAlt:   splitLidPn(key.remoteJid, key.remoteJidAlt).lid,
     _raw: {
       pollEncKeyRaw: m?.messageContextInfo?.messageSecret ?? undefined,
     },

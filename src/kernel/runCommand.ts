@@ -185,7 +185,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
   const perm = await checkPermission(permEntry, {
     isGroup:    ctx.chat.isGroup,
     chatId:     ctx.chat.id,
-    senderId:   ctx.msg.sender,
+    sender:     { lid: ctx.msg.sender, pn: ctx.msg.senderPn },
     isSenderAdmin: () => ctx.chat.isSenderAdmin(),
     isBotAdmin:    () => ctx.chat.isBotAdmin(),
   });

@@ -57,7 +57,7 @@ export interface BotMessage {
   fromPn?:    string;
   /** Group-participant @lid form (for group messages). */
   participantAlt?:   string;
-  /** Group-remoteJid @lid form (for groups). */
+  /** Alt @lid form of the chat itself — populated on DMs (1:1 chats have no `participant` field, so this is where the DM partner's LID lives), not groups. */
   remoteJidAlt?:     string;
 
   // ── Driver-specific escape hatch (use sparingly). ──
@@ -91,3 +91,4 @@ export interface BotChat {
 }
 
 export type ConnState = "connecting" | "open" | "close" | "reconnecting";
+

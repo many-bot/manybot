@@ -18,10 +18,17 @@ import { OWNER_NUMBER } from "#config";
 import { normalizeJid } from "#drivers/jid.js";
 import type { CommandEntry } from "./commandRegistry.js";
 
+export interface SenderIdentity {
+  /** LID-canonical id (`@lid`), or `null` when not yet known. */
+  lid: string | null;
+  /** Phone-number form (`@c.us`), or `null` when not available. */
+  pn:  string | null;
+}
+
 export interface PermissionContext {
   isGroup: boolean;
   chatId: string;
-  senderId: string;
+  sender: SenderIdentity;
   isSenderAdmin: () => Promise<boolean>;
   isBotAdmin: () => Promise<boolean>;
 }
@@ -40,7 +47,7 @@ export function getCooldownMap(): Map<string, number> {
   return cooldownMap;
 }
 
-export function matchId(targetId: string, candidate: string): boolean {
+export function matchId(targetId: string | null | undefined, candidate: string): boolean {
   if (!targetId || !candidate) return false;
   const normTarget = normalizeJid(targetId.trim());
   const normCandidate = normalizeJid(candidate.trim());
@@ -55,8 +62,25 @@ export function matchId(targetId: string, candidate: string): boolean {
   return false;
 }
 
-export function matchesAny(targetId: string, candidates: string[]): boolean {
+export function matchesAny(targetId: string | null | undefined, candidates: string[]): boolean {
+  if (!targetId) return false;
   return candidates.some(candidate => matchId(targetId, candidate));
+}
+
+/**
+ * Matches a sender against a list of configured ids (numbers or JIDs),
+ * trying both the LID and PN forms — config today is written in phone
+ * numbers, but a sender whose PN mapping isn't known yet only has a LID
+ * (or, rarely, only a PN when no LID has been learned). Either form
+ * matching is enough.
+ */
+export function matchesSender(sender: SenderIdentity, candidates: string[]): boolean {
+  return matchesAny(sender.lid, candidates) || matchesAny(sender.pn, candidates);
+}
+
+/** Stable per-sender identity for cooldown/state keys — prefers LID (canonical), falls back to PN. */
+function senderKey(sender: SenderIdentity): string {
+  return sender.lid ?? sender.pn ?? "unknown";
 }
 
 export async function checkPermission(
@@ -68,7 +92,7 @@ export async function checkPermission(
 
   // 1. Owner check
   if (perms.owner) {
-    if (!OWNER_NUMBER || !matchId(ctx.senderId, OWNER_NUMBER)) {
+    if (!OWNER_NUMBER || !matchesSender(ctx.sender, [OWNER_NUMBER])) {
       return { allowed: false, message: msgs.ownerOnly };
     }
   }
@@ -89,7 +113,7 @@ export async function checkPermission(
       }
     }
     if (perms.blacklist.users.length > 0) {
-      if (matchesAny(ctx.senderId, perms.blacklist.users)) {
+      if (matchesSender(ctx.sender, perms.blacklist.users)) {
         return { allowed: false, message: msgs.wrongScope };
       }
     }
@@ -109,7 +133,7 @@ export async function checkPermission(
     }
 
     if (hasUserList) {
-      if (!matchesAny(ctx.senderId, perms.whitelist.users)) {
+      if (!matchesSender(ctx.sender, perms.whitelist.users)) {
         return { allowed: false, message: msgs.wrongScope };
       }
     }
@@ -139,7 +163,7 @@ export async function checkPermission(
 
   // 7. Cooldown check (only consumed if all other checks pass)
   if (perms.cooldownSeconds > 0) {
-    const key = `${entry.id}:${ctx.senderId}`;
+    const key = `${entry.id}:${senderKey(ctx.sender)}`;
     const now = Date.now();
     const lastUsed = cooldownMap.get(key) ?? 0;
     const elapsedSeconds = (now - lastUsed) / 1000;

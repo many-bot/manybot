@@ -167,7 +167,7 @@ async function runPluginsForMessage(
   //     goes back to the same chat (`msgCtx.reply` already targets
   //     the source chat).
   if (registry && !msg.fromMe && !chat.isGroup) {
-    const welcomeMsg = checkAndTriggerWelcomeMessage(msgCtx.sender, registry);
+    const welcomeMsg = checkAndTriggerWelcomeMessage(msgCtx.sender ?? msg.chatId, registry);
     if (welcomeMsg) {
       try {
         await msgCtx.reply.text(welcomeMsg);
@@ -217,7 +217,7 @@ async function runPluginsForMessage(
     const permResult = await checkPermission(matched, {
       isGroup: permApi.chat.isGroup,
       chatId: permApi.chat.id,
-      senderId: msgCtx.sender,
+      sender: { lid: msgCtx.sender, pn: msgCtx.senderPn },
       isSenderAdmin: () => permApi.chat.isSenderAdmin(),
       isBotAdmin: () => permApi.chat.isBotAdmin(),
     });

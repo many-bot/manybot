@@ -10,11 +10,15 @@ import {
 import { resolvePermissions, type CommandEntry } from "./commandRegistry.js";
 import type { CommandPermissions, CommandMessages } from "./commandsConfig.js";
 
+function senderOf(pn: string): { lid: string | null; pn: string | null } {
+  return { lid: null, pn };
+}
+
 function createMockContext(overrides?: Partial<PermissionContext>): PermissionContext {
   return {
     isGroup: false,
     chatId: "123456789@c.us",
-    senderId: "5511999999999@c.us",
+    sender: senderOf("5511999999999@c.us"),
     isSenderAdmin: async () => false,
     isBotAdmin: async () => false,
     ...overrides,
@@ -82,7 +86,7 @@ describe("commandPermissions", () => {
 
   test("owner permission check", async () => {
     const ownerEntry = createMockEntry({ owner: true }, { ownerOnly: "Only owner allowed" });
-    const nonOwnerCtx = createMockContext({ senderId: "5511888888888@c.us" });
+    const nonOwnerCtx = createMockContext({ sender: senderOf("5511888888888@c.us") });
 
     // When OWNER_NUMBER is not set or sender does not match
     const res = await checkPermission(ownerEntry, nonOwnerCtx);
@@ -120,9 +124,9 @@ describe("commandPermissions", () => {
       },
     });
 
-    const blacklistedUserCtx = createMockContext({ senderId: "5511888888888@c.us" });
+    const blacklistedUserCtx = createMockContext({ sender: senderOf("5511888888888@c.us") });
     const blacklistedGroupCtx = createMockContext({ isGroup: true, chatId: "120363999999999999@g.us" });
-    const allowedCtx = createMockContext({ senderId: "5511999999999@c.us" });
+    const allowedCtx = createMockContext({ sender: senderOf("5511999999999@c.us") });
 
     assert.equal((await checkPermission(entry, blacklistedUserCtx)).allowed, false);
     assert.equal((await checkPermission(entry, blacklistedGroupCtx)).allowed, false);
@@ -137,8 +141,8 @@ describe("commandPermissions", () => {
       },
     });
 
-    const whitelistedUserCtx = createMockContext({ senderId: "5511999999999@c.us" });
-    const unwhitelistedUserCtx = createMockContext({ senderId: "5511888888888@c.us" });
+    const whitelistedUserCtx = createMockContext({ sender: senderOf("5511999999999@c.us") });
+    const unwhitelistedUserCtx = createMockContext({ sender: senderOf("5511888888888@c.us") });
 
     assert.equal((await checkPermission(entry, whitelistedUserCtx)).allowed, true);
     assert.equal((await checkPermission(entry, unwhitelistedUserCtx)).allowed, false);
@@ -175,7 +179,7 @@ describe("commandPermissions", () => {
   test("cooldown check and state consumption", async () => {
     clearCooldowns();
     const entry = createMockEntry({ cooldownSeconds: 30 }, { cooldown: "Wait {{seconds}}s" });
-    const ctx = createMockContext({ senderId: "5511999999999@c.us" });
+    const ctx = createMockContext({ sender: senderOf("5511999999999@c.us") });
 
     // First invocation passes and sets cooldown
     const res1 = await checkPermission(entry, ctx);
