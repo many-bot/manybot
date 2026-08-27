@@ -1,11 +1,11 @@
 {
   "name": "@manybot/types",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Type definitions for building ManyBot plugins (ctx, PluginContext, SetupContext)",
   "license": "GPL-3.0-only",
   "type": "module",
   "exports": {
-    ".": "./en/index.d.ts",
+    ".": "./index.d.ts",
     "./en": "./en/index.d.ts",
     "./pt": "./pt/index.d.ts"
   },

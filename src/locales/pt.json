@@ -30,6 +30,7 @@
     "schedulerError": "Erro no agendamento do plugin \"{{name}}\": {{message}}",
     "schedulerRegistered": "Agendamento registrado — plugin \"{{name}}\" → \"{{expression}}\"",
     "downloadJobFailed": "Falha no job de download — {{message}}",
+    "downloadJobNoErrorFn": "Job de download falhou e nenhum errorFn foi passado para enqueue()",
     "reconnecting": "Reconectando em {{secs}}s...",
     "reconnectHalted": "Desisti de reconectar após {{attempts}} tentativas — chame connect() manualmente para tentar de novo. Loops de reconexão repetidos podem prolongar uma restrição do WhatsApp.",
     "sessionExpired": "Sessão expirada ou desconectada — removendo sessão local e reiniciando...",

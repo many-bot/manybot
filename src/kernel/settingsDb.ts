@@ -17,7 +17,7 @@ import { mkdirSync } from "fs";
 import { CONFIG_DIR } from "#config";
 
 export interface ScopedAccessor {
-  get(key: string, defaultValue?: unknown): unknown;
+  get<T = unknown>(key: string, defaultValue?: T): T;
   getAll(): Record<string, unknown>;
   set(key: string, value: unknown): void;
   delete(key: string): void;
@@ -151,9 +151,11 @@ function scopedAccessor(pluginName: string, chatId: string): ScopedAccessor {
      * @param {string} key
      * @param {*}      [defaultValue]
      */
-    get(key, defaultValue = undefined) {
+    get(key: string, defaultValue?: unknown) {
       const val = dbGet(pluginName, chatId, key);
-      return val !== undefined ? val : defaultValue;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `get<T>` is a
+      // type-level convenience for callers; the store itself is untyped JSON.
+      return (val !== undefined ? val : defaultValue) as any;
     },
 
     /**
@@ -261,3 +263,4 @@ export function buildSettingsApi(pluginName: string, chatId: string): SettingsAp
     },
   };
 }
+

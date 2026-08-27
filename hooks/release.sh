@@ -56,6 +56,8 @@ if [ "$IS_RC" = false ]; then
   # publica de verdade. Alguém precisa rodar 'npm stage approve <id>' com
   # 2FA interativo (de qualquer máquina) pra liberar a versão.
   npm stage publish --access=public
+  echo "==> Enviando @manybot/types pro stage do npm"
+  (cd packages/types && npm stage publish --access=public)
   STATUS="staged"
 else
   echo "==> Pulando publicação no npm (release candidate)"

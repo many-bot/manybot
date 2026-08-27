@@ -4,13 +4,25 @@
 
 * Phases 1-11: **complete**. The v6 architecture is shipped and stable in production for both 5.x and the in-development 6.x line.
 * `npm run typecheck && npm run lint && npm test`: **233/233 pass, 10 integration tests skipped (require `MANYBOT_RUN_WHATSAPP_TESTS=1` + live session), 0 fail** — green as of v5.9.0.
-* The `scripts/check-types-drift.ts` step added to `npm run check` flags ~36 cosmetic "type mismatches" between `pluginApi.ts` internal interface names (`IConfig`/`IAdmin`/`ISend`/...) and `@manybot/types` published names (`ConfigApi`/`AdminApi`/`SendApi`/...) — these are intentional renames (`MANYBOT-6.md` Phase 10), structurally identical, not real drift. The script's `isTypeAssignableTo` comparison is nominal rather than structural despite its docstring; fixing the script to walk property shapes recursively is queued as a pre-existing tech-debt item, not part of this release.
+* `scripts/check-types-drift.ts` compares the kernel contract with both published locales using structural fingerprints. The published package is aligned with the runtime surface and currently passes with zero drift.
+
+## Type-drift checker
+
+The checker is intentionally validation-only: `@manybot/types` remains hand-maintained
+with curated names and localized JSDoc. It loads the kernel and published declarations
+in one TypeScript program, then fingerprints each property bag and call signature
+recursively. Private/protected and leading-underscore members are excluded, recursion is
+bounded at depth 32, and a `WeakMap` caches fingerprints. Standard library containers,
+utility types, and recursive driver-facing message containers are opaque while their
+generic arguments remain part of the digest. Canonicalization maps the kernel's internal
+interface names to the package's public names. Only `T | undefined` is unwrapped;
+`T | null` remains a meaningful distinction. The command exits non-zero for missing,
+stale, or structurally mismatched context fields.
 
 ## Pending
 
 * Phase 3's hard enforcement of "every command must be in `commands.yaml`" — the plan itself defers this ("Enforcement will happen once YAML becomes the primary path, rather than opt-in") and the file's own top warning requires 5.x to keep working exactly as it does now; flipping this now would be a breaking change, not a bug fix.
 * Phase 3's dual-use conflict warning (same function referenced in YAML `function:` AND called directly via `ctx.plugins.require(...)` by another plugin) — safe to add (additive, warning-only) but needs a design pass: static analysis of plugin source isn't practical, so this would have to be a runtime check inside `ctx.plugins.require()`/`ctx.plugins.get()` comparing the requested function name against the set of function names registered as `function:` targets in the command registry.
-* `scripts/check-types-drift.ts` — fix the structural comparison to walk property shapes recursively instead of relying on `isTypeAssignableTo` (which is nominal and trips on intentional renames).
 
 ## Files Touched (all sessions, cumulative)
 

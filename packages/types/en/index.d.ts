@@ -35,7 +35,7 @@
  * for a global-ambient alternative.
  */
 
-import type { WASocket, proto, BaileysEventMap } from "@whiskeysockets/baileys";
+import type { proto } from "@whiskeysockets/baileys";
 
 /**
  * Raw incoming/stored WhatsApp message (Baileys' `proto.IWebMessageInfo`).
@@ -63,7 +63,7 @@ export interface BotMessage {
   mimetype?: string;
   pushName?: string;
   mentionedJid?: string[];
-  quotedKey?: { id: string | null; remoteJid?: string; fromMe: boolean; participant?: string | null };
+  quotedKey?: BotQuotedRef;
   fromLid?: string;
   fromPn?: string;
   participantAlt?: string;
@@ -71,14 +71,348 @@ export interface BotMessage {
 }
 
 /**
- * Driver-neutral contract interface (subset that plugins might touch through
- * `ctx.wa.contract` — e.g. `contract.isReady()`, `contract.sendText(...)`).
+ * Identifier for a specific message on WhatsApp — the driver-neutral
+ * shape of a "message key", used as the reference for reactions,
+ * edits, deletes, quotes, and poll-vote bookkeeping.
+ *
+ * Every field is optional because every driver surface hands partial
+ * keys in some contexts (e.g. a reaction handler that only knows the
+ * target message ID, not the participant). Pass back whatever you
+ * have; the adapter fills the rest.
+ */
+export interface BotQuotedRef {
+  id?: string | null;
+  remoteJid?: string | null;
+  fromMe?: boolean | null;
+  participant?: string | null;
+}
+
+/** Minimal chat summary used by history payloads. */
+export interface BotChatSummary {
+  id: string;
+  name?: string;
+}
+
+/** Plain contact summary used by history payloads. */
+export interface BotContactSummary {
+  id: string;
+  name?: string;
+  notify?: string;
+  verifiedName?: string;
+  /** @lid form, if known. */
+  lid?: string;
+}
+
+/** Payload of `messages.upsert`. */
+export interface MessagesUpsertEvent {
+  messages: BotMessage[];
+  type: "notify" | "append";
+}
+
+/** Payload of `messages.update`. */
+export interface MessagesUpdateEvent {
+  updates: Array<{ key: BotQuotedRef; update: Record<string, unknown> }>;
+}
+
+/** Payload of `messaging-history.set`. */
+export interface HistorySetEvent {
+  chats: BotChatSummary[];
+  contacts: BotContactSummary[];
+  messages: BotMessage[];
+}
+
+/** Payload of `chats.upsert`. */
+export interface ChatsUpsertEvent {
+  chats: BotChatSummary[];
+}
+
+/** Payload of `chats.update`. */
+export interface ChatsUpdateEvent {
+  updates: Array<{ id: string; name?: string }>;
+}
+
+/** Payload of `contacts.upsert`. */
+export interface ContactsUpsertEvent {
+  contacts: BotContactSummary[];
+}
+
+/** Payload of `contacts.update`. */
+export interface ContactsUpdateEvent {
+  updates: BotContactSummary[];
+}
+
+/** Payload of `group-participants.update`. */
+export interface GroupParticipantsUpdateEvent {
+  id: string;
+  author: string;
+  /** JIDs of the affected participants, normalized to user-server form. */
+  participants: string[];
+  action: "add" | "remove" | "promote" | "demote" | "modify";
+}
+
+/** Payload of `groups.upsert`. */
+export interface GroupsUpsertEvent {
+  groups: Array<{ id: string; subject?: string }>;
+}
+
+/** Payload of `groups.update`. */
+export interface GroupsUpdateEvent {
+  updates: Array<{ id: string }>;
+}
+
+/** Payload of `connection.update`. */
+export interface ConnectionUpdateEvent {
+  connection: "open" | "close" | "connecting";
+  lastDisconnect?: { statusCode?: number };
+}
+
+/** Payload of `chats.delete`. */
+export interface ChatsDeleteEvent {
+  ids: string[];
+}
+
+/** Payload of `messages.delete`. */
+export interface MessagesDeleteEvent {
+  keys: BotQuotedRef[];
+  /** When true, every message in `jid` was wiped (chat-clear semantics). */
+  all?: { jid: string } | null;
+}
+
+/** Payload of `group.join-request`. */
+export interface GroupJoinRequestEvent {
+  id: string;
+  author: string;
+  participant: string;
+  action: "created" | "revoked" | "rejected";
+  method: "invite_link" | "linked_group_join" | "non_admin_add" | "unknown";
+}
+
+/** Payload of `blocklist.set`. */
+export interface BlocklistSetEvent {
+  blocklist: string[];
+}
+
+/** Payload of `blocklist.update`. */
+export interface BlocklistUpdateEvent {
+  blocklist: string[];
+  type: "add" | "remove";
+}
+
+/** Driver-neutral event names surfaced on `WaContract.on`. */
+export type WaEventName =
+  | "messages.upsert"
+  | "messages.update"
+  | "messages.delete"
+  | "messaging-history.set"
+  | "chats.upsert"
+  | "chats.update"
+  | "chats.delete"
+  | "contacts.upsert"
+  | "contacts.update"
+  | "group-participants.update"
+  | "groups.upsert"
+  | "groups.update"
+  | "group.join-request"
+  | "blocklist.set"
+  | "blocklist.update"
+  | "connection.update";
+
+/** Per-event payload map. */
+export type WaEventPayload<E extends WaEventName> =
+  E extends "messages.upsert"           ? MessagesUpsertEvent :
+  E extends "messages.update"           ? MessagesUpdateEvent :
+  E extends "messages.delete"           ? MessagesDeleteEvent :
+  E extends "messaging-history.set"     ? HistorySetEvent :
+  E extends "chats.upsert"              ? ChatsUpsertEvent :
+  E extends "chats.update"              ? ChatsUpdateEvent :
+  E extends "chats.delete"              ? ChatsDeleteEvent :
+  E extends "contacts.upsert"           ? ContactsUpsertEvent :
+  E extends "contacts.update"           ? ContactsUpdateEvent :
+  E extends "group-participants.update" ? GroupParticipantsUpdateEvent :
+  E extends "groups.upsert"             ? GroupsUpsertEvent :
+  E extends "groups.update"             ? GroupsUpdateEvent :
+  E extends "group.join-request"        ? GroupJoinRequestEvent :
+  E extends "blocklist.set"             ? BlocklistSetEvent :
+  E extends "blocklist.update"          ? BlocklistUpdateEvent :
+  E extends "connection.update"         ? ConnectionUpdateEvent :
+  never;
+
+/** Inputs to {@link WaContract.sendPoll}. */
+export interface BotPollOptions {
+  name: string;
+  values: string[];
+  selectableCount?: number;
+}
+
+/** Reference to a message the bot just sent. */
+export interface SentMessageRef {
+  id: string;
+  chatId: string;
+  timestamp: number;
+}
+
+/** A participant entry in {@link BotGroupMetadata.participants}. */
+export interface BotGroupParticipant {
+  id: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  /** E.164 phone-number JID, populated when the driver exposes it. */
+  phoneNumber?: string;
+}
+
+/** Group metadata returned by {@link WaContract.groupMetadata}. */
+export interface BotGroupMetadata {
+  subject: string;
+  participants: BotGroupParticipant[];
+}
+
+/** Information about the bot's own account. */
+export interface BotMe {
+  id: string;
+  lid?: string;
+}
+
+/** Inputs to {@link WaContract.decryptPollVote}. */
+export interface PollDecryptOpts {
+  /** Key of the poll-vote update message. */
+  voteKey: BotQuotedRef;
+  /** Key of the poll-creation message. */
+  pollKey: BotQuotedRef;
+  /** Poll encryption key, base64-string or Buffer. */
+  pollEncKey: Buffer | string;
+}
+
+/** Successful result of {@link WaContract.decryptPollVote}. */
+export interface PollDecryptResult {
+  /** Decrypted list of selected option hashes (SHA-256 of each option name). */
+  selectedOptions: string[];
+  /** Raw decrypted vote message — exposed for callers that need fields
+   *  the neutral envelope intentionally doesn't model. */
+  raw: unknown;
+}
+
+/** Inputs to {@link WaContract.aggregatePollVotes}. */
+export interface PollAggregateOpts {
+  /** Poll-creation message key. */
+  pollKey: BotQuotedRef;
+  /** Latest per-voter entries from {@link WaContract.decryptPollVote}. */
+  votes: PollDecryptResult[];
+  /** JID used to filter the bot's own votes out of the tally. */
+  selfJid?: string;
+}
+
+/** One row of the aggregated tally. */
+export interface PollVoteAggregate {
+  name: string;
+  voters: string[];
+}
+
+/**
+ * Driver-neutral contract that the kernel exposes as
+ * `ctx.wa.contract`. Every WhatsApp driver — Baileys today, whatsmeow
+ * later — implements this interface. Plugins reach into it for the
+ * protocol-level operations that aren't abstracted by `ctx.send.*`,
+ * `ctx.admin.*`, etc. (e.g. `contract.groupMetadata(jid)`,
+ * `contract.readMessages(keys)`).
+ *
+ * All event names listed in {@link WaEventName} are committed-to —
+ * the adapter implements every `bindSockEventsExternal` listener for
+ * each one. Optional methods (`resolveLid`, `getHistory`,
+ * `decryptPollVote`, `aggregatePollVotes`) are driver-specific
+ * extensions; callers MUST handle their absence.
  */
 export interface WaContract {
   readonly name: "baileys" | "whatsmeow";
+
+  // ── lifecycle ───────────────────────────────────────────────────────
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   isReady(): boolean;
+
+  /**
+   * Resolve a @lid JID to the real @s.whatsapp.net JID using the
+   * driver's authoritative source. Optional — drivers without a
+   * protocol-level resolver can omit it.
+   */
+  resolveLid?(lid: string): Promise<string | null>;
+
+  // ── event subscription ──────────────────────────────────────────────
+  /**
+   * Register a listener for a driver event. Returns an unsubscribe
+   * function. Adapters translate the driver's own event shape into
+   * the neutral payload type declared above.
+   */
+  on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void): () => void;
+
+  // ── send (text routes through sendFallbackGuard; these are direct) ─
+  sendText(jid: string, text: string, opts?: { quoted?: BotQuotedRef; mentions?: string[] }): Promise<SentMessageRef>;
+  sendImage(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean }): Promise<SentMessageRef>;
+  sendVideo(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean; gifPlayback?: boolean }): Promise<SentMessageRef>;
+  sendAudio(jid: string, buffer: Buffer, opts?: { quoted?: BotQuotedRef; viewOnce?: boolean; ptt?: boolean; mimetype?: string }): Promise<SentMessageRef>;
+  sendSticker(jid: string, buffer: Buffer, opts?: { quoted?: BotQuotedRef }): Promise<SentMessageRef>;
+  sendDocument(jid: string, buffer: Buffer, filename: string, mimetype: string, opts?: { quoted?: BotQuotedRef }): Promise<SentMessageRef>;
+  sendPoll(jid: string, opts: BotPollOptions & { quoted?: BotQuotedRef }): Promise<SentMessageRef>;
+
+  react(jid: string, target: BotQuotedRef, emoji: string): Promise<void>;
+  deleteMessage(jid: string, target: BotQuotedRef, forEveryone: boolean): Promise<void>;
+  editMessage(jid: string, target: BotQuotedRef, text: string): Promise<void>;
+
+  // ── presence + read ─────────────────────────────────────────────────
+  sendPresenceUpdate(state: "composing" | "recording" | "paused", jid: string): Promise<void>;
+  readMessages(keys: BotQuotedRef[]): Promise<void>;
+
+  // ── contacts ────────────────────────────────────────────────────────
+  onWhatsApp(jid: string): Promise<{ exists: boolean }[] | null>;
+  getBusinessProfile(jid: string): Promise<unknown | null>;
+  profilePictureUrl(jid: string): Promise<string | null>;
+  fetchStatus(jid: string): Promise<string | null>;
+  updateBlockStatus(jid: string, action: "block" | "unblock"): Promise<void>;
+  addOrEditContact(jid: string, info: { fullName: string; firstName?: string; saveOnPrimaryAddressbook?: boolean }): Promise<void>;
+  removeContact(jid: string): Promise<void>;
+
+  // ── groups ──────────────────────────────────────────────────────────
+  groupMetadata(jid: string): Promise<BotGroupMetadata>;
+  groupParticipantsUpdate(jid: string, users: string[], action: "add" | "remove" | "promote" | "demote"): Promise<Array<{ status: string; jid?: string }>>;
+  groupUpdateSubject(jid: string, subject: string): Promise<void>;
+  groupUpdateDescription(jid: string, description: string): Promise<void>;
+  groupInviteCode(jid: string): Promise<string>;
+  groupRevokeInvite(jid: string): Promise<string>;
+
+  // ── profile (bot + group) ───────────────────────────────────────────
+  updateProfilePicture(jid: string, buffer: Buffer): Promise<void>;
+  updateProfileName(name: string): Promise<void>;
+  updateProfileStatus(status: string): Promise<void>;
+
+  // ── me ───────────────────────────────────────────────────────────────
+  me(): BotMe;
+
+  // ── media (download) ────────────────────────────────────────────────
+  /**
+   * Download a media payload. Returns null on any failure
+   * (already-downloaded media, expired blob, protocol error, etc).
+   */
+  downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer } | null>;
+
+  // ── verification primitive ──────────────────────────────────────────
+  /**
+   * Read the most recent N messages the driver has on hand for `jid`,
+   * in chronological order (oldest → newest). Optional for drivers
+   * that don't keep a local history.
+   */
+  getHistory?(jid: string, opts?: { limit?: number }): Promise<BotMessage[]>;
+
+  // ── poll decryption (Baileys-specific) ──────────────────────────────
+  /**
+   * Decrypt a single poll-vote update against a known poll creation
+   * message. Optional — only the Baileys driver implements it.
+   */
+  decryptPollVote?(opts: PollDecryptOpts): Promise<PollDecryptResult | null>;
+
+  /**
+   * Aggregate a per-voter vote history into a tally keyed by option
+   * name. Optional — same rules as `decryptPollVote`.
+   */
+  aggregatePollVotes?(opts: PollAggregateOpts): PollVoteAggregate[];
 }
 
 /**
@@ -114,8 +448,6 @@ export interface SendTextOptions {
 export interface SendMediaOptions {
   /** Send as a view-once media message. */
   viewOnce?: boolean;
-  /** Send as a GIF (auto-loops, muted) — applies to {@link WAMessageSender.video} only. */
-  gifPlayback?: boolean;
   /** JIDs to mention (tag) in the caption. */
   mentions?: string[];
 }
@@ -145,6 +477,12 @@ export interface SendPollOptions {
  * ```
  */
 export interface MessageHandle extends PromiseLike<WAMessageContext | undefined> {
+  /**
+   * Underlying `BotMessage` (or `undefined` if the send failed). Exposed
+   * so plugins that need the raw key for follow-up operations
+   * (e.g. cross-referencing against history) don't have to re-await.
+   */
+  readonly rawPromise: Promise<BotMessage | undefined>;
   /** Reply to the message that was just sent (quotes it). */
   readonly reply: WAMessageSender;
   /** Edit the sent message's text (only works on the bot's own messages). */
@@ -159,12 +497,29 @@ export interface MessageHandle extends PromiseLike<WAMessageContext | undefined>
    * Delete the sent message.
    * @param forEveryone - If true, deletes for all recipients; otherwise only for the bot. Defaults to true.
    */
-  delete(forEveryone?: boolean): Promise<unknown>;
+  delete(forEveryone?: boolean | undefined): Promise<unknown>;
   /**
    * React to the sent message.
    * @param emoji - A single emoji character, e.g. `"👍"`. Pass `""` to remove an existing reaction.
    */
   react(emoji: string): Promise<unknown>;
+  then<TResult1 = WAMessageContext | undefined, TResult2 = never>(
+    onfulfilled?: ((value: WAMessageContext | undefined) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
+  ): Promise<TResult1 | TResult2>;
+  /**
+   * Attach a handler for a rejection on the underlying send. Mirrors
+   * `Promise.prototype.catch` so the handle can be used in
+   * promise-chained error paths.
+   */
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null | undefined,
+  ): Promise<WAMessageContext | undefined | TResult>;
+  /**
+   * Attach a handler run when the underlying send settles. Mirrors
+   * `Promise.prototype.finally`.
+   */
+  finally(onfinally?: (() => void) | null | undefined): Promise<WAMessageContext | undefined>;
 }
 
 /**
@@ -320,6 +675,7 @@ export interface NormalizedContact {
   countryCallingCode: string | null;
   pushname: string | null;
   name: string | null;
+  /** Always `null` in Baileys (no shortName equivalent on the wire). */
   shortName: null;
   /** Whether this is a WhatsApp Business account, resolved via a live `getBusinessProfile()` call. */
   isBusiness: boolean;
@@ -363,7 +719,7 @@ export interface WAMessageContext {
   id: string;
   timestamp: number;
   body: string;
-  type: WAMessageType;
+  type: string;
   fromMe: boolean;
   /** Normalized sender JID (group participant or DM remote JID). */
   sender: string;
@@ -420,7 +776,7 @@ export interface WAMessageContext {
    * Delete this message.
    * @param forEveryone - If true, deletes for all recipients; otherwise only for the bot. Defaults to true.
    */
-  delete(forEveryone?: boolean): Promise<unknown>;
+  delete(forEveryone?: boolean | undefined): Promise<unknown>;
   /**
    * Edit this message's text (only works on the bot's own messages).
    * @param text - The new text content.
@@ -512,10 +868,14 @@ export interface TargetableAction<T = unknown> extends PromiseLike<T> {
    * @param targetJid - The target group JID.
    */
   to(targetJid: string): Promise<T>;
+  then<TResult1 = T, TResult2 = never>(
+    onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | null | undefined,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null | undefined,
+  ): Promise<TResult1 | TResult2>;
   catch<TResult = never>(
-    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
   ): Promise<T | TResult>;
-  finally(onfinally?: (() => void) | null): Promise<T>;
+  finally(onfinally?: (() => void) | null | undefined): Promise<T>;
 }
 
 /**
@@ -633,7 +993,7 @@ export interface PollApi {
    * const poll = await ctx.poll.create("Lunch?", ["Pizza", "Sushi", "Burger"]);
    * ```
    */
-  create(question: string, options: string[], opts?: SendPollOptions): Promise<PollHandle>;
+  create(question: string, options: string[], opts?: { allowMultipleAnswers?: boolean }): Promise<PollHandle>;
   /**
    * Retrieve an active poll by its message ID.
    * @param msgId - The poll message's ID.
@@ -748,18 +1108,19 @@ export interface I18nApi {
    * @param args - Translation key followed by any interpolation values, forwarded to the underlying i18n engine.
    * @returns The translated string.
    */
-  t(...args: unknown[]): string;
+  t(key: string): string;
+  t(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
   /**
    * Create a scoped `t()` bound to a plugin's own locale files.
    * @param pluginMetaUrl - Pass `import.meta.url` from the plugin file.
    * @returns A `t()` function scoped to that plugin's locales.
    * @example
    * ```js
-   * const t = ctx.i18n.createT(import.meta.url);
+   * const { t } = ctx.i18n.createT(import.meta.url);
    * console.log(t("greeting"));
    * ```
    */
-  createT(pluginMetaUrl: string): (...args: unknown[]) => string;
+  createT(pluginMetaUrl: string): { t: I18nApi["t"]; lang: string | null };
   /** Reload locale files from disk. */
   reload(): void;
   /** @returns The currently active language code. */
@@ -772,7 +1133,7 @@ export interface UtilsApi {
    * Delete all contents of a folder without removing the folder itself.
    * @param dirPath - Path to the directory to empty.
    */
-  emptyFolder(dirPath: string): Promise<void> | void;
+  emptyFolder(folderPath: string): void;
 }
 
 /** Background download queue, available as `ctx.download`. Only one job runs at a time. */
@@ -783,9 +1144,10 @@ export interface DownloadApi {
    * handler — that blocks the event loop, and plugins are dispatched in
    * sequence, so it delays every other plugin's response too.
    * @param workFn - The function performing the download.
-   * @param errorFn - Called with the error if `workFn` throws/rejects.
+   * @param errorFn - Called with the error if `workFn` throws/rejects. If
+   * omitted, the error is logged instead of being silently swallowed.
    */
-  enqueue(workFn: () => unknown, errorFn?: (error: unknown) => unknown): void;
+  enqueue(workFn: () => Promise<void>, errorFn?: (error: Error) => Promise<void>): void;
 }
 
 /** Cron-style task scheduling, available as `ctx.scheduler`. */
@@ -812,7 +1174,7 @@ export interface PluginsApi {
    * @param name - The other plugin's name.
    * @returns Its public API, or `null` if it's not active.
    */
-  get(name: string): unknown | null;
+  get(name: string): unknown;
   /**
    * Look up another plugin's public API, requiring it to exist.
    * @param name - The other plugin's name.
@@ -872,7 +1234,13 @@ export interface CommandsApi {
    * List every registered command.
    * @param lang - Language code to translate descriptions into. Defaults to the active language.
    */
-  list(lang?: string): CommandInfo[];
+  list(lang?: string): Array<{
+    id: string;
+    cmd: string;
+    aliases: string[];
+    category: string | null;
+    desc: string | null;
+  }>;
   /**
    * Check whether `text` matches one of the configured menu/help aliases
    * (e.g. `"menu"`, `"help"`, `"?"`), independent of the command prefix.
@@ -955,9 +1323,9 @@ export interface SettingsApi extends ScopedAccessor {
 /** Subscribe to raw Baileys socket / internal events, available as `ctx.events`. */
 export interface EventsApi {
   /**
-   * Subscribe to a raw Baileys socket event.
+   * Subscribe to an internal event.
    * @param event - Event name, e.g. `"messages.upsert"`, `"connection.update"`, `"group-participants.update"`.
-   * @param handler - Called with the same payload Baileys emits for that event.
+   * @param handler - Called with the same payload the driver emits for that event.
    * @returns An unsubscribe function.
    * @example
    * ```js
@@ -967,27 +1335,12 @@ export interface EventsApi {
    * // later: off();
    * ```
    */
-  on<K extends keyof BaileysEventMap>(
-    event: K,
-    handler: (arg: BaileysEventMap[K]) => void
-  ): () => void;
-  /**
-   * Subscribe to a custom/internal event name not part of Baileys' event map.
-   * @param event - The event name.
-   * @param handler - Called with whatever arguments that event emits.
-   * @returns An unsubscribe function.
-   */
   on(event: string, handler: (...args: unknown[]) => void): () => void;
 
   /**
-   * Wait for a raw Baileys socket event to fire once.
+   * Wait for an internal event to fire once.
    * @param event - Event name, e.g. `"connection.update"`.
-   * @returns A promise resolving with that event's typed payload the next time it fires.
-   */
-  once<K extends keyof BaileysEventMap>(event: K): Promise<BaileysEventMap[K]>;
-  /**
-   * Wait for a custom/internal event name to fire once.
-   * @param event - The event name.
+   * @returns A promise resolving with that event's payload the next time it fires.
    */
   once(event: string): Promise<unknown>;
 
@@ -1034,7 +1387,7 @@ export interface BaseApi {
  * @see PluginContext
  */
 export interface SetupContext extends BaseApi {
-  send: SetupSendApi;
+  send: { to(targetJid: string): WAMessageSender };
   admin: AdminApi;
   events: EventsApi;
   me: MeApi;
@@ -1107,7 +1460,17 @@ export interface RunCommandResult {
  * @see SetupContext
  */
 export interface PluginContext extends BaseApi {
-  send: SendApi;
+  send: {
+    text(text: string, opts?: { linkPreview?: boolean; mentions?: string[] }): MessageHandle;
+    image(source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }): MessageHandle;
+    video(source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }): MessageHandle;
+    gif(source: string | Buffer, caption?: string, opts?: { viewOnce?: boolean; mentions?: string[] }): MessageHandle;
+    audio(source: string | Buffer, opts?: { asVoice?: boolean; viewOnce?: boolean }): MessageHandle;
+    sticker(source: string | Buffer): MessageHandle;
+    file(source: string | Buffer, filename?: string): MessageHandle;
+    poll(question: string, options: string[], cfg?: { allowMultipleAnswers?: boolean }): MessageHandle;
+    to(targetJid: string): WAMessageSender;
+  };
   msg: WAMessageContext;
   chat: ChatContext;
   admin: AdminApi;
@@ -1127,7 +1490,7 @@ export interface PluginContext extends BaseApi {
    * @param rawArgs - The remainder of the line, unparsed.
    */
   runCommand(invocation: string, rawArgs?: string): Promise<RunCommandResult>;
-  /** WhatsApp-specific escape hatch, for when the abstracted API isn't enough. */
+  /** WhatsApp-specific escape hatch, for when the abstracted API isn't enough. `null` when no WhatsApp driver is active (e.g. on a Telegram-only bot). */
   wa: {
     /** Driver-neutral contract (replaces the old `WASocket` field). */
     contract: WaContract;
@@ -1137,7 +1500,7 @@ export interface PluginContext extends BaseApi {
     msg: BotMessage;
     /** Download the current message's media; `asMp4` converts animated stickers to mp4. */
     downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
-  };
+  } | null;
   /** Reserved for a future Telegram driver — always `null` on WhatsApp. */
   tg: null;
   /** Reserved for a future Discord driver — always `null` on WhatsApp. */
@@ -1189,4 +1552,3 @@ export interface PluginModule {
 //   type PluginContext = import("@manybot/types").PluginContext;
 //   type SetupContext  = import("@manybot/types").SetupContext;
 // }
-

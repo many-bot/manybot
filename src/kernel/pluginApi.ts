@@ -147,25 +147,31 @@ export interface IStorage {
 // exported by `#config` as `CONFIG`; plugins were already reaching into it
 // directly. We mirror that one accessor so plugins stay source-compatible.
 export interface IConfig {
-  get(key: string, defaultValue?: unknown): unknown;
+  get<T = unknown>(key: string, defaultValue?: T): T;
 }
 
 // Sub-facet: i18n. `t` itself is the bare function; `createT` returns a
-// scoped translator object `{ t, lang }` (see `createPluginT` in
-// src/i18n/index.ts). `reload` forces a re-read of locale files (synchronous
+// scoped translator; `reload` forces a re-read of locale files (synchronous
 // cache invalidate); `getCurrentLang` returns the active language code.
+// Signatures mirror `I18nApi` in @manybot/types — kept loose so plugin code
+// doesn't have to care about the runtime overloads of `t`.
 export interface II18n {
-  t: (key: string, vars?: Record<string, unknown>) => string;
-  createT: (pluginMetaUrl: string) => { t: (key: string, context?: Record<string, unknown>) => string; lang: string | null };
+  t: {
+    (key: string): string;
+    (key: string, context: Record<string, unknown>): string | Record<string, unknown>;
+  };
+  createT: (pluginMetaUrl: string) => { t: II18n["t"]; lang: string | null };
   reload: () => void;
   getCurrentLang: () => string;
 }
 
 // Sub-facet: download queue. Plugin calls `enqueue(work, error?)` and the
 // worker is run serially in the background — used by anything that
-// shouldn't block the inbound-message path.
+// shouldn't block the inbound-message path. `errorFn` is genuinely
+// optional: if omitted, a failure is logged via `logger.warn` instead of
+// being silently swallowed (see src/download/queue.ts).
 export interface IDownload {
-  enqueue(workFn: () => Promise<void>, errorFn: (err: Error) => Promise<void>): void;
+  enqueue(workFn: () => Promise<void>, errorFn?: (error: Error) => Promise<void>): void;
 }
 
 // Sub-facet: scheduler. Cron task scoped to the calling plugin; returns
@@ -326,6 +332,10 @@ export interface IPoll {
 export interface ISettings extends ScopedAccessor {
   global: ScopedAccessor;
   forChat(targetChatId: string): ScopedAccessor;
+  link(communityId: string): void;
+  unlink(): void;
+  getCommunityId(): string | null;
+  getCommunityChats(): string[];
 }
 
 // Sub-facet: events. `on()` registers a listener and returns an unsubscribe

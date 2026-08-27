@@ -10,7 +10,7 @@
  */
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
-import type { PluginContext, SetupContext } from "#kernel/pluginApi.js";
+import type { PluginContext, SetupContext, IContact, IContacts, IConfig } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
@@ -402,15 +402,17 @@ export function buildStorageApi(pluginName: string) {
 
 // ── Config API ────────────────────────────────────────────────────────────────
 
-function buildConfigApi(): { get(key: string, defaultValue?: unknown): unknown } {
+function buildConfigApi(): IConfig {
   return {
     /**
      * Get a config value with optional default.
      * @param {string} key
      * @param {any}    [defaultValue]
      */
-    get(key, defaultValue = null) {
-      return CONFIG[key] ?? defaultValue;
+    get(key: string, defaultValue: unknown = null) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- `get<T>` is a
+      // type-level convenience for callers; CONFIG itself is untyped.
+      return (CONFIG[key] ?? defaultValue) as any;
     },
   };
 }
@@ -557,7 +559,7 @@ function mentionDisplayName(jid: string): string {
  * @param {string|null}         [botJid]
  * @param {WaContract}          [contract]
  */
-async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract: WaContract | undefined, store: BotStore) {
+async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract: WaContract | undefined, store: BotStore): Promise<IContact | null> {
   // Compute the canonical ID form (LID for users, group JID for groups,
   // null when we can't pin a LID) and the resolved PN form (if any) in
   // one pass — both are derived from the same LID↔PN cache + protocol-level
@@ -706,7 +708,7 @@ function buildChatsApi(store: BotStore) {
 
 // ── Contact API ───────────────────────────────────────────────────────────────
 
-export function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null) {
+export function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null): IContacts {
   return {
     /**
      * Get a normalized contact object by JID.
@@ -911,11 +913,11 @@ export interface WAMessageContext {
   hasBotMention: boolean;
   reply: WAMessageSender;
   react(emoji: string): Promise<unknown>;
-  delete(forEveryone?: boolean): Promise<unknown>;
+  delete(forEveryone?: boolean | undefined): Promise<unknown>;
   edit(text: string): Promise<unknown>;
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
-  getContact(): ReturnType<typeof normalizeContact>;
+  getContact(): Promise<IContact | null>;
 }
 
 /**
@@ -1091,7 +1093,7 @@ export function buildMessageContext(
       }, emoji);
     },
 
-    async delete(forEveryone = true) {
+    async delete(forEveryone: boolean | undefined = true) {
       if (forEveryone) {
         await contract.deleteMessage(rawJid, {
           id:          msg.id,
@@ -1218,7 +1220,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   }
 
   /** Delete the sent message. */
-  async delete(forEveryone = true) {
+  async delete(forEveryone: boolean | undefined = true): Promise<unknown> {
     const msg = await this.rawPromise;
     if (!msg) return;
     if (forEveryone) {
@@ -1232,7 +1234,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   }
 
   /** React to the sent message. */
-  async react(emoji: string) {
+  async react(emoji: string): Promise<unknown> {
     const msg = await this.rawPromise;
     if (!msg) return;
     await this._contract.react(msg.chatId, {
@@ -1244,7 +1246,7 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   }
 
   /** Edit the sent message's text. Only works on the bot's own messages. */
-  async edit(text: string) {
+  async edit(text: string): Promise<unknown> {
     const msg = await this.rawPromise;
     if (!msg) return;
     if (!msg.fromMe) {
