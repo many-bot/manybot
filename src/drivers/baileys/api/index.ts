@@ -670,12 +670,15 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
     isWAAccount,
     isUser:             !isGroup,
     isGroup,
-    // Mention text: prefer the pretty form when we have one (so the
-    // chat shows "+55 16 99999 9999" or "+63 938 346-4136" instead of
-    // just digits), fall back to the raw digits, and finally to a
-    // LID-derived display name when nothing phone-shaped is available.
+    // Mention text: for `@lid` contacts WhatsApp always renders the raw
+    // LID digits (privacy — it never reveals the phone number here, even
+    // when we've resolved one internally), matching mobile's "no saved
+    // contact" fallback. Only PN-native contacts get the pretty/raw phone
+    // form.
     mention: {
-      text: phone.numberPretty
+      text: resolvedId?.endsWith("@lid")
+        ? `@${mentionDisplayName(resolvedId)}`
+        : phone.numberPretty
         ? `@${phone.numberPretty}`
         : phone.numberRaw
         ? `@${phone.numberRaw}`
@@ -934,6 +937,8 @@ export interface WAMessageContext {
   getReply(): Promise<WAMessageContext | null>;
   hasMention: boolean;
   hasBotMention: boolean;
+  /** `contextInfo.mentionedJid`, PN already resolved to `@lid` where known. Empty array if no mentions. */
+  mentionedJid: string[];
   reply: WAMessageSender;
   react(emoji: string): Promise<unknown>;
   delete(forEveryone?: boolean | undefined): Promise<unknown>;
@@ -1088,6 +1093,7 @@ export function buildMessageContext(
     },
     hasMedia: msgHasMedia(msg),
     isGif:    msgIsGif(msg, store),
+    mentionedJid: msg.mentionedJid ?? [],
 
     async downloadMedia(opts: { asMp4?: boolean } = {}): Promise<{ mimetype: string; data: string } | null> {
       try {
