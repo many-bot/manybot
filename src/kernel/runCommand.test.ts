@@ -7,6 +7,7 @@ import type { PluginEntry } from "#kernel/pluginLoader.js";
 import type { CommandSpec, CommandSubcommandSpec } from "#kernel/commandsConfig.js";
 import type { PluginContext } from "#kernel/pluginApi.js";
 import { STOP_CHAIN } from "#kernel/commandsConfig.js";
+import { buildSettingsApi } from "#kernel/settingsDb.js";
 
 function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
   return {
@@ -267,6 +268,106 @@ describe("kernel/runCommand", () => {
   test("renderUsage: empty string for a none target", () => {
     const usage = renderUsage({ kind: "none" });
     assert.equal(usage, "");
+  });
+
+  test("renderUsage: accepts a prefix override", () => {
+    const spec = emptySpec({
+      arguments: [{ name: "item", type: "quoted_text", required: true }],
+    });
+    __setRegistryForTests(buildRegistry([spec]));
+    const { target } = resolveDispatch("todo", "");
+    const usage = renderUsage(target, "#");
+    assert.match(usage, /^#todo /);
+  });
+
+  describe("per-chat overrides (prefix / language via !config)", () => {
+    const overrideChatId = "5511988887777@c.us"; // already-normalized form
+
+    beforeEach(() => {
+      buildSettingsApi("core", overrideChatId).deleteAll();
+    });
+
+    afterEach(() => {
+      buildSettingsApi("core", overrideChatId).deleteAll();
+    });
+
+    test("missing-argument usage message uses the chat's saved prefix override", async () => {
+      buildSettingsApi("core", overrideChatId).set("chat_prefix", "#");
+      const spec = emptySpec({ arguments: [{ name: "item", type: "quoted_text", required: true }] });
+      __setRegistryForTests(buildRegistry([spec]));
+      const resolution = resolveDispatch("todo", "");
+      const replies: string[] = [];
+      const result = await runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: (t) => replies.push(t) },
+        chatId: overrideChatId,
+      });
+      assert.equal(result.status, "argument_missing");
+      assert.match(replies[0], /#todo/, "usage line should use the chat's saved prefix, not the global one");
+    });
+
+    test("missing-argument usage message falls back to the global prefix when no override is set", async () => {
+      const spec = emptySpec({ arguments: [{ name: "item", type: "quoted_text", required: true }] });
+      __setRegistryForTests(buildRegistry([spec]));
+      const resolution = resolveDispatch("todo", "");
+      const replies: string[] = [];
+      await runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: (t) => replies.push(t) },
+        chatId: overrideChatId,
+      });
+      assert.match(replies[0], /!todo/);
+    });
+
+    test("unknown-subcommand message uses the chat's saved language override", async () => {
+      buildSettingsApi("core", overrideChatId).set("chat_locale", "pt");
+      const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
+      __setRegistryForTests(buildRegistry([spec]));
+      const resolution = resolveDispatch("todo", "wat");
+      const replies: string[] = [];
+      await runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: (t) => replies.push(t) },
+        chatId: overrideChatId,
+      });
+      assert.match(replies[0], /Subcomando "wat" desconhecido/);
+    });
+
+    test("unknown-subcommand message falls back to the global language when no override is set", async () => {
+      const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
+      __setRegistryForTests(buildRegistry([spec]));
+      const resolution = resolveDispatch("todo", "wat");
+      const replies: string[] = [];
+      await runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: (t) => replies.push(t) },
+        chatId: overrideChatId,
+      });
+      assert.match(replies[0], /Unknown subcommand "wat"/);
+    });
+
+    test("omitting chatId behaves exactly like an unset override (backward compatible)", async () => {
+      const spec = emptySpec({ arguments: [{ name: "item", type: "quoted_text", required: true }] });
+      __setRegistryForTests(buildRegistry([spec]));
+      const resolution = resolveDispatch("todo", "");
+      const replies: string[] = [];
+      const result = await runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: (t) => replies.push(t) },
+      });
+      assert.equal(result.status, "argument_missing");
+      assert.match(replies[0], /!todo/);
+    });
   });
 
   describe("functions: chain + STOP_CHAIN", () => {

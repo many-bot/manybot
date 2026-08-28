@@ -58,6 +58,8 @@ function createTestRegistry() {
     cmd: "help",
     aliases: ["help", "menu"],
     notFoundFallback: false,
+    suggestSimilar: false,
+    suggestMaxDistance: 2,
     welcomeMessage: { pt: "Bem-vindo ao bot! Use {prefix}help para o menu.", en: "Welcome! Use {prefix}help." },
     welcomeWindowDays: 3,
     pageSize: 2,
@@ -139,6 +141,8 @@ describe("kernel/commandMenu", () => {
         cmd: "help",
         aliases: ["help"],
         notFoundFallback: false,
+        suggestSimilar: false,
+        suggestMaxDistance: 2,
         welcomeMessage: null,
         welcomeWindowDays: 3,
         pageSize: 2,
@@ -227,6 +231,8 @@ describe("kernel/commandMenu", () => {
         cmd: "help",
         aliases: ["help"],
         notFoundFallback: false,
+        suggestSimilar: false,
+        suggestMaxDistance: 2,
         welcomeMessage: null,
         welcomeWindowDays: 3,
         pageSize: 1,
@@ -337,6 +343,22 @@ describe("kernel/commandMenu", () => {
       const msg = checkAndTriggerWelcomeMessage(userId, registry);
       assert.equal(msg, null);
     });
+
+    test("uses the prefix override in the {prefix} placeholder instead of the global default", () => {
+      const registry = createTestRegistry();
+      const userId = "test_user_welcome_custom_prefix";
+      buildSettingsApi("kernel", userId).delete("last_welcome_seen");
+
+      const msg = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "oi", timestamp: Date.now() },
+        "pt",
+        "#"
+      );
+      assert.ok(msg);
+      assert.match(msg, /Use #help para o menu\./);
+    });
   });
 
   describe("hiddenOutsideScope (group/dm suppression)", () => {
@@ -385,6 +407,8 @@ describe("kernel/commandMenu", () => {
         cmd: "help",
         aliases: ["help"],
         notFoundFallback: false,
+        suggestSimilar: false,
+        suggestMaxDistance: 2,
         welcomeMessage: null,
         welcomeWindowDays: 3,
         pageSize: 10,

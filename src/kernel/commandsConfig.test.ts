@@ -40,6 +40,7 @@ describe("kernel/commandsConfig", () => {
     assert.ok(config);
     assert.equal(config.defaults.notifyChanges, true);
     assert.equal(config.defaults.notifyPeriodDays, 7);
+    assert.equal(config.menu.enabled, false);
     assert.deepEqual(config.menu.aliases, ["help", "man", "menu", "bot", "?"]);
     assert.deepEqual(config.specs, []);
   });
@@ -142,12 +143,15 @@ missingCmd:
       loading: null,
     });
     assert.deepEqual(config.menu, {
+      enabled: true,
       title: { en: "Commands", pt: "Comandos" },
       intro: "Intro",
       footer: "Footer",
       cmd: "menu",
       aliases: ["help", "?"],
       notFoundFallback: true,
+      suggestSimilar: false,
+      suggestMaxDistance: 2,
       welcomeMessage: null,
       welcomeWindowDays: 3,
       pageSize: 15,
@@ -302,7 +306,7 @@ loading_presets:
   spinner_classico:
     type: spinner
     frames: ["⠋", "⠙"]
-    interval_ms: 700
+    interval_ms: 1000
     on_success: "✅ Pronto!"
     on_error: "Erro: {erro}"
 loading: padrao
@@ -319,7 +323,7 @@ loading: padrao
       assert.deepEqual(config.loadingPresets.spinner_classico, {
         type: "spinner",
         frames: ["⠋", "⠙"],
-        intervalMs: 700,
+        intervalMs: 1000,
         onSuccess: "✅ Pronto!",
         onError: "Erro: {erro}",
       });
@@ -462,6 +466,37 @@ hello:
       assert.ok(config);
       assert.equal(config.specs[0].plugin, "synt-xerror/welcome");
       assert.deepEqual(config.specs[0].functions, ["ping"]);
+    });
+
+    test("splits core.fn items in functions lists", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  functions: [core.greet, core.reply]
+`, "utf8");
+
+      const config = await loadCommandsConfig(new Set(["core"]));
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "core");
+      assert.deepEqual(config.specs[0].functions, ["greet", "reply"]);
+    });
+
+    test("splits canonical owner/plugin.fn items in subcommands", async () => {
+      await fs.writeFile(commandsFile, `
+figurinha:
+  cmd: f
+  subcommands:
+    - cmd: criar
+      functions: [synt-xerror/figurinha.validarMidia, synt-xerror/figurinha.criarFigurinha]
+`, "utf8");
+
+      const config = await loadCommandsConfig(new Set(["synt-xerror/figurinha"]));
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "synt-xerror/figurinha");
+      assert.deepEqual(config.specs[0].subcommands[0].functions, [
+        "validarMidia",
+        "criarFigurinha",
+      ]);
     });
 
     test("keeps an unknown bare name verbatim (caller surfaces the miss)", async () => {

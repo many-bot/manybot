@@ -52,7 +52,8 @@ export function checkAndTriggerWelcomeMessage(
   userId: string,
   registry: CommandRegistry,
   msg?: { body?: string; timestamp?: number },
-  lang?: string
+  lang?: string,
+  prefix: string = CMD_PREFIX
 ): string | null {
   if (!registry.menu.welcomeMessage) return null;
 
@@ -73,7 +74,7 @@ export function checkAndTriggerWelcomeMessage(
     settings.set("last_welcome_seen", now);
     const rawMsg = resolveLocalizedString(registry.menu.welcomeMessage, lang);
     if (!rawMsg) return null;
-    return rawMsg.replace(/\{prefix\}/g, CMD_PREFIX);
+    return rawMsg.replace(/\{prefix\}/g, prefix);
   }
 
   return null;
@@ -314,8 +315,48 @@ export function renderManual(entry: CommandEntry, registry: CommandRegistry, lan
   return parts.join("\n").trim();
 }
 
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/** Closest known cmd/alias to `invocation` within `maxDistance`, or null. */
+function findClosestInvocation(invocation: string, registry: CommandRegistry, maxDistance: number): string | null {
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const known of registry.byInvocation.keys()) {
+    const dist = levenshtein(invocation, known);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = known;
+    }
+  }
+  return best !== null && bestDist > 0 && bestDist <= maxDistance ? best : null;
+}
+
 export function renderNotFound(invocation: string, registry: CommandRegistry, lang?: string): string {
   const menuCmd = registry.menu.cmd;
+  if (registry.menu.suggestSimilar) {
+    const suggestion = findClosestInvocation(invocation, registry, registry.menu.suggestMaxDistance);
+    if (suggestion) {
+      return tFor(lang, "system.commandNotFoundSuggestion", {
+        cmd: invocation,
+        suggestion,
+        prefix: CMD_PREFIX,
+        menuCmd
+      }) as string;
+    }
+  }
   return tFor(lang, "system.commandNotFound", { cmd: invocation, prefix: CMD_PREFIX, menuCmd }) as string;
 }
 

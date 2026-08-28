@@ -22,6 +22,7 @@ import { t, createPluginT,
          reloadTranslations,
          getCurrentLang }            from "#i18n";
 import { CONFIG, CONFIG_DIR }        from "#config";
+import { getChatPrefix }             from "#kernel/chatOverrides.js";
 import { enqueue }                   from "#download";
 import { waitForEditSlot }           from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
@@ -985,7 +986,7 @@ export function buildMessageContext(
   guardOptions: { cooldown?: boolean; jitter?: boolean } = {}
 ): WAMessageContext {
   const body    = getMsgBody(msg);
-  const prefix  = CONFIG.CMD_PREFIX as string;
+  const prefix  = getChatPrefix(msg.chatId);
   const rawArgs = body.trim().split(/\s+/);
   const first   = rawArgs[0]?.toLowerCase() ?? "";
   const hasPrefix = first.startsWith(prefix);
@@ -2453,7 +2454,7 @@ export function buildApi({
   pluginName:     string;
   guardOptions?:  Record<string, unknown>;
 }): PluginContext {
-  const prefix  = CONFIG.CMD_PREFIX as string;
+  const prefix  = getChatPrefix(msg.chatId);
   const body    = getMsgBody(msg);
   const rawArgs = body.trim().split(/\s+/);
   const first   = rawArgs[0]?.toLowerCase() ?? "";

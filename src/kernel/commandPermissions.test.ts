@@ -199,8 +199,8 @@ describe("commandPermissions", () => {
   });
 
   test("admin and botAdmin checks", async () => {
-    const adminEntry = createMockEntry({ admin: true }, { senderNotAdmin: "Need admin" });
-    const botAdminEntry = createMockEntry({ botAdmin: true }, { botNotAdmin: "Need bot admin" });
+    const adminEntry = createMockEntry({ admin: true }, { senderNotAdmin: "Need admin", wrongScope: "Group required" });
+    const botAdminEntry = createMockEntry({ botAdmin: true }, { botNotAdmin: "Need bot admin", wrongScope: "Group required" });
 
     const nonAdminGroupCtx = createMockContext({
       isGroup: true,
@@ -223,6 +223,18 @@ describe("commandPermissions", () => {
     if (!resBotAdmin.allowed) assert.equal(resBotAdmin.message, "Need bot admin");
 
     assert.equal((await checkPermission(adminEntry, adminGroupCtx)).allowed, true);
+
+    // Outside a group there's no admin concept at all — this must be
+    // reported as wrongScope, not as "you/the bot aren't admin", since
+    // isSenderAdmin()/isBotAdmin() are never even called here.
+    const dmCtx = createMockContext({ isGroup: false });
+    const resAdminDm = await checkPermission(adminEntry, dmCtx);
+    assert.equal(resAdminDm.allowed, false);
+    if (!resAdminDm.allowed) assert.equal(resAdminDm.message, "Group required");
+
+    const resBotAdminDm = await checkPermission(botAdminEntry, dmCtx);
+    assert.equal(resBotAdminDm.allowed, false);
+    if (!resBotAdminDm.allowed) assert.equal(resBotAdminDm.message, "Group required");
     assert.equal((await checkPermission(botAdminEntry, adminGroupCtx)).allowed, true);
   });
 

@@ -139,7 +139,8 @@ export function syncCommandHistory(
         t("system.commandDeprecationRenamed", {
           id,
           old: prevCmd,
-          new: entry.cmd
+          new: entry.cmd,
+          days: String(defaults.notifyPeriodDays)
         })
       );
     }
@@ -171,7 +172,8 @@ export function syncCommandHistory(
       logger.warn(
         t("system.commandDeprecationRemoved", {
           id,
-          old: existing.cmd
+          old: existing.cmd,
+          days: String(defaults.notifyPeriodDays)
         })
       );
     }
@@ -224,3 +226,4 @@ export function formatDeprecationMessage(row: DeprecationRow, defaults: CommandD
 
   return interpolate(t(fallbackKey) as string, vars);
 }
+

@@ -24,7 +24,7 @@
  */
 
 import { logger } from "#logger";
-import { t } from "#i18n";
+import { tFor } from "#i18n";
 import { CMD_PREFIX } from "#config";
 import { fireAlert } from "./alerts.js";
 import { runPlugin } from "./pluginGuard.js";
@@ -33,6 +33,8 @@ import { getCommandRegistry, type CommandEntry, type CommandSubcommand } from ".
 import { pluginRegistry, resolvePluginCommandHandler, type PluginEntry } from "./pluginLoader.js";
 import { STOP_CHAIN, type CommandArgument } from "./commandsConfig.js";
 import type { PluginContext } from "./pluginApi.js";
+import { resolveCoreCommandHandler } from "./coreCommands.js";
+import { getChatLocale, getChatPrefix } from "./chatOverrides.js";
 
 export type DispatchTarget =
   | { kind: "parent"; entry: CommandEntry; args: string[] }
@@ -121,6 +123,19 @@ export interface RunCommandOptions {
    */
   pluginName: string | null;
   /**
+   * The raw chat id the message arrived on (`msg.chatId`, not yet
+   * normalized). Used to resolve this chat's `!config` overrides
+   * (prefix / language) — see `chatOverrides.ts`. Passed separately
+   * from `ctx` because `ctx.chat.id` goes through a different jid
+   * resolution path than the one `!config` writes are scoped under,
+   * so we thread the same raw id the message handler already has
+   * rather than risk the two disagreeing. Optional: omitting it (e.g.
+   * in tests that don't care about per-chat overrides) just means
+   * every chat looks like it has none set, so the global defaults
+   * (`CMD_PREFIX`, `CONFIG.LANGUAGE`) are used.
+   */
+  chatId?: string;
+  /**
    * The fully-built PluginContext for the current message. The
    * dispatcher does not construct ctx itself — it consumes one built
    * by the message handler so we don't duplicate ctx construction.
@@ -156,8 +171,14 @@ export interface RunCommandResult {
  * through to the legacy run loop.
  */
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
-  const { resolution, pluginName, ctx, reply } = opts;
+  const { resolution, pluginName, ctx, reply, chatId } = opts;
   const { target } = resolution;
+
+  // Resolved once per dispatch: this chat's `!config` overrides (or the
+  // global defaults when none were set) for every kernel-authored reply
+  // below (unknown-sub hint, missing-argument usage, ...).
+  const lang = chatId ? getChatLocale(chatId) : undefined;
+  const prefix = chatId ? getChatPrefix(chatId) : CMD_PREFIX;
 
   if (target.kind === "none") {
     return { status: "no_dispatch", sentReply: null, suggestedReply: null };
@@ -169,7 +190,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
   // handler — same convention as a CLI tool with an unknown subcommand.
   if (resolution.unmatchedSubToken && target.kind === "parent") {
     const validSubs = Object.keys(target.entry.subcommands);
-    const help = t("commandRun.unknownSubcommand", {
+    const help = tFor(lang, "commandRun.unknownSubcommand", {
       sub: resolution.unmatchedSubToken,
       cmd: target.entry.cmd,
       valid: validSubs.join(", ") || "(none)",
@@ -201,8 +222,8 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
   // + auto-generated usage before invoking.
   const requiredCount = flat.arguments.filter(a => a.required).length;
   if (requiredCount > flat.args.length) {
-    const usage = renderUsage(target);
-    const msg = `${t("commandRun.missingRequiredArg")}\n\n${usage}`;
+    const usage = renderUsage(target, prefix);
+    const msg = `${tFor(lang, "commandRun.missingRequiredArg")}\n\n${usage}`;
     await reply.text(msg);
     return { status: "argument_missing", sentReply: msg, suggestedReply: msg };
   }
@@ -229,15 +250,28 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       return { status: "no_dispatch", sentReply: null, suggestedReply: null };
     }
 
+    const subId = target.kind === "sub" ? target.sub.cmd : undefined;
+    const input = { args: flat.args, subcommand: subId };
+
+    if (pluginName === "core") {
+      for (const fnName of fnNames) {
+        const handler = resolveCoreCommandHandler(fnName);
+        if (!handler) {
+          logger.warn(`[runCommand] Core namespace does not expose handler "${fnName}"`);
+          continue;
+        }
+        const result = await handler(ctx, input);
+        if (result === STOP_CHAIN) break;
+      }
+      return { status: "executed", sentReply: null, suggestedReply: null };
+    }
+
     const plugin = lookupPlugin(pluginName);
     if (!plugin) {
       const msg = `Plugin "${pluginName}" is not active`;
       logger.warn(`[runCommand] ${msg}`);
       return { status: "no_dispatch", sentReply: null, suggestedReply: msg };
     }
-
-    const subId = target.kind === "sub" ? target.sub.cmd : undefined;
-    const input = { args: flat.args, subcommand: subId };
 
     for (const fnName of fnNames) {
       const handler = resolvePluginCommandHandler(plugin.commands?.[fnName]);
@@ -322,12 +356,12 @@ function lookupPlugin(pluginName: string): PluginEntry | null {
  *   !<cmd>[ <sub>] [--<arg1> ...]
  * Built from the declared `arguments:` block.
  */
-export function renderUsage(target: DispatchTarget): string {
+export function renderUsage(target: DispatchTarget, prefix: string = CMD_PREFIX): string {
   if (target.kind === "none") return "";
   const flat = flatten(target);
   const head = target.kind === "sub"
-    ? `${CMD_PREFIX}${target.parent.cmd} ${target.sub.cmd}`
-    : `${CMD_PREFIX}${flat.entry.cmd}`;
+    ? `${prefix}${target.parent.cmd} ${target.sub.cmd}`
+    : `${prefix}${flat.entry.cmd}`;
   const headClean = head.replace(/\s+$/, "");
 
   if (flat.arguments.length === 0) return headClean;

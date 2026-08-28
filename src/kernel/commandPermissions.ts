@@ -168,8 +168,12 @@ export async function checkPermission(
 
   // 7. botAdmin check
   if (perms.botAdmin) {
+    // Admin status only exists inside a group — outside one, this is a
+    // scope mismatch, not "the bot isn't admin", so use wrongScope
+    // rather than botNotAdmin (which would misleadingly imply the check
+    // was actually evaluated).
     if (!ctx.isGroup) {
-      return { allowed: false, message: msgs.botNotAdmin };
+      return { allowed: false, message: msgs.wrongScope };
     }
     const isBotAdmin = await ctx.isBotAdmin();
     if (!isBotAdmin) {
@@ -179,8 +183,10 @@ export async function checkPermission(
 
   // 8. admin check
   if (perms.admin) {
+    // Same reasoning as botAdmin above: no group, no admin concept, so
+    // this is wrongScope, not senderNotAdmin.
     if (!ctx.isGroup) {
-      return { allowed: false, message: msgs.senderNotAdmin };
+      return { allowed: false, message: msgs.wrongScope };
     }
     const isSenderAdmin = await ctx.isSenderAdmin();
     if (!isSenderAdmin) {
@@ -208,4 +214,3 @@ export async function checkPermission(
 
   return { allowed: true };
 }
-

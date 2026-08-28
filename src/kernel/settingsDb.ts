@@ -138,6 +138,18 @@ function dbDeleteAll(pluginName: string, chatId: string): void {
   stmts.deleteAll.run(pluginName, chatId);
 }
 
+/**
+ * Direct read of a single (plugin, chat, key) setting, bypassing the
+ * `ctx.settings` scoped-accessor pattern. For call sites that need a
+ * value before a `PluginContext` exists yet — e.g. resolving the
+ * per-chat command prefix while still parsing the incoming message,
+ * or resolving the per-chat language from outside the "core" plugin's
+ * own context. See `kernel/chatOverrides.ts`.
+ */
+export function getPluginSetting(pluginName: string, chatId: string, key: string): unknown {
+  return dbGet(pluginName, chatId, key);
+}
+
 // ── Scoped accessor factory ───────────────────────────────────────────────────
 
 /**

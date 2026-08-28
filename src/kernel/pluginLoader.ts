@@ -6,7 +6,7 @@
  *   2. Loading each plugin from ~/.manybot/plugins folder
  *   3. Registering in pluginRegistry with status and public exports
  *   4. Exposing pluginRegistry to kernel and pluginApi
- *   5. Watching plugin files and config file for hot reloading
+ *   5. Watching plugin files, config files and commands.yaml for hot reloading
  */
 
 import fs                from "fs";
@@ -454,21 +454,69 @@ export function unwatchPlugin(name: string) {
 }
 
 /**
- * Watch the config directory for manyplug.toml or manybot.toml changes.
+ * Reload the command registry from disk (commands.yaml + imports).
+ *
+ * Mirrors `reloadPlugin()`: callable on its own and safe to invoke from
+ * a watcher. Unlike `reloadPlugin()` there's no setup retry / disable
+ * state to track — `initCommandRegistry()` either builds a fresh
+ * `CommandRegistry` from the current file content or leaves the
+ * previous one in place via `commandsConfig.ts`'s own error handling
+ * (a malformed YAML logs an error and returns null; `initCommandRegistry`
+ * then falls back to the empty defaults).
+ */
+export async function reloadCommandRegistry(): Promise<void> {
+  try {
+    await initCommandRegistry();
+    logger.info(`[watcher] Command registry reloaded from commands.yaml.`);
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    logger.error(`[watcher] Failed to reload command registry: ${err.message}`);
+  }
+}
+
+/**
+ * Watch the config directory for changes to manyplug.toml / manybot.toml
+ * (plugin list sync) or to commands.yaml and its .yaml/.yml imports
+ * (command registry reload). Both paths share the same 500ms debounce
+ * so a save that emits several inotify events only fires once.
  */
 function startConfigWatcher() {
   if (configWatcher) return;
 
+  const isTomlChange = (filename: string | null): boolean =>
+    filename === "manyplug.toml" || filename === "manybot.toml";
+
+  const isYamlChange = (filename: string | null): boolean => {
+    if (!filename) return false;
+    const lower = filename.toLowerCase();
+    return lower.endsWith(".yaml") || lower.endsWith(".yml");
+  };
+
   try {
     let configTimeout: NodeJS.Timeout | null = null;
+    let yamlTimeout: NodeJS.Timeout | null = null;
+
+    const scheduleTomlReload = (filename: string | null) => {
+      if (!isTomlChange(filename)) return;
+      if (configTimeout) clearTimeout(configTimeout);
+      configTimeout = setTimeout(async () => {
+        logger.info(`[watcher] Config file change detected: ${filename}. Syncing plugins...`);
+        await syncPlugins();
+      }, 500);
+    };
+
+    const scheduleYamlReload = (filename: string | null) => {
+      if (!isYamlChange(filename)) return;
+      if (yamlTimeout) clearTimeout(yamlTimeout);
+      yamlTimeout = setTimeout(async () => {
+        logger.info(`[watcher] commands.yaml change detected (${filename}). Reloading command registry...`);
+        await reloadCommandRegistry();
+      }, 500);
+    };
+
     configWatcher = fs.watch(PATHS.HOME, (eventType, filename) => {
-      if (filename === "manyplug.toml" || filename === "manybot.toml") {
-        if (configTimeout) clearTimeout(configTimeout);
-        configTimeout = setTimeout(async () => {
-          logger.info(`[watcher] Config file change detected: ${filename}. Syncing plugins...`);
-          await syncPlugins();
-        }, 500);
-      }
+      scheduleTomlReload(filename);
+      scheduleYamlReload(filename);
     });
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));

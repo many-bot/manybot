@@ -165,6 +165,8 @@ export const STOP_CHAIN: unique symbol = Symbol.for("manybot.stopChain");
 export type StopChain = typeof STOP_CHAIN;
 
 export interface MenuConfig {
+  /** Native menu (overview/category/manual/notFound) is fully opt-in — off unless `menu.enabled: true` is set (default: false). */
+  enabled?: boolean;
   title: LocalizedString | null;
   intro: LocalizedString | null;
   footer: LocalizedString | null;
@@ -177,6 +179,10 @@ export interface MenuConfig {
    * produce an extra reply; keep it opt-in.
    */
   notFoundFallback: boolean;
+  /** When notFoundFallback is on, suggest the closest known cmd/alias (default: false). */
+  suggestSimilar: boolean;
+  /** Max Levenshtein distance for a suggestion to be shown (default: 2). */
+  suggestMaxDistance: number;
   /** Welcome message shown to new users within welcomeWindowDays. Supports {prefix} interpolation. */
   welcomeMessage: LocalizedString | null;
   /** Time window in days to show the welcome message (default: 3). */
@@ -621,7 +627,7 @@ function parseLoadingSpec(
     if (obj.intervalMs !== undefined || obj.interval_ms !== undefined) {
       const rawVal = obj.intervalMs ?? obj.interval_ms;
       const n = typeof rawVal === "number" && Number.isFinite(rawVal) && rawVal >= 100
-        ? Math.floor(rawVal)
+        ? Math.max(1000, Math.floor(rawVal))
         : null;
       if (n !== null) spec.intervalMs = n;
     }
@@ -722,7 +728,8 @@ function parseArguments(raw: unknown, parentId: string): CommandArgument[] {
 async function parseSubcommand(
   parentId: string,
   raw: unknown,
-  presets: Record<string, LoadingSpec>
+  presets: Record<string, LoadingSpec>,
+  onPlugin?: (plugin: string) => void
 ): Promise<CommandSubcommandSpec | null> {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const obj = raw as Record<string, unknown>;
@@ -747,7 +754,7 @@ async function parseSubcommand(
     // `function: "x"` becomes a one-element list. `null` means "inherit
     // the parent's chain at build time" — the kernel resolves that in
     // commandRegistry, not here.
-    functions:  parseFunctionList(obj.function, obj.functions),
+    functions:  parseFunctionList(obj.function, obj.functions, onPlugin),
     loading:    parseLoadingSpec(obj.loading, id, presets),
     desc:       parseLocalizedString(obj.desc),
     manual,
@@ -760,7 +767,8 @@ async function parseSubcommand(
 async function parseSubcommands(
   raw: unknown,
   parentId: string,
-  presets: Record<string, LoadingSpec>
+  presets: Record<string, LoadingSpec>,
+  onPlugin?: (plugin: string) => void
 ): Promise<CommandSubcommandSpec[]> {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
@@ -771,7 +779,7 @@ async function parseSubcommands(
   }
   const out: CommandSubcommandSpec[] = [];
   for (const item of raw) {
-    const sub = await parseSubcommand(parentId, item, presets);
+    const sub = await parseSubcommand(parentId, item, presets, onPlugin);
     if (sub) out.push(sub);
   }
   return out;
@@ -783,23 +791,46 @@ async function parseSubcommands(
  * Empty result means "inherit the parent's chain at build time" — the
  * spec carries `null` to flag that, and the registry resolves it.
  *
- * Items are not yet split on `.` — the kernel uses the first segment as
- * the plugin name (e.g. `core.ping` → plugin "core", function "ping"),
- * the same convention the existing `commands.[fn]` exports follow.
+ * Qualified items use the `plugin.function` form. `core` is the reserved
+ * kernel namespace; external plugins use their canonical `owner/plugin` key.
+ * The registry stores and dispatches only the function portion because a
+ * command has one owning plugin.
  */
-function parseFunctionList(single: unknown, list: unknown): string[] | null {
+function splitQualifiedFunction(value: string): { plugin: string | null; functionName: string } {
+  const dot = value.indexOf(".");
+  if (dot <= 0 || dot === value.length - 1) {
+    return { plugin: null, functionName: value };
+  }
+  return {
+    plugin: value.slice(0, dot),
+    functionName: value.slice(dot + 1),
+  };
+}
+
+function parseFunctionList(
+  single: unknown,
+  list: unknown,
+  onPlugin?: (plugin: string) => void
+): string[] | null {
   if (list !== undefined && list !== null) {
     if (!Array.isArray(list)) return [];
     const out: string[] = [];
     for (const item of list) {
       const s = asString(item);
-      if (s) out.push(s);
+      if (s) {
+        const qualified = splitQualifiedFunction(s);
+        if (qualified.plugin) onPlugin?.(qualified.plugin);
+        out.push(qualified.functionName);
+      }
     }
     return out;
   }
   if (single !== undefined && single !== null) {
     const s = asString(single);
-    return s ? [s] : [];
+    if (!s) return [];
+    const qualified = splitQualifiedFunction(s);
+    if (qualified.plugin) onPlugin?.(qualified.plugin);
+    return [qualified.functionName];
   }
   return null;
 }
@@ -815,24 +846,35 @@ const DEFAULT_MENU_CONFIG: MenuConfig = {
   cmd: "menu",
   aliases: ["help", "man", "menu", "bot", "?"],
   notFoundFallback: false,
+  suggestSimilar: false,
+  suggestMaxDistance: 2,
   welcomeMessage: null,
   welcomeWindowDays: 3,
   pageSize: 15,
 };
 
 function parseMenu(raw: unknown): MenuConfig {
+  if (raw === undefined) {
+    return { ...DEFAULT_MENU_CONFIG };
+  }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return { ...DEFAULT_MENU_CONFIG };
   }
   const obj = raw as Record<string, unknown>;
   const aliases = asAliasList(obj.aliases);
   return {
+    // Block present in commands.yaml → enabled by default; `enabled: false`
+    // inside it still opts back out (e.g. keeping notFoundFallback/welcome
+    // config without claiming the menu/help invocations).
+    enabled: asBool(obj.enabled) ?? true,
     title: parseLocalizedString(obj.title) ?? DEFAULT_MENU_CONFIG.title,
     intro: parseLocalizedString(obj.intro) ?? DEFAULT_MENU_CONFIG.intro,
     footer: parseLocalizedString(obj.footer) ?? DEFAULT_MENU_CONFIG.footer,
     cmd: asString(obj.cmd) ?? DEFAULT_MENU_CONFIG.cmd,
-    aliases: aliases.length > 0 ? aliases : [...DEFAULT_MENU_CONFIG.aliases],
+    aliases: obj.aliases !== undefined ? aliases : [...DEFAULT_MENU_CONFIG.aliases],
     notFoundFallback: asBool(obj.notFoundFallback) ?? DEFAULT_MENU_CONFIG.notFoundFallback,
+    suggestSimilar: asBool(obj.suggestSimilar) ?? DEFAULT_MENU_CONFIG.suggestSimilar,
+    suggestMaxDistance: asPositiveInt(obj.suggestMaxDistance, DEFAULT_MENU_CONFIG.suggestMaxDistance),
     welcomeMessage: parseLocalizedString(obj.welcomeMessage) ?? DEFAULT_MENU_CONFIG.welcomeMessage,
     welcomeWindowDays: asPositiveInt(obj.welcomeWindowDays, DEFAULT_MENU_CONFIG.welcomeWindowDays),
     pageSize: asPositiveInt(obj.pageSize, DEFAULT_MENU_CONFIG.pageSize),
@@ -999,10 +1041,19 @@ async function parseEntry(
 
   // `function:` → `functions: [fn]`, `functions: [...]` → as-is,
   // "core.ping" inline above → `[ping]`, no fields → null (inherit).
-  const inlineFunctions = parseFunctionList(raw.function, raw.functions);
+  let functionPlugin: string | null = null;
+  const inlineFunctions = parseFunctionList(raw.function, raw.functions, (name) => {
+    functionPlugin ??= name;
+  });
   const functions = inlineFn !== null
     ? [inlineFn, ...(inlineFunctions ?? [])]
     : inlineFunctions;
+  const subcommands = await parseSubcommands(raw.subcommands, id, presets, (name) => {
+    functionPlugin ??= name;
+  });
+  if (!plugin && functionPlugin) {
+    plugin = resolvePluginKey(functionPlugin, validPluginKeys ?? new Set());
+  }
 
   return {
     id,
@@ -1021,7 +1072,7 @@ async function parseEntry(
     permissions:      parsePermissions(raw.permissions),
     messages:         parseMessages(raw.messages),
     arguments:        parseArguments(raw.arguments ?? raw.args, id),
-    subcommands:      await parseSubcommands(raw.subcommands, id, presets),
+    subcommands,
   };
 }
 
