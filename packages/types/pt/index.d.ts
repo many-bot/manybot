@@ -721,8 +721,10 @@ export interface WAMessageContext {
   body: string;
   type: string;
   fromMe: boolean;
-  /** Normalized sender JID (group participant or DM remote JID). */
-  sender: string;
+  /** LID-canonical sender JID (`@lid`), or `null` when no LID is known yet for this contact. */
+  sender: string | null;
+  /** Phone-number form (`@c.us`) of the sender, or `null` when not available. For matching against phone-number-based config; prefer `sender` for identity. */
+  senderPn: string | null;
   senderName: string;
   /** Command name without the prefix; empty string if this isn't a command. */
   command: string;
@@ -765,6 +767,8 @@ export interface WAMessageContext {
   hasMention: boolean;
   /** True if the message @mentions the bot itself. */
   hasBotMention: boolean;
+  /** `contextInfo.mentionedJid`, PN already resolved to `@lid` where known. Empty array if no mentions. */
+  mentionedJid: string[];
   /** Reply to this message (quotes it). */
   reply: WAMessageSender;
   /**
