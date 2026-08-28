@@ -263,13 +263,79 @@ describe("kernel/commandMenu", () => {
       const settings = buildSettingsApi("kernel", userId);
       settings.delete("last_welcome_seen");
 
-      const msg = checkAndTriggerWelcomeMessage(userId, registry, "pt");
+      const msg = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "oi", timestamp: Date.now() },
+        "pt"
+      );
       assert.ok(msg);
       assert.match(msg, /Bem-vindo ao bot! Use !help para o menu\./);
 
       // Immediately checking again returns null
-      const secondCheck = checkAndTriggerWelcomeMessage(userId, registry, "pt");
+      const secondCheck = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "oi", timestamp: Date.now() },
+        "pt"
+      );
       assert.equal(secondCheck, null);
+    });
+
+    test("does not fire when the incoming message has no body (offline-flush receipt misclassification)", () => {
+      const registry = createTestRegistry();
+      const userId = "test_user_welcome_empty_body";
+      buildSettingsApi("kernel", userId).delete("last_welcome_seen");
+
+      const msg = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "", timestamp: Date.now() }
+      );
+      assert.equal(msg, null, "no welcome for a body-less message");
+
+      const msg2 = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "   ", timestamp: Date.now() }
+      );
+      assert.equal(msg2, null, "no welcome for a whitespace-only body either");
+    });
+
+    test("does not fire when the incoming message is older than the freshness window (offline-flush delayed replay)", () => {
+      const registry = createTestRegistry();
+      const userId = "test_user_welcome_stale_replay";
+      buildSettingsApi("kernel", userId).delete("last_welcome_seen");
+
+      const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+      const msg = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "oi", timestamp: twoHoursAgo }
+      );
+      assert.equal(msg, null, "no welcome for a 2-hour-old replay");
+    });
+
+    test("does fire for a fresh in-window message (control case for the new gates)", () => {
+      const registry = createTestRegistry();
+      const userId = "test_user_welcome_fresh";
+      buildSettingsApi("kernel", userId).delete("last_welcome_seen");
+
+      const msg = checkAndTriggerWelcomeMessage(
+        userId,
+        registry,
+        { body: "oi", timestamp: Date.now() }
+      );
+      assert.ok(msg, "welcome fires for a current, non-empty message");
+    });
+
+    test("does not fire when the msg envelope is missing (defensive — caller must always pass one)", () => {
+      const registry = createTestRegistry();
+      const userId = "test_user_welcome_no_envelope";
+      buildSettingsApi("kernel", userId).delete("last_welcome_seen");
+
+      const msg = checkAndTriggerWelcomeMessage(userId, registry);
+      assert.equal(msg, null);
     });
   });
 

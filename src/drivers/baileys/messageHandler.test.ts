@@ -446,6 +446,29 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
 
       assert.equal(sentTexts.length, 0, "no welcome sent when unconfigured");
     });
+
+    test("does not fire for an offline-flush misclassified receipt message (empty body)", async () => {
+      const { chatId, fromPn } = freshSender("0006");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      await handleMessage(makeBotMessage({ chatId, fromPn, fromMe: false, body: "" }), contract, store);
+
+      assert.equal(sentTexts.length, 0, "no welcome sent for an empty body");
+    });
+
+    test("does not fire for an offline-flush delayed message (stale timestamp)", async () => {
+      const { chatId, fromPn } = freshSender("0007");
+      __setRegistryForTests(buildWelcomeRegistry());
+
+      const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+      await handleMessage(
+        makeBotMessage({ chatId, fromPn, fromMe: false, body: "oi", timestamp: twoHoursAgo }),
+        contract,
+        store
+      );
+
+      assert.equal(sentTexts.length, 0, "no welcome sent for a stale message");
+    });
   });
 });
 

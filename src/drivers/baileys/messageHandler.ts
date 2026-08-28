@@ -304,7 +304,11 @@ async function runPluginsForMessage(
   //     goes back to the same chat (`msgCtx.reply` already targets
   //     the source chat).
   if (registry && !msg.fromMe && !chat.isGroup) {
-    const welcomeMsg = checkAndTriggerWelcomeMessage(msgCtx.sender ?? msg.chatId, registry);
+    const welcomeMsg = checkAndTriggerWelcomeMessage(
+      msgCtx.sender ?? msg.chatId,
+      registry,
+      { body: msgCtx.body, timestamp: msg.timestamp }
+    );
     if (welcomeMsg) {
       try {
         await msgCtx.reply.text(welcomeMsg);

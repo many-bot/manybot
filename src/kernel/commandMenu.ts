@@ -10,16 +10,59 @@ import { buildSettingsApi } from "./settingsDb.js";
 import type { CommandRegistry, CommandEntry } from "./commandRegistry.js";
 import type { LocalizedString } from "./commandsConfig.js";
 
+/** Maximum age (ms) of an incoming message for the welcome to fire.
+ *  Matches `MAX_MESSAGE_AGE_SECONDS` in `drivers/baileys/index.ts` so the
+ *  welcome can never fire on a message the driver would have dropped as
+ *  stale. See `checkAndTriggerWelcomeMessage` for the full rationale. */
+const MAX_WELCOME_AGE_MS = 60 * 1000;
+
 /**
  * Checks if the user should be shown the welcome message,
  * and marks them as seen if so.
+ *
+ * Two extra gates protect against the "ghost welcome" failure mode where
+ * a welcome fires out of the blue for a sender the bot never heard from:
+ *
+ *   - The incoming message must have non-empty text. Baileys 7.x has a
+ *     documented offline-flush bug where, after a reconnect, the
+ *     event-buffer can reclassify receipts as `messages.upsert` events
+ *     (the buffer interleaves message and receipt frames during the
+ *     replay window). Those events arrive with `fromMe=false`, in a
+ *     real DM, with `body` empty — every other condition for a welcome
+ *     fires, but they aren't real messages. Requiring a non-empty body
+ *     filters this entire class of synthetic upserts.
+ *
+ *   - The incoming message's `timestamp` must be within
+ *     `MAX_WELCOME_AGE_MS` of `now`. The Baileys 7.x line also has
+ *     widely-reported cases where the event-buffer delivers
+ *     `messages.upsert` events minutes, hours, or even days after they
+ *     originally occurred (they sit in the buffer during a long
+ *     disconnect and are drained in order on reconnect). A sender
+ *     whose first-ever contact with the bot was days ago is not a
+ *     "first-time" sender in any meaningful sense — the welcome is for
+ *     a real, live first contact, not a delayed replay. This mirrors
+ *     `isMessageStale()` in `drivers/baileys/index.ts` (60s), which
+ *     is the same threshold the driver itself uses to drop stale
+ *     events before they reach the handler. We keep the threshold the
+ *     same here so the two stay in sync: if the driver decided the
+ *     message is "real-time enough" to dispatch, the welcome fires;
+ *     if the driver would have dropped it, we never reach this path.
  */
 export function checkAndTriggerWelcomeMessage(
   userId: string,
   registry: CommandRegistry,
+  msg?: { body?: string; timestamp?: number },
   lang?: string
 ): string | null {
   if (!registry.menu.welcomeMessage) return null;
+
+  if (!msg || !msg.body || msg.body.trim() === "") return null;
+
+  const msgTsMs = msg.timestamp ?? 0;
+  if (msgTsMs > 0) {
+    const ageMs = Date.now() - msgTsMs;
+    if (ageMs > MAX_WELCOME_AGE_MS) return null;
+  }
 
   const settings = buildSettingsApi("kernel", userId);
   const lastSeen = settings.get("last_welcome_seen") as number | undefined;
