@@ -121,8 +121,25 @@ missingCmd:
         cooldownSeconds: 4,
         whitelist: { groups: ["group@g.us"], users: ["user@c.us"] },
         blacklist: undefined,
+        dono: undefined,
+        allowedChats: undefined,
+        groupOnly: undefined,
+        dmOnly: undefined,
+        whitelistGroups: undefined,
+        blacklistUsers: undefined,
+        hiddenOutsideScope: undefined,
       },
-      messages: { botNotAdmin: undefined, senderNotAdmin: undefined, ownerOnly: undefined, wrongScope: undefined, cooldown: "Wait" },
+      messages: {
+        botNotAdmin: undefined,
+        senderNotAdmin: undefined,
+        ownerOnly: undefined,
+        donoOnly: undefined,
+        wrongScope: undefined,
+        cooldown: "Wait",
+        blacklist: undefined,
+        allowedChats: undefined,
+      },
+      loading: null,
     });
     assert.deepEqual(config.menu, {
       title: { en: "Commands", pt: "Comandos" },
@@ -146,7 +163,8 @@ missingCmd:
       cmd: "hello",
       aliases: ["hi", "oi"],
       plugin: "sample",
-      function: "greet",
+      functions: ["greet"],
+      loading: null,
       text: "Reply from file",
       desc: { en: "Say hello", pt: "Diga oi" },
       category: "fun",
@@ -162,8 +180,24 @@ missingCmd:
         cooldownSeconds: 0,
         whitelist: undefined,
         blacklist: { groups: undefined, users: ["blocked@c.us"] },
+        dono: undefined,
+        allowedChats: undefined,
+        groupOnly: undefined,
+        dmOnly: undefined,
+        whitelistGroups: undefined,
+        blacklistUsers: undefined,
+        hiddenOutsideScope: undefined,
       },
-      messages: { botNotAdmin: undefined, senderNotAdmin: undefined, ownerOnly: "Owners only", wrongScope: undefined, cooldown: undefined },
+      messages: {
+        botNotAdmin: undefined,
+        senderNotAdmin: undefined,
+        ownerOnly: "Owners only",
+        donoOnly: undefined,
+        wrongScope: undefined,
+        cooldown: undefined,
+        blacklist: undefined,
+        allowedChats: undefined,
+      },
       arguments: [],
       subcommands: [],
     });
@@ -253,6 +287,225 @@ hello:
     assert.ok(config);
     assert.equal(config.specs.length, 1);
     assert.equal(config.specs[0].id, "hello");
+  });
+
+  // ── loading: snake_case flat-form props (reference yaml uses these) ──────
+  describe("loading: snake_case flat-form props", () => {
+    test("loading_presets accepts on_success/on_error (reaction) and interval_ms (spinner) — reference yaml's exact shape", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  padrao:
+    type: reaction
+    icon: "⏳"
+    on_success: "✅"
+    on_error: "❌"
+  spinner_classico:
+    type: spinner
+    frames: ["⠋", "⠙"]
+    interval_ms: 700
+    on_success: "✅ Pronto!"
+    on_error: "Erro: {erro}"
+loading: padrao
+`, "utf8");
+
+      const config = await loadCommandsConfig();
+      assert.ok(config);
+      assert.deepEqual(config.loadingPresets.padrao, {
+        type: "reaction",
+        icon: "⏳",
+        onSuccess: "✅",
+        onError: "❌",
+      });
+      assert.deepEqual(config.loadingPresets.spinner_classico, {
+        type: "spinner",
+        frames: ["⠋", "⠙"],
+        intervalMs: 700,
+        onSuccess: "✅ Pronto!",
+        onError: "Erro: {erro}",
+      });
+    });
+
+    test("camelCase and snake_case forms are equivalent, not additive (last one parsed wins, neither is required)", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  onlyCamel:
+    type: reaction
+    onSuccess: "camel"
+  onlySnake:
+    type: reaction
+    on_success: "snake"
+`, "utf8");
+
+      const config = await loadCommandsConfig();
+      assert.ok(config);
+      assert.equal(config.loadingPresets.onlyCamel.onSuccess, "camel");
+      assert.equal(config.loadingPresets.onlySnake.onSuccess, "snake");
+    });
+
+    test("an actually-unknown property for the declared type is still fatal (malformed config)", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  bad:
+    type: reaction
+    frames: ["not", "valid", "for", "reaction"]
+`, "utf8");
+
+      const config = await loadCommandsConfig();
+      assert.ok(config);
+      assert.equal(config.loadingPresets.bad, undefined, "malformed preset is dropped, not silently accepted");
+    });
+  });
+
+  // ── top-level `loading:` global default overlays onto defaults.loading ──
+  test("top-level loading: <preset-name> overlays onto defaults.loading, same as notify_*/permission_messages", async () => {
+    await fs.writeFile(commandsFile, `
+loading_presets:
+  padrao:
+    type: reaction
+    icon: "⏳"
+loading: padrao
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.deepEqual(config.defaults.loading, { type: "reaction", icon: "⏳" });
+  });
+
+  test("top-level loading: accepts an inline spec, not just a preset name", async () => {
+    await fs.writeFile(commandsFile, `
+loading:
+  type: typing
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.deepEqual(config.defaults.loading, { type: "typing" });
+  });
+
+  test("top-level loading: wins over defaults.loading when both are present (overlay semantics)", async () => {
+    await fs.writeFile(commandsFile, `
+defaults:
+  loading:
+    type: typing
+loading:
+  type: none
+`, "utf8");
+
+    const config = await loadCommandsConfig();
+    assert.ok(config);
+    assert.deepEqual(config.defaults.loading, { type: "none" });
+  });
+
+  // ── plugin: registry-key normalization ───────────────────────────────
+  // The caller passes the active pluginRegistry's keys via
+  // loadCommandsConfig({ validPluginKeys }). parseEntry uses them to
+  // resolve shorthand `plugin: <name>` entries to the canonical
+  // `owner/repo` key (and to leave fully-qualified entries alone).
+  describe("plugin: registry-key normalization", () => {
+    test("keeps an exact owner/repo key verbatim", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: synt-xerror/welcome
+  functions: [greet]
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["synt-xerror/welcome", "de/welcome-test"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs.length, 1);
+      assert.equal(config.specs[0].plugin, "synt-xerror/welcome");
+      assert.deepEqual(config.specs[0].functions, ["greet"]);
+    });
+
+    test("resolves a bare name to the unique matching owner/repo key", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: welcome
+  functions: [greet]
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["synt-xerror/welcome", "de/welcome-test"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "synt-xerror/welcome");
+    });
+
+    test("splits the inline owner/repo.fn form before normalization", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: synt-xerror/welcome.ping
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["synt-xerror/welcome", "de/welcome-test"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "synt-xerror/welcome");
+      assert.deepEqual(config.specs[0].functions, ["ping"]);
+    });
+
+    test("splits the inline bare-name.fn form before normalization", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: welcome.ping
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["synt-xerror/welcome"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "synt-xerror/welcome");
+      assert.deepEqual(config.specs[0].functions, ["ping"]);
+    });
+
+    test("keeps an unknown bare name verbatim (caller surfaces the miss)", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: unknown-plugin
+  functions: [greet]
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["synt-xerror/welcome", "de/welcome-test"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "unknown-plugin");
+    });
+
+    test("keeps a name verbatim when more than one owner matches (ambiguity surfaces at dispatch)", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: shared
+  functions: [greet]
+`, "utf8");
+
+      const config = await loadCommandsConfig(
+        new Set(["alice/shared", "bob/shared"])
+      );
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "shared");
+    });
+
+    test("without validPluginKeys the value is used verbatim (legacy path)", async () => {
+      await fs.writeFile(commandsFile, `
+hello:
+  cmd: hello
+  plugin: welcome
+  functions: [greet]
+`, "utf8");
+
+      const config = await loadCommandsConfig();
+      assert.ok(config);
+      assert.equal(config.specs[0].plugin, "welcome");
+    });
   });
 });
 

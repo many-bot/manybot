@@ -20,6 +20,8 @@ function createMockEntry(id: string, cmd: string): CommandEntry {
     source: "plugin",
     pluginName: "testPlugin",
     function: null,
+    functions: [],
+    loading: null,
     handler: null,
     text: null,
     permissions: {
@@ -30,11 +32,15 @@ function createMockEntry(id: string, cmd: string): CommandEntry {
       cooldownSeconds: 0,
       whitelist: null,
       blacklist: null,
+      dono: null,
+      allowedChats: null,
+      hiddenOutsideScope: null,
       messages: {} as any,
     },
     arguments: [],
     subcommands: {},
     categoryHiddenInScope: null,
+    hiddenOutsideScope: null,
   };
 }
 
@@ -100,7 +106,8 @@ describe("kernel/commandDeprecation", () => {
     const specs1: CommandSpec[] = [{
       id: "plugin::optOut",
       plugin: "plugin",
-      function: "optOut",
+      functions: ["optOut"],
+      loading: null,
       cmd: "alpha",
       aliases: [],
       desc: null,

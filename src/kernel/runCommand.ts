@@ -31,7 +31,7 @@ import { runPlugin } from "./pluginGuard.js";
 import { checkPermission } from "./commandPermissions.js";
 import { getCommandRegistry, type CommandEntry, type CommandSubcommand } from "./commandRegistry.js";
 import { pluginRegistry, resolvePluginCommandHandler, type PluginEntry } from "./pluginLoader.js";
-import type { CommandArgument } from "./commandsConfig.js";
+import { STOP_CHAIN, type CommandArgument } from "./commandsConfig.js";
 import type { PluginContext } from "./pluginApi.js";
 
 export type DispatchTarget =
@@ -215,26 +215,46 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       return { status: "no_dispatch", sentReply: null, suggestedReply: null };
     }
 
-    // The actual handler invocation is delegated to runPlugin (which
-    // enforces timeout + 3-strikes). Pass the resolved sub-function
-    // name via the unified entrypoint so handlers can be the same
-    // function whether called as the parent or as a sub.
-    const fnName = target.kind === "sub" ? target.sub.function : (target.entry.function ?? target.entry.cmd);
+    // Function chain dispatch — v6 reference yaml allows a command to
+    // declare `functions: [a, b, c]` and have them run top-to-bottom.
+    // Each function receives the same `(ctx, { args, subcommand })`
+    // shape; a function may short-circuit the rest of the chain by
+    // returning the sentinel `STOP_CHAIN` (exported from
+    // `commandsConfig.ts`). Anything else (void/undefined/regular value)
+    // lets the chain continue. Empty chain → "no_dispatch" (parent is
+    // metadata-only, e.g. a sub-container with no override).
+    const fnNames: string[] = target.kind === "sub" ? target.sub.functions : target.entry.functions;
+
+    if (fnNames.length === 0) {
+      return { status: "no_dispatch", sentReply: null, suggestedReply: null };
+    }
+
     const plugin = lookupPlugin(pluginName);
-    const handler = plugin ? resolvePluginCommandHandler(plugin.commands?.[fnName]) : null;
-    if (!plugin || !handler) {
-      const msg = `Plugin "${pluginName}" does not expose handler for !${flat.name}`;
+    if (!plugin) {
+      const msg = `Plugin "${pluginName}" is not active`;
       logger.warn(`[runCommand] ${msg}`);
       return { status: "no_dispatch", sentReply: null, suggestedReply: msg };
     }
 
-    await runPlugin(
-      plugin,
-      ctx as never,
-      handler,
-      { args: flat.args, subcommand: target.kind === "sub" ? target.sub.cmd : undefined },
-      { rethrow: true }
-    );
+    const subId = target.kind === "sub" ? target.sub.cmd : undefined;
+    const input = { args: flat.args, subcommand: subId };
+
+    for (const fnName of fnNames) {
+      const handler = resolvePluginCommandHandler(plugin.commands?.[fnName]);
+      if (!handler) {
+        const msg = `Plugin "${pluginName}" does not expose handler for !${flat.name}.${fnName}`;
+        logger.warn(`[runCommand] ${msg}`);
+        continue;
+      }
+      const result = await runPlugin(
+        plugin,
+        ctx as never,
+        handler,
+        input,
+        { rethrow: true }
+      );
+      if (result === STOP_CHAIN) break;
+    }
 
     return { status: "executed", sentReply: null, suggestedReply: null };
   } catch (e) {

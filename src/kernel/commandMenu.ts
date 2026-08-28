@@ -95,6 +95,7 @@ export function renderOverview(
         .filter(e => {
           if (!scope) return true;
           if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+          if (e.hiddenOutsideScope && e.hiddenOutsideScope !== "any" && e.hiddenOutsideScope !== scope) return false;
           return true;
         })
         .sort((a, b) => a.cmd.localeCompare(b.cmd));
@@ -122,6 +123,7 @@ export function renderOverview(
       .filter(e => {
         if (!scope) return true;
         if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+        if (e.hiddenOutsideScope && e.hiddenOutsideScope !== "any" && e.hiddenOutsideScope !== scope) return false;
         return true;
       })
       .sort((a, b) => a.cmd.localeCompare(b.cmd));
@@ -144,6 +146,7 @@ export function renderOverview(
     const filteredEntries = allEntries.filter(e => {
       if (!scope) return true;
       if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+      if (e.hiddenOutsideScope && e.hiddenOutsideScope !== "any" && e.hiddenOutsideScope !== scope) return false;
       return true;
     });
     const startIdx = page ? (page - 1) * pageSize : 0;
@@ -213,6 +216,7 @@ export function renderCategory(
       if (!scope) return true;
       // If entry has a specific scope defined and it doesn't match the requested scope, exclude it
       if (e.categoryHiddenInScope && e.categoryHiddenInScope === scope) return false;
+      if (e.hiddenOutsideScope && e.hiddenOutsideScope !== "any" && e.hiddenOutsideScope !== scope) return false;
       return true;
     })
     .sort((a, b) => a.cmd.localeCompare(b.cmd));

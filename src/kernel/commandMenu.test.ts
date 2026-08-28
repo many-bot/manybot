@@ -272,5 +272,94 @@ describe("kernel/commandMenu", () => {
       assert.equal(secondCheck, null);
     });
   });
+
+  describe("hiddenOutsideScope (group/dm suppression)", () => {
+    function buildScopeRegistry() {
+      const noop = async () => {};
+      const plugins = new Map<string, PluginEntry>([
+        [
+          "scopePlugin",
+          {
+            name: "scopePlugin",
+            status: "active",
+            manifest: { name: "scopePlugin", version: "1.0.0" },
+            commands: {
+              groupOnlyFn: {
+                cmd: "g",
+                aliases: [],
+                desc: "Group-only command",
+                category: "utils",
+                permissions: { groupOnly: true },
+                handler: noop,
+              },
+              dmOnlyFn: {
+                cmd: "d",
+                aliases: [],
+                desc: "DM-only command",
+                category: "utils",
+                permissions: { dmOnly: true },
+                handler: noop,
+              },
+              bothFn: {
+                cmd: "b",
+                aliases: [],
+                desc: "Both-scopes command",
+                category: "utils",
+                handler: noop,
+              },
+            },
+          } as unknown as PluginEntry,
+        ],
+      ]);
+
+      const menu = {
+        title: "Scope",
+        intro: null,
+        footer: null,
+        cmd: "help",
+        aliases: ["help"],
+        notFoundFallback: false,
+        welcomeMessage: null,
+        welcomeWindowDays: 3,
+        pageSize: 10,
+      };
+
+      return buildCommandRegistry(null, plugins, undefined, menu, {
+        utils: { label: "Utils", order: 1 },
+      });
+    }
+
+    test("hides group-only commands from DM overview", () => {
+      const registry = buildScopeRegistry();
+      const dmOverview = renderOverview(registry, "en", undefined, "dm");
+      assert.doesNotMatch(dmOverview, /!g\b/);
+      assert.match(dmOverview, /!d\b/);
+      assert.match(dmOverview, /!b\b/);
+    });
+
+    test("hides DM-only commands from group overview", () => {
+      const registry = buildScopeRegistry();
+      const groupOverview = renderOverview(registry, "en", undefined, "group");
+      assert.match(groupOverview, /!g\b/);
+      assert.doesNotMatch(groupOverview, /!d\b/);
+      assert.match(groupOverview, /!b\b/);
+    });
+
+    test("no-scope overview shows all commands", () => {
+      const registry = buildScopeRegistry();
+      const overview = renderOverview(registry, "en");
+      assert.match(overview, /!g\b/);
+      assert.match(overview, /!d\b/);
+      assert.match(overview, /!b\b/);
+    });
+
+    test("renderCategory respects hiddenOutsideScope", () => {
+      const registry = buildScopeRegistry();
+      const dmCategory = renderCategory(registry, "utils", "en", "dm");
+      assert.ok(dmCategory);
+      assert.doesNotMatch(dmCategory, /!g\b/);
+      assert.match(dmCategory, /!d\b/);
+    });
+  });
 });
 

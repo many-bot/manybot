@@ -10,6 +10,13 @@
  *   3. Pass context to all active plugins
  *
  * Each plugin decides whether to act or ignore.
+ *
+ * v6 loading indicators: a matched command may declare a `loading:` spec
+ * (or reference a top-level `loading_presets:` preset) which controls
+ * the user-visible "processando..." signal — `reaction`, `typing`,
+ * `recording_audio`, `spinner`, or `none`. The spec is resolved at
+ * registry build time (defaults → category → command → sub), so by the
+ * time the dispatch path reads it we only have to apply it.
  */
 
 import type { BotMessage } from "#drivers/types.js";
@@ -30,6 +37,7 @@ import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid } from "#drivers/jid.js";
 import { logger } from "#logger";
+import type { LoadingSpec } from "#kernel/commandsConfig.js";
 
 const INCOMING_DEBOUNCE_MS = 0;
 const lastProcessedAt = new Map<string, number>();
@@ -43,6 +51,134 @@ const lastProcessedAt = new Map<string, number>();
 function extractCommand(body: string, prefix: string): string {
   const first = body.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
   return first.startsWith(prefix) ? first.slice(prefix.length) : "";
+}
+
+interface LoadingHandles {
+  /** Stop the loading indicator after the command finished.
+   *  `outcome = "success"` replaces the indicator with `onSuccess`
+   *  (or removes it if no override); `"error"` uses `onError`. */
+  stop(outcome: "success" | "error"): Promise<void>;
+}
+
+/**
+ * Drive the per-command loading indicator described by the registry.
+ *
+ * - `reaction`        : drop an emoji reaction on the source message,
+ *                       update with onSuccess/onError on completion.
+ * - `typing`          : native WhatsApp "typing..." presence, refreshed
+ *                       on a 4s interval; cleared on completion.
+ * - `recording_audio` : native WhatsApp "recording audio..." presence,
+ *                       same interval/clear semantics as typing.
+ * - `spinner`         : self-sent message showing a frame sequence,
+ *                       edited every `intervalMs` (default 1500); last
+ *                       frame stays on completion.
+ * - `none`            : no-op — caller doesn't see a difference.
+ *
+ * All best-effort: any driver-level failure is logged at `warn` level
+ * and swallowed so a broken indicator never breaks a command.
+ */
+function startLoadingIndicator(
+  spec: LoadingSpec | null,
+  contract: WaContract,
+  rawJid: string,
+  msgKey: BotMessage["quotedKey"] | undefined
+): LoadingHandles {
+  const noop = async () => {};
+  if (!spec) return { stop: noop };
+
+  if (spec.type === "reaction") {
+    const icon = spec.icon ?? "⏳";
+    if (msgKey) {
+      contract.react(rawJid, msgKey, icon).catch((e: unknown) => {
+        const err = e instanceof Error ? e : new Error(String(e));
+        logger.warn(`[messageHandler] loading.reaction send failed: ${err.message}`);
+      });
+    }
+    return {
+      stop: async (outcome) => {
+        if (!msgKey) return;
+        const next = outcome === "success" ? spec.onSuccess : spec.onError;
+        try {
+          await contract.react(rawJid, msgKey, next ?? "");
+        } catch (e) {
+          const err = e instanceof Error ? e : new Error(String(e));
+          logger.warn(`[messageHandler] loading.reaction clear failed: ${err.message}`);
+        }
+      },
+    };
+  }
+
+  if (spec.type === "typing" || spec.type === "recording_audio") {
+    const presence = spec.type === "typing" ? "composing" : "recording";
+    const interval = setInterval(() => {
+      contract.sendPresenceUpdate(presence, rawJid).catch(() => {});
+    }, 4000);
+    contract.sendPresenceUpdate(presence, rawJid).catch(() => {});
+    return {
+      stop: async () => {
+        clearInterval(interval);
+        contract.sendPresenceUpdate("paused", rawJid).catch(() => {});
+      },
+    };
+  }
+
+  if (spec.type === "spinner") {
+    const frames = spec.frames && spec.frames.length > 0 ? spec.frames : ["⏳"];
+    const intervalMs = spec.intervalMs ?? 1500;
+    let frameIdx = 0;
+    let sentMsgId: string | null = null;
+    const cycle = async () => {
+      try {
+        if (sentMsgId === null) {
+          const sent = await contract.sendText(rawJid, frames[0]);
+          sentMsgId = sent.id;
+        } else {
+          frameIdx = (frameIdx + 1) % frames.length;
+          await contract.editMessage(rawJid, { id: sentMsgId, remoteJid: rawJid, fromMe: true }, frames[frameIdx]);
+        }
+      } catch {
+        // Spinner is best-effort — leave the previous frame in place
+        // when an edit fails rather than aborting the whole indicator.
+      }
+    };
+    cycle().catch(() => {});
+    const interval = setInterval(() => { cycle().catch(() => {}); }, intervalMs);
+    return {
+      stop: async (outcome) => {
+        clearInterval(interval);
+        if (sentMsgId !== null) {
+          const finalText = outcome === "success" ? spec.onSuccess : spec.onError;
+          try {
+            if (finalText !== undefined) {
+              await contract.editMessage(rawJid, { id: sentMsgId, remoteJid: rawJid, fromMe: true }, finalText);
+            } else {
+              await contract.deleteMessage(rawJid, { id: sentMsgId, remoteJid: rawJid, fromMe: true }, true);
+            }
+          } catch (e) {
+            const err = e instanceof Error ? e : new Error(String(e));
+            logger.warn(`[messageHandler] loading.spinner finalize failed: ${err.message}`);
+          }
+        }
+      },
+    };
+  }
+
+  // `none` or any future variant — nothing to do.
+  return { stop: noop };
+}
+
+/**
+ * Resolve the loading spec for the matched command/sub. Subcommands win
+ * (their own chain inheritance ran at registry build time); falls back
+ * to the parent's resolved spec.
+ */
+function resolveLoadingForDispatch(
+  entry: { loading: LoadingSpec | null; subcommands: Record<string, { loading: LoadingSpec | null }> },
+  resolution: { target: { kind: "parent" } | { kind: "sub"; sub: { loading: LoadingSpec | null } } | { kind: "none" } }
+): LoadingSpec | null {
+  if (resolution.target.kind === "sub") return resolution.target.sub.loading ?? entry.loading;
+  if (resolution.target.kind === "parent") return entry.loading;
+  return null;
 }
 
 // ── Dedup of already-processed messages ────────────────────────────────────
@@ -129,7 +265,7 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
   const releaseChatSlot = await acquireChatSlot(jid);
 
   try {
-    await runPluginsForMessage(msg, chat, msgCtx, contract, store, rawJid);
+    await runPluginsForMessage(msg, chat, msgCtx, contract, store, rawJid, rawKey);
   } finally {
     releaseChatSlot();
   }
@@ -141,7 +277,8 @@ async function runPluginsForMessage(
   msgCtx: ReturnType<typeof buildMessageContext>,
   contract: WaContract,
   store: BotStore,
-  rawJid: string
+  rawJid: string,
+  rawKey: BotMessage["quotedKey"]
 ): Promise<void> {
   const command = extractCommand(msgCtx.body, CMD_PREFIX);
   const registry = getCommandRegistry();
@@ -301,15 +438,32 @@ async function runPluginsForMessage(
       // this same plugin that did NOT match the registry) keep their legacy
       // run(ctx).
       if (matchedPlugin && matchedPlugin.pluginName === plugin.name && matchedPlugin.handler) {
-        // runCommand() opts into rethrow so its Phase-8 fireAlert("plugin_crash")
-        // catch actually runs (runPlugin() swallows by default — see pluginGuard.ts).
-        // Swallow here too, at the boundary: this loop must never crash the bot,
-        // same guarantee the legacy runPlugin(plugin, ctx) branch below already has.
+        // Loading indicator: the resolved spec is read once per dispatch
+        // and drives start/stop around the runCommand call. When the
+        // spec is `typing` (or absent) the per-plugin legacy `useTyping`
+        // above already covers presence — startLoadingIndicator
+        // recognises that overlap and dedupes by spec.type.
+        const loading = startLoadingIndicator(
+          resolveLoadingForDispatch(matchedPlugin, resolution),
+          contract,
+          rawJid,
+          rawKey
+        );
+        let outcome: "success" | "error" = "success";
         try {
-          await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply });
-        } catch (e) {
-          const err = e instanceof Error ? e : new Error(String(e));
-          logger.warn(`[messageHandler] runCommand crashed for plugin "${plugin.name}": ${err.message}`);
+          // runCommand() opts into rethrow so its Phase-8 fireAlert("plugin_crash")
+          // catch actually runs (runPlugin() swallows by default — see pluginGuard.ts).
+          // Swallow here too, at the boundary: this loop must never crash the bot,
+          // same guarantee the legacy runPlugin(plugin, ctx) branch below already has.
+          try {
+            await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply });
+          } catch (e) {
+            outcome = "error";
+            const err = e instanceof Error ? e : new Error(String(e));
+            logger.warn(`[messageHandler] runCommand crashed for plugin "${plugin.name}": ${err.message}`);
+          }
+        } finally {
+          await loading.stop(outcome);
         }
       } else {
         await runPlugin(plugin, ctx);

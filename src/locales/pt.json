@@ -57,6 +57,13 @@
     "commandsConfigImportInvalidRoot": "commands.yaml: o import \"{{path}}\" precisa ter um mapa de seções no nível raiz — ignorado",
     "commandsConfigImportNested": "commands.yaml: o import \"{{path}}\" declara seu próprio \"import\" — imports aninhados não são suportados e foram ignorados",
     "commandsConfigImportKeyConflict": "commands.yaml: o import \"{{path}}\" redefine \"{{key}}\", que já pertence a \"{{owner}}\" — mantendo o primeiro",
+    "commandsConfigCommandsWrapperInvalid": "commands.yaml: o bloco \"commands:\" de topo precisa ser um mapa de comandos — ignorado",
+    "commandsConfigCommandsWrapperCollision": "commands.yaml: o bloco \"commands:\" define \"{{key}}\", que já existe no nível de topo — mantendo a entrada do topo",
+    "commandsConfigConflictingScopeFlags": "commands.yaml: \"permissions\" tem group_only e dm_only ao mesmo tempo — escolha um (ou use \"scope:\" direto)",
+    "commandsConfigLoadingPresetMissing": "commands.yaml: \"{{id}}\" referencia o preset de loading \"{{name}}\" que não existe — campo fica vazio",
+    "commandsConfigLoadingInvalid": "commands.yaml: \"{{id}}\" o valor de loading não é nome de preset nem objeto inline — ignorado",
+    "commandsConfigLoadingUnknownType": "commands.yaml: \"{{id}}\" o tipo de loading \"{{type}}\" não é um dos reaction|typing|recording_audio|spinner|none — ignorado",
+    "commandsConfigLoadingUnknownProp": "commands.yaml: \"{{id}}\" o tipo de loading \"{{type}}\" não aceita a propriedade \"{{key}}\" — entrada malformada, descartada",
     "commandRegistryOrphanEntry": "commandRegistry: entrada \"{{id}}\" aponta para {{plugin}}.{{function}} mas nenhum plugin ativo fornece — ignorada",
     "commandRegistryInvalidEntry": "commandRegistry: entrada \"{{id}}\" não tem plugin/function nem text — ignorada",
     "commandRegistryInvocationCollision": "commandRegistry: invocação \"{{text}}\" já pertence a \"{{winner}}\" — descartando {{loser}} ({{via}})",
@@ -82,11 +89,14 @@
     "description": "Descrição"
   },
   "commandPermissions": {
-    "botNotAdmin": "Este comando exige que o bot seja administrador do grupo.",
-    "senderNotAdmin": "Este comando é restrito a administradores do grupo.",
-    "ownerOnly": "Este comando só pode ser executado pelo dono do bot.",
-    "wrongScope": "Este comando não pode ser usado neste contexto.",
-    "cooldown": "Aguarde {{seconds}}s antes de usar este comando novamente."
+    "botNotAdmin": "Esse comando precisa que o bot seja admin do grupo.",
+    "senderNotAdmin": "Esse comando é só pra admins do grupo.",
+    "ownerOnly": "Só o dono do bot pode usar esse comando.",
+    "donoOnly": "Só o dono designado desse comando pode usá-lo.",
+    "wrongScope": "Esse comando não funciona aqui.",
+    "cooldown": "Espera {{seconds}}s antes de usar esse comando de novo.",
+    "blacklist": "Você não pode usar esse comando.",
+    "allowedChats": "Esse comando não está disponível nesse chat."
   },
   "commandRun": {
     "missingRequiredArg": "Faltam argumentos obrigatórios.",

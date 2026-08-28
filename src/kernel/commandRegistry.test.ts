@@ -93,7 +93,8 @@ describe("kernel/commandRegistry", () => {
       {
         id: "funPlugin::jokeFn",
         plugin: "funPlugin",
-        function: "jokeFn",
+        functions: ["jokeFn"],
+        loading: null,
         cmd: "telljoke",
         aliases: ["tj"],
         desc: "Overridden desc",
@@ -131,7 +132,8 @@ describe("kernel/commandRegistry", () => {
       {
         id: "custom_hello",
         plugin: null,
-        function: null,
+        functions: [],
+        loading: null,
         cmd: "hello",
         aliases: ["hi"],
         desc: "Says hello",

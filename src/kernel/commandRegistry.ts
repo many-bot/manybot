@@ -21,6 +21,7 @@ import {
   type MenuConfig,
   type CategoryConfig,
   type LocalizedString,
+  type LoadingSpec,
 } from "./commandsConfig.js";
 import {
   pluginRegistry,
@@ -46,12 +47,21 @@ export interface ResolvedPermissions {
   cooldownSeconds: number;
   whitelist: ResolvedGroupUserList | null;
   blacklist: ResolvedGroupUserList | null;
+  /** Specific owner JID (overrides global OWNER_NUMBER). */
+  dono: string | null;
+  /** Closed list of chat JIDs the command may run in. */
+  allowedChats: string[] | null;
+  /** When set, command is suppressed from the menu when scope !== this. */
+  hiddenOutsideScope: "group" | "dm" | "any" | null;
   messages: {
     botNotAdmin: string;
     senderNotAdmin: string;
     ownerOnly?: string;
+    donoOnly: string;
     wrongScope: string;
     cooldown: string;
+    blacklist: string;
+    allowedChats: string;
   };
 }
 
@@ -67,8 +77,25 @@ export interface CommandSubcommand {
   aliases: string[];
   desc: LocalizedString | null;
   manual: LocalizedString | null;
-  /** Plugin function that implements this sub. Defaults to the parent's function. */
+  /**
+   * Primary plugin function name (first in `functions:`). Kept on the
+   * sub for backward compatibility with the original sub-handler dispatch
+   * — the v6 unified dispatcher now runs the full `functions` chain
+   * instead, but pluginLoader's per-function handler lookup still
+   * resolves by primary name.
+   */
   function: string;
+  /**
+   * Ordered chain of plugin function names to run for this sub. Empty
+   * when the sub is metadata-only; the dispatcher short-circuits and
+   * returns "no_dispatch" for empty chains.
+   */
+  functions: string[];
+  /**
+   * Loading indicator spec for this sub. Resolved at build time
+   * (chain inheritance: defaults → category → command → sub).
+   */
+  loading: import("./commandsConfig.js").LoadingSpec | null;
   arguments: CommandArgument[];
   permissions: ResolvedPermissions;
 }
@@ -85,11 +112,20 @@ export interface CommandEntry {
   source: "plugin" | "text";
   pluginName: string | null;
   /**
-   * Plugin function name that implements this entry. Always set for
-   * plugin-sourced entries (= the function name in `plugin.commands`);
-   * null for text-only entries.
+   * Primary plugin function name (= the function in `plugin.commands`
+   * that the dispatch path calls). Always set for plugin-sourced
+   * entries; null for text-only entries.
    */
   function: string | null;
+  /**
+   * Resolved function chain. Mirrors `function` as `[function]` when the
+   * YAML only declared `function:`, or contains the multi-step chain
+   * when the YAML declared `functions: [a, b, c]`. Empty for text-only
+   * entries.
+   */
+  functions: string[];
+  /** Resolved loading indicator spec for this command. */
+  loading: import("./commandsConfig.js").LoadingSpec | null;
   handler: CommandHandler | null;
   text: LocalizedString | null;
   permissions: ResolvedPermissions;
@@ -104,6 +140,13 @@ export interface CommandEntry {
    * appear in the current scope without re-resolving category metadata.
    */
   categoryHiddenInScope: "group" | "dm" | "any" | null;
+  /**
+   * Command-level "hide from menu when scope !== this value". Comes from
+   * the flat `hidden_outside_scope: true` on a group-only / dm-only
+   * command — unlike `categoryHiddenInScope` it's set per-command and
+   * stored here so the menu doesn't need to re-walk the registry.
+   */
+  hiddenOutsideScope: "group" | "dm" | "any" | null;
 }
 
 export interface CommandRegistry {
@@ -114,14 +157,24 @@ export interface CommandRegistry {
   menuAliases: Set<string>;
   categories: Record<string, CategoryConfig>;
   manuals: Record<string, LocalizedString>;
+  /** Top-level `loading_presets:` for reference (the entries already
+   *  point to their resolved specs, so consumers normally don't need this). */
+  loadingPresets: Record<string, import("./commandsConfig.js").LoadingSpec>;
+  /** Per-category default loading spec (from `categories.<key>.loading`). */
+  categoryLoading: Record<string, import("./commandsConfig.js").LoadingSpec>;
+  /** Top-level `prefix:` declaration (informational). */
+  prefix: string | null;
 }
 
 export const DEFAULT_PERMISSION_MESSAGES = {
-  botNotAdmin: () => t("commandPermissions.botNotAdmin") as string,
+  botNotAdmin:    () => t("commandPermissions.botNotAdmin") as string,
   senderNotAdmin: () => t("commandPermissions.senderNotAdmin") as string,
-  ownerOnly: () => t("commandPermissions.ownerOnly") as string,
-  wrongScope: () => t("commandPermissions.wrongScope") as string,
-  cooldown: () => t("commandPermissions.cooldown") as string,
+  ownerOnly:      () => t("commandPermissions.ownerOnly") as string,
+  donoOnly:       () => t("commandPermissions.donoOnly") as string,
+  wrongScope:     () => t("commandPermissions.wrongScope") as string,
+  cooldown:       () => t("commandPermissions.cooldown") as string,
+  blacklist:      () => t("commandPermissions.blacklist") as string,
+  allowedChats:   () => t("commandPermissions.allowedChats") as string,
 };
 
 export function resolvePermissions(
@@ -137,6 +190,32 @@ export function resolvePermissions(
   const scope = specPerms?.scope ?? pluginPerms?.scope ?? fallbackScope ?? "any";
   const owner = specPerms?.owner ?? pluginPerms?.owner ?? false;
   const cooldownSeconds = specPerms?.cooldownSeconds ?? pluginPerms?.cooldownSeconds ?? defaultsPerms?.cooldownSeconds ?? 0;
+
+  // `dono` is YAML-only (no plugin-level equivalent). Per-spec dono
+  // wins; falls back to null = "no specific owner restriction" (the
+  // global OWNER_NUMBER in manybot.toml is independent).
+  const dono: string | null = specPerms?.dono ?? null;
+
+  // `allowed_chats:` is a closed list of JIDs the command may run in.
+  // Only set by the YAML spec; null = no chat restriction.
+  const allowedChats: string[] | null = specPerms?.allowedChats && specPerms.allowedChats.length > 0
+    ? [...specPerms.allowedChats]
+    : null;
+
+  // `hidden_outside_scope:` mirrors `group_only` / `dm_only`. Compute it
+  // here so the resolved value is consistent across the menu and the
+  // permission check. spec wins over plugin: a plugin manifest that
+  // declares `group_only: true` is hidden from DMs unless the spec
+  // narrows it differently.
+  let hiddenOutsideScope: "group" | "dm" | "any" | null = null;
+  const scopeSrc = specPerms?.scope ?? pluginPerms?.scope ?? null;
+  const hiddenFlag = specPerms?.hiddenOutsideScope ?? pluginPerms?.hiddenOutsideScope ?? false;
+  const groupOnlyFlag = specPerms?.groupOnly ?? pluginPerms?.groupOnly ?? false;
+  const dmOnlyFlag = specPerms?.dmOnly ?? pluginPerms?.dmOnly ?? false;
+  if (scopeSrc === "group") hiddenOutsideScope = "group";
+  else if (scopeSrc === "dm") hiddenOutsideScope = "dm";
+  else if (hiddenFlag === true || groupOnlyFlag === true) hiddenOutsideScope = "group";
+  else if (dmOnlyFlag === true) hiddenOutsideScope = "dm";
 
   const rawWhitelist = specPerms?.whitelist ?? pluginPerms?.whitelist ?? defaultsPerms?.whitelist ?? null;
   const rawBlacklist = specPerms?.blacklist ?? pluginPerms?.blacklist ?? defaultsPerms?.blacklist ?? null;
@@ -156,11 +235,14 @@ export function resolvePermissions(
     : null;
 
   const messages = {
-    botNotAdmin: specMsgs?.botNotAdmin ?? defaultsMsgs?.botNotAdmin ?? DEFAULT_PERMISSION_MESSAGES.botNotAdmin(),
+    botNotAdmin:    specMsgs?.botNotAdmin ?? defaultsMsgs?.botNotAdmin ?? DEFAULT_PERMISSION_MESSAGES.botNotAdmin(),
     senderNotAdmin: specMsgs?.senderNotAdmin ?? defaultsMsgs?.senderNotAdmin ?? DEFAULT_PERMISSION_MESSAGES.senderNotAdmin(),
-    ownerOnly: specMsgs?.ownerOnly ?? defaultsMsgs?.ownerOnly ?? undefined,
-    wrongScope: specMsgs?.wrongScope ?? defaultsMsgs?.wrongScope ?? DEFAULT_PERMISSION_MESSAGES.wrongScope(),
-    cooldown: specMsgs?.cooldown ?? defaultsMsgs?.cooldown ?? DEFAULT_PERMISSION_MESSAGES.cooldown(),
+    ownerOnly:      specMsgs?.ownerOnly ?? defaultsMsgs?.ownerOnly ?? undefined,
+    donoOnly:       specMsgs?.donoOnly ?? defaultsMsgs?.donoOnly ?? DEFAULT_PERMISSION_MESSAGES.donoOnly(),
+    wrongScope:     specMsgs?.wrongScope ?? defaultsMsgs?.wrongScope ?? DEFAULT_PERMISSION_MESSAGES.wrongScope(),
+    cooldown:       specMsgs?.cooldown ?? defaultsMsgs?.cooldown ?? DEFAULT_PERMISSION_MESSAGES.cooldown(),
+    blacklist:      specMsgs?.blacklist ?? defaultsMsgs?.blacklist ?? DEFAULT_PERMISSION_MESSAGES.blacklist(),
+    allowedChats:   specMsgs?.allowedChats ?? defaultsMsgs?.allowedChats ?? DEFAULT_PERMISSION_MESSAGES.allowedChats(),
   };
 
   return {
@@ -171,6 +253,9 @@ export function resolvePermissions(
     cooldownSeconds,
     whitelist,
     blacklist,
+    dono,
+    allowedChats,
+    hiddenOutsideScope,
     messages,
   };
 }
@@ -329,8 +414,14 @@ function resolveCategoryHiddenInScope(
 
 /**
  * Resolve a `CommandSubcommandSpec` into the runtime `CommandSubcommand`.
- * The sub shares the parent's plugin handler function by default; if
- * `spec.function` is set, it overrides the parent's `function` field.
+ *
+ * Function-chain inheritance: a sub with `spec.functions === null` (no
+ * override) inherits the parent's resolved chain. With an explicit list
+ * (even an empty one) it uses that. The primary `function` is set to the
+ * first non-empty entry, falling back to the parent's primary. Same
+ * convention for `loading:` — spec override wins, otherwise the parent's
+ * resolved spec carries through.
+ *
  * Subcommand permissions inherit from the parent's resolved permissions
  * unless the spec overrides them — `parent.permissions.scope` is passed
  * as `fallbackScope` to close the category → command → subcommand chain.
@@ -341,14 +432,15 @@ function buildSubcommandFromSpec(
   pluginName: string | null,
   defaultsByKey: Map<string, PluginDefaultEntry>,
   defaults: CommandDefaults,
-  manuals: Record<string, LocalizedString>
+  manuals: Record<string, LocalizedString>,
+  loadingPresetOverrides: Record<string, LoadingSpec>
 ): CommandSubcommand {
   const manual = spec.manual ?? manuals[spec.id] ?? null;
-  const fnName = spec.function ?? parent.function ?? "";
+  const functions = spec.functions !== null ? [...spec.functions] : [...parent.functions];
+  const fnName = functions[0] ?? parent.function ?? "";
   // Each sub can point at a *different* plugin function than its
-  // siblings (that's the whole point of "add"/"list"/"done" sharing one
-  // parent) — resolve this sub's own default permissions from its own
-  // function, not from whatever function the parent happens to carry.
+  // siblings — resolve this sub's own default permissions from its own
+  // primary function, not from whatever the parent happens to carry.
   const subDef = pluginName && fnName
     ? defaultsByKey.get(pluginCommandKey(pluginName, fnName))?.norm ?? null
     : null;
@@ -359,6 +451,8 @@ function buildSubcommandFromSpec(
     desc:       spec.desc,
     manual,
     function:   fnName,
+    functions,
+    loading:    spec.loading ?? parent.loading,
     arguments:  [...spec.arguments],
     permissions: resolvePermissions(
       spec.permissions,
@@ -377,7 +471,8 @@ function buildSubcommandsFromSpecs(
   pluginName: string | null,
   defaultsByKey: Map<string, PluginDefaultEntry>,
   defaults: CommandDefaults,
-  manuals: Record<string, LocalizedString>
+  manuals: Record<string, LocalizedString>,
+  loadingPresetOverrides: Record<string, LoadingSpec>
 ): Record<string, CommandSubcommand> {
   const out: Record<string, CommandSubcommand> = {};
   for (const spec of specs) {
@@ -391,9 +486,33 @@ function buildSubcommandsFromSpecs(
       );
       continue;
     }
-    out[token] = buildSubcommandFromSpec(spec, parent, pluginName, defaultsByKey, defaults, manuals);
+    out[token] = buildSubcommandFromSpec(
+      spec, parent, pluginName, defaultsByKey, defaults, manuals, loadingPresetOverrides
+    );
   }
   return out;
+}
+
+/**
+ * Chain inheritance for `loading:` is:
+ *
+ *   defaults.loading  →  categoryLoading[cat]  →  spec.loading
+ *
+ * Returns the first non-null in that order. An inline `spec.loading`
+ * already won against any preset (the parser resolves preset names at
+ * parse time). Categories that don't declare `loading:` pass `null`
+ * through, so the defaults spec wins.
+ */
+function resolveLoadingChain(
+  spec: LoadingSpec | null,
+  categoryKey: string | null,
+  categoryLoading: Record<string, LoadingSpec>,
+  defaults: CommandDefaults
+): LoadingSpec | null {
+  return spec
+    ?? (categoryKey ? categoryLoading[categoryKey] ?? null : null)
+    ?? defaults.loading
+    ?? null;
 }
 
 export function buildCommandRegistry(
@@ -406,7 +525,10 @@ export function buildCommandRegistry(
   },
   menu: MenuConfig = { ...DEFAULT_MENU_CONFIG },
   categories: Record<string, CategoryConfig> = {},
-  manuals: Record<string, LocalizedString> = {}
+  manuals: Record<string, LocalizedString> = {},
+  loadingPresets: Record<string, LoadingSpec> = {},
+  categoryLoading: Record<string, LoadingSpec> = {},
+  prefix: string | null = null
 ): CommandRegistry {
   const byId = new Map<string, CommandEntry>();
   const byInvocation = new Map<string, string>();
@@ -460,21 +582,26 @@ export function buildCommandRegistry(
         source:     "plugin",
         pluginName: plugin.name,
         function:   fn,
+        functions:  [fn],
+        loading:    resolveLoadingChain(null, category, categoryLoading, defaults),
         handler:    norm.handler,
         text:       null,
         permissions: resolvePermissions(null, null, norm.permissions, defaults.permissions, defaults.messages, category ? categories[category]?.scope : null),
         arguments:  [],
         subcommands: {},
         categoryHiddenInScope: null,
+        hiddenOutsideScope: null,
       };
+      entry.hiddenOutsideScope = entry.permissions.hiddenOutsideScope;
       byId.set(id, entry);
     }
   }
 
   if (specs) {
     for (const spec of specs) {
-      if (spec.plugin && spec.function) {
-        const key = pluginCommandKey(spec.plugin, spec.function);
+      const primaryFn = spec.functions[0] ?? null;
+      if (spec.plugin && primaryFn) {
+        const key = pluginCommandKey(spec.plugin, primaryFn);
         const pluginDefault = defaultsByKey.get(key);
 
         if (!pluginDefault) {
@@ -482,7 +609,7 @@ export function buildCommandRegistry(
             t("system.commandRegistryOrphanEntry", {
               id: spec.id,
               plugin: spec.plugin,
-              function: spec.function
+              function: primaryFn
             })
           );
           continue;
@@ -501,7 +628,7 @@ export function buildCommandRegistry(
               t("system.commandRegistryOrphanEntry", {
                 id: spec.id,
                 plugin: spec.plugin,
-                function: spec.function
+                function: primaryFn
               })
             );
             continue;
@@ -516,14 +643,18 @@ export function buildCommandRegistry(
             manual: null,
             source: "plugin",
             pluginName: spec.plugin,
-            function: spec.function,
+            function: primaryFn,
+            functions: [primaryFn],
+            loading: resolveLoadingChain(spec.loading, null, categoryLoading, defaults),
             handler: norm.handler,
             text: null,
             permissions: resolvePermissions(null, null, null, defaults.permissions, defaults.messages, null),
             arguments: [],
             subcommands: {},
             categoryHiddenInScope: null,
+            hiddenOutsideScope: null,
           };
+          existing.hiddenOutsideScope = existing.permissions.hiddenOutsideScope;
           byId.set(key, existing);
         }
 
@@ -544,17 +675,27 @@ export function buildCommandRegistry(
           existing.category ? categories[existing.category]?.scope : null
         );
 
+        // Function chain: explicit `functions:` wins; fall back to the
+        // single primary if the YAML only declared `function:` /
+        // `plugin:` shorthand. Empty list intentionally means "no
+        // handlers" — see `CommandSpec.functions` doc.
+        if (spec.functions.length > 0) existing.functions = [...spec.functions];
+        else if (primaryFn) existing.functions = [primaryFn];
+
         existing.arguments = [...spec.arguments];
         existing.categoryHiddenInScope = resolveCategoryHiddenInScope(existing.category, categories);
+        existing.hiddenOutsideScope = existing.permissions.hiddenOutsideScope;
+        existing.loading = resolveLoadingChain(spec.loading, existing.category, categoryLoading, defaults);
         existing.subcommands = buildSubcommandsFromSpecs(
           spec.subcommands,
           existing,
           spec.plugin,
           defaultsByKey,
           defaults,
-          manuals
+          manuals,
+          loadingPresets
         );
-      } else if (spec.plugin && !spec.function && spec.subcommands.length > 0) {
+      } else if (spec.plugin && spec.functions.length === 0 && spec.subcommands.length > 0) {
         // Parent-only container: the top-level entry has no handler of
         // its own (e.g. `todo:`), it just groups subcommands that each
         // declare their own `function:`. Never dispatched directly —
@@ -572,6 +713,8 @@ export function buildCommandRegistry(
           source:     "plugin",
           pluginName: spec.plugin,
           function:   null,
+          functions:  [],
+          loading:    resolveLoadingChain(spec.loading, spec.category ?? null, categoryLoading, defaults),
           handler:    null,
           text:       null,
           permissions: resolvePermissions(
@@ -585,6 +728,11 @@ export function buildCommandRegistry(
           arguments:  [...spec.arguments],
           subcommands: {},
           categoryHiddenInScope: resolveCategoryHiddenInScope(spec.category, categories),
+          hiddenOutsideScope: resolvePermissions(
+            spec.permissions, spec.messages, null,
+            defaults.permissions, defaults.messages,
+            spec.category ? categories[spec.category]?.scope : null
+          ).hiddenOutsideScope,
         };
 
         entry.subcommands = buildSubcommandsFromSpecs(
@@ -593,7 +741,8 @@ export function buildCommandRegistry(
           spec.plugin,
           defaultsByKey,
           defaults,
-          manuals
+          manuals,
+          loadingPresets
         );
 
         byId.set(id, entry);
@@ -610,6 +759,15 @@ export function buildCommandRegistry(
         const id = `text::${spec.id}`;
         const manual = spec.manual ?? manuals[spec.id] ?? manuals[spec.cmd] ?? null;
 
+        const entryPerms = resolvePermissions(
+          spec.permissions,
+          spec.messages,
+          null,
+          defaults.permissions,
+          defaults.messages,
+          spec.category ? categories[spec.category]?.scope : null
+        );
+
         const entry: CommandEntry = {
           id,
           cmd:        spec.cmd,
@@ -621,19 +779,15 @@ export function buildCommandRegistry(
           source:     "text",
           pluginName: null,
           function:   null,
+          functions:  [],
+          loading:    resolveLoadingChain(spec.loading, spec.category ?? null, categoryLoading, defaults),
           handler:    null,
           text:       spec.text,
-          permissions: resolvePermissions(
-            spec.permissions,
-            spec.messages,
-            null,
-            defaults.permissions,
-            defaults.messages,
-            spec.category ? categories[spec.category]?.scope : null
-          ),
+          permissions: entryPerms,
           arguments:  [...spec.arguments],
           subcommands: {},
           categoryHiddenInScope: resolveCategoryHiddenInScope(spec.category, categories),
+          hiddenOutsideScope: entryPerms.hiddenOutsideScope,
         };
 
         entry.subcommands = buildSubcommandsFromSpecs(
@@ -642,7 +796,8 @@ export function buildCommandRegistry(
           null,
           defaultsByKey,
           defaults,
-          manuals
+          manuals,
+          loadingPresets
         );
 
         byId.set(id, entry);
@@ -682,13 +837,13 @@ export function buildCommandRegistry(
     }
   }
 
-  return { byId, byInvocation, defaults, menu, menuAliases, categories, manuals };
+  return { byId, byInvocation, defaults, menu, menuAliases, categories, manuals, loadingPresets, categoryLoading, prefix };
 }
 
 let currentRegistry: CommandRegistry | null = null;
 
 export async function initCommandRegistry(): Promise<CommandRegistry> {
-  const config = await loadCommandsConfig();
+  const config = await loadCommandsConfig(new Set(pluginRegistry.keys()));
   const defaults = config?.defaults ?? {
     notifyChanges:    true,
     notifyPeriodDays: 7,
@@ -697,9 +852,15 @@ export async function initCommandRegistry(): Promise<CommandRegistry> {
   const menu = config?.menu ?? { ...DEFAULT_MENU_CONFIG };
   const categories = config?.categories ?? {};
   const manuals = config?.manuals ?? {};
+  const loadingPresets = config?.loadingPresets ?? {};
+  const categoryLoading = config?.categoryLoading ?? {};
+  const prefix = config?.prefix ?? null;
   const specs = config?.specs ?? [];
 
-  const registry = buildCommandRegistry(specs, pluginRegistry, defaults, menu, categories, manuals);
+  const registry = buildCommandRegistry(
+    specs, pluginRegistry, defaults, menu, categories, manuals,
+    loadingPresets, categoryLoading, prefix
+  );
   syncCommandHistory(registry.byId, defaults, specs);
   currentRegistry = registry;
   return registry;

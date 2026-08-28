@@ -19,7 +19,8 @@ function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
     cmd: overrides.cmd ?? "task",
     aliases: overrides.aliases ?? [],
     plugin: overrides.plugin ?? "taskPlugin",
-    function: overrides.function ?? "runFn",
+    functions: overrides.functions ?? ["runFn"],
+    loading: overrides.loading ?? null,
     text: overrides.text ?? null,
     desc: overrides.desc ?? null,
     category: overrides.category ?? null,
@@ -39,7 +40,8 @@ function emptySub(overrides: Partial<CommandSubcommandSpec>): CommandSubcommandS
     id: overrides.id ?? "task::list",
     cmd: overrides.cmd ?? "list",
     aliases: overrides.aliases ?? [],
-    function: overrides.function ?? null,
+    functions: overrides.functions ?? null,
+    loading: overrides.loading ?? null,
     desc: overrides.desc ?? null,
     manual: overrides.manual ?? null,
     arguments: overrides.arguments ?? [],
@@ -50,8 +52,20 @@ function emptySub(overrides: Partial<CommandSubcommandSpec>): CommandSubcommandS
 
 // ── Mock WaContract — only the surface handleMessage's pipeline touches ────
 
-function createMockContract(): { contract: WaContract; sentTexts: Array<{ jid: string; text: string }> } {
+function createMockContract(): {
+  contract: WaContract;
+  sentTexts: Array<{ jid: string; text: string }>;
+  reactions: Array<{ jid: string; emoji: string }>;
+  presences: Array<{ state: string; jid: string }>;
+  deletions: Array<{ jid: string; forEveryone: boolean }>;
+  edits: Array<{ jid: string; id: string; text: string }>;
+} {
   const sentTexts: Array<{ jid: string; text: string }> = [];
+  const reactions: Array<{ jid: string; emoji: string }> = [];
+  const presences: Array<{ state: string; jid: string }> = [];
+  const deletions: Array<{ jid: string; forEveryone: boolean }> = [];
+  const edits: Array<{ jid: string; id: string; text: string }> = [];
+  const sentHistory: BotMessage[] = [];
   let msgSeq = 0;
 
   const contract: WaContract = {
@@ -65,7 +79,18 @@ function createMockContract(): { contract: WaContract; sentTexts: Array<{ jid: s
 
     sendText: async (jid: string, text: string) => {
       sentTexts.push({ jid, text });
-      return { id: `msg-${++msgSeq}`, chatId: jid, timestamp: Date.now() };
+      const id = `msg-${++msgSeq}`;
+      sentHistory.push({
+        id,
+        chatId: jid,
+        fromMe: true,
+        contentHash: "hash",
+        timestamp: Date.now(),
+        type: "text",
+        body: text,
+        fromPn: "5511900000000@s.whatsapp.net",
+      } as BotMessage);
+      return { id, chatId: jid, timestamp: Date.now() };
     },
     sendImage: async () => ({ id: "x", chatId: "x", timestamp: Date.now() }),
     sendVideo: async () => ({ id: "x", chatId: "x", timestamp: Date.now() }),
@@ -74,10 +99,18 @@ function createMockContract(): { contract: WaContract; sentTexts: Array<{ jid: s
     sendDocument: async () => ({ id: "x", chatId: "x", timestamp: Date.now() }),
     sendPoll: async () => ({ id: "x", chatId: "x", timestamp: Date.now() }),
 
-    react: async () => {},
-    deleteMessage: async () => {},
-    editMessage: async () => {},
-    sendPresenceUpdate: async () => {},
+    react: async (_jid: string, _key: unknown, emoji: string) => {
+      reactions.push({ jid: _jid, emoji });
+    },
+    deleteMessage: async (_jid: string, _key: unknown, forEveryone: boolean) => {
+      deletions.push({ jid: _jid, forEveryone });
+    },
+    editMessage: async (_jid: string, key: { id?: string }, text: string) => {
+      edits.push({ jid: _jid, id: key.id ?? "", text });
+    },
+    sendPresenceUpdate: async (state: string, jid: string) => {
+      presences.push({ state, jid });
+    },
     readMessages: async () => {},
 
     onWhatsApp: async () => [{ exists: true }],
@@ -102,10 +135,13 @@ function createMockContract(): { contract: WaContract; sentTexts: Array<{ jid: s
     me: () => ({ id: "5511900000000@s.whatsapp.net" }),
 
     downloadMedia: async () => null,
-    getHistory: async () => [],
+    // Mirrors real Baileys behavior: sendText's result lands in history
+    // immediately (sendFallbackGuard's verifyDelivery does a t=0 lookup
+    // here to confirm the send before the caller's await resolves).
+    getHistory: async (jid: string) => sentHistory.filter(m => m.chatId === jid),
   } as unknown as WaContract;
 
-  return { contract, sentTexts };
+  return { contract, sentTexts, reactions, presences, deletions, edits };
 }
 
 function makeBotMessage(overrides: Partial<BotMessage> = {}): BotMessage {
@@ -147,6 +183,10 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
   let store: BotStore;
   let contract: WaContract;
   let sentTexts: Array<{ jid: string; text: string }>;
+  let reactions: Array<{ jid: string; emoji: string }>;
+  let presences: Array<{ state: string; jid: string }>;
+  let deletions: Array<{ jid: string; forEveryone: boolean }>;
+  let edits: Array<{ jid: string; id: string; text: string }>;
   let runCalls: unknown[];
   let listCalls: unknown[];
 
@@ -156,6 +196,10 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
     const mock = createMockContract();
     contract = mock.contract;
     sentTexts = mock.sentTexts;
+    reactions = mock.reactions;
+    presences = mock.presences;
+    deletions = mock.deletions;
+    edits = mock.edits;
     getDriverManager().register(contract, { isPrimary: true });
 
     runCalls = [];
@@ -204,7 +248,7 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
   });
 
   test("routes a matched subcommand to the subcommand handler, not the parent's, and replies", async () => {
-    const spec = emptySpec({ subcommands: [emptySub({ function: "listFn" })] });
+    const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
     __setRegistryForTests(buildRegistry([spec]));
 
     const msg = makeBotMessage({ body: "!task list" });
@@ -226,7 +270,7 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
   });
 
   test("a crash inside the matched command's handler is swallowed at the messageHandler boundary", async () => {
-    const spec = emptySpec({ id: "task::crash", cmd: "crashcmd", function: "crashFn" });
+    const spec = emptySpec({ id: "task::crash", cmd: "crashcmd", functions: ["crashFn"] });
     __setRegistryForTests(buildRegistry([spec]));
 
     const msg = makeBotMessage({ body: "!crashcmd" });
@@ -241,7 +285,7 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
   });
 
   test("the message loop keeps working for the next message after a handler crash", async () => {
-    const crashSpec = emptySpec({ id: "task::crash", cmd: "crashcmd", function: "crashFn" });
+    const crashSpec = emptySpec({ id: "task::crash", cmd: "crashcmd", functions: ["crashFn"] });
     __setRegistryForTests(buildRegistry([crashSpec]));
     await handleMessage(makeBotMessage({ body: "!crashcmd" }), contract, store);
 
@@ -254,6 +298,76 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
     assert.equal(runCalls.length, 1);
     assert.equal(sentTexts.length, 1);
     assert.equal(sentTexts[0].text, "done");
+  });
+
+  // ── Loading indicator wiring ───────────────────────────────────────────
+  describe("loading indicator (v6 reaction/typing/spinner)", () => {
+    test("reaction: drops the icon then clears on success", async () => {
+      const spec = emptySpec({ loading: { type: "reaction", icon: "🛠" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      assert.equal(reactions.length, 2, "start + final reaction");
+      assert.equal(reactions[0].emoji, "🛠");
+      assert.equal(reactions[1].emoji, "");
+    });
+
+    test("reaction: replaces with onSuccess emoji on success", async () => {
+      const spec = emptySpec({ loading: { type: "reaction", icon: "⏳", onSuccess: "✅" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      assert.equal(reactions.at(-1)?.emoji, "✅");
+    });
+
+    test("typing: emits composing presence + paused on completion", async () => {
+      const spec = emptySpec({ loading: { type: "typing" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      assert.ok(presences.some(p => p.state === "composing"), "composing presence was emitted");
+      assert.ok(presences.some(p => p.state === "paused"), "paused presence was emitted at end");
+    });
+
+    test("none: never calls react or sendPresenceUpdate for the indicator", async () => {
+      const spec = emptySpec({ loading: { type: "none" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      // reaction is never called — the loading indicator itself is a no-op.
+      assert.equal(reactions.length, 0, "no reactions emitted");
+      // Presence still shows up from two pre-existing, independent legacy
+      // paths that have nothing to do with the loading indicator: the
+      // per-plugin useTyping wrapper in messageHandler.ts, and simulateState()
+      // inside ctx.send.text() (api/index.ts) humanizing every outbound send.
+      // A "none" loading spec must add zero presence calls on top of those.
+      assert.equal(presences.filter(p => p.state === "paused" && p.jid === "5511888888888@s.whatsapp.net").length, 2,
+        "paused presence came only from the two pre-existing legacy paths, not from the loading indicator");
+    });
+
+    test("spinner: sends a frame message and edits it on completion", async () => {
+      const spec = emptySpec({
+        loading: {
+          type: "spinner",
+          frames: ["⏳", "⌛"],
+          intervalMs: 60000, // disable the interval so the test is deterministic
+          onSuccess: "ready",
+        },
+      });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      // The first sendText from the spinner carries the first frame.
+      const spinnerSent = sentTexts.find(s => s.text === "⏳");
+      assert.ok(spinnerSent, "spinner sent the first frame");
+      assert.ok(edits.some(e => e.text === "ready"), "spinner was edited with onSuccess text");
+      assert.equal(deletions.length, 0, "onSuccess set: spinner is edited, not deleted");
+    });
   });
 
   // ── Welcome message gating ──────────────────────────────────────────────

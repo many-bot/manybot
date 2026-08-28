@@ -57,6 +57,13 @@
     "commandsConfigImportInvalidRoot": "commands.yaml: import \"{{path}}\" top-level must be a map of sections — skipped",
     "commandsConfigImportNested": "commands.yaml: import \"{{path}}\" declares its own \"import\" — nested imports are not supported and were ignored",
     "commandsConfigImportKeyConflict": "commands.yaml: import \"{{path}}\" redefines \"{{key}}\", already owned by \"{{owner}}\" — keeping the first one",
+    "commandsConfigCommandsWrapperInvalid": "commands.yaml: top-level \"commands:\" must be a map of command entries — ignored",
+    "commandsConfigCommandsWrapperCollision": "commands.yaml: \"commands:\" wrapper defines \"{{key}}\" that already exists at the top level — keeping the top-level entry",
+    "commandsConfigConflictingScopeFlags": "commands.yaml: \"permissions\" has both group_only and dm_only set to true — pick one (or use \"scope:\" directly)",
+    "commandsConfigLoadingPresetMissing": "commands.yaml: \"{{id}}\" loading preset \"{{name}}\" not found — leaving the field unset",
+    "commandsConfigLoadingInvalid": "commands.yaml: \"{{id}}\" loading value is not a preset name or inline object — ignored",
+    "commandsConfigLoadingUnknownType": "commands.yaml: \"{{id}}\" loading type \"{{type}}\" is not one of reaction|typing|recording_audio|spinner|none — ignored",
+    "commandsConfigLoadingUnknownProp": "commands.yaml: \"{{id}}\" loading type \"{{type}}\" does not accept property \"{{key}}\" — entry is malformed and was dropped",
     "commandRegistryOrphanEntry": "commandRegistry: entry \"{{id}}\" targets {{plugin}}.{{function}} but no active plugin provides it — skipped",
     "commandRegistryInvalidEntry": "commandRegistry: entry \"{{id}}\" has no plugin/function and no text — skipped",
     "commandRegistryInvocationCollision": "commandRegistry: invocation \"{{text}}\" already owned by \"{{winner}}\" — dropping {{loser}} ({{via}})",
@@ -85,8 +92,11 @@
     "botNotAdmin": "This command requires the bot to be a group administrator.",
     "senderNotAdmin": "This command is restricted to group administrators.",
     "ownerOnly": "This command can only be run by the bot owner.",
+    "donoOnly": "This command can only be run by its designated owner.",
     "wrongScope": "This command cannot be used in this context.",
-    "cooldown": "Wait {{seconds}}s before using this command again."
+    "cooldown": "Wait {{seconds}}s before using this command again.",
+    "blacklist": "You are not allowed to use this command.",
+    "allowedChats": "This command is not available in this chat."
   },
   "commandRun": {
     "missingRequiredArg": "Missing required argument(s).",

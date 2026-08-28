@@ -69,19 +69,20 @@ export async function runPlugin(
   handler?: CommandHandler,
   input?: unknown,
   options?: RunPluginOptions
-): Promise<void> {
-  if (plugin.status !== "active") return;
+): Promise<unknown> {
+  if (plugin.status !== "active") return undefined;
 
   const useTimeout = plugin.guardOptions?.timeout !== false;
 
   try {
     if (handler) {
       const run = handler(context, input);
-      await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
+      return await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
     } else {
-      if (!plugin.run) return;
+      if (!plugin.run) return undefined;
       const run = plugin.run(context);
       await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
+      return undefined;
     }
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
@@ -119,6 +120,7 @@ export async function runPlugin(
         });
       });
     }
+    return undefined;
   }
 }
 

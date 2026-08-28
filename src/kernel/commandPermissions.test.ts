@@ -50,12 +50,15 @@ function createMockEntry(
     source: "plugin",
     pluginName: "testPlugin",
     function: null,
+    functions: [],
+    loading: null,
     handler: async () => "ok",
     text: null,
     permissions,
     arguments: [],
     subcommands: {},
     categoryHiddenInScope: null,
+    hiddenOutsideScope: null,
   };
 }
 
@@ -114,6 +117,53 @@ describe("commandPermissions", () => {
 
     const res4 = await checkPermission(dmEntry, dmCtx);
     assert.equal(res4.allowed, true);
+  });
+
+  test("dono permission check (specific-owner JID, independent of OWNER_NUMBER)", async () => {
+    const donoEntry = createMockEntry(
+      { dono: "5511999999999@c.us" },
+      { donoOnly: "Only the dono can use this" }
+    );
+
+    const nonDonoCtx = createMockContext({ sender: senderOf("5511888888888@c.us") });
+    const res1 = await checkPermission(donoEntry, nonDonoCtx);
+    assert.equal(res1.allowed, false);
+    if (!res1.allowed) assert.equal(res1.message, "Only the dono can use this");
+
+    const donoCtx = createMockContext({ sender: senderOf("5511999999999@c.us") });
+    const res2 = await checkPermission(donoEntry, donoCtx);
+    assert.equal(res2.allowed, true);
+  });
+
+  test("dono check accepts either LID or PN form of the sender", async () => {
+    const donoEntry = createMockEntry({ dono: "5511999999999" });
+    const lidOnlyCtx = createMockContext({ sender: { lid: "5511999999999@lid", pn: null } });
+
+    assert.equal((await checkPermission(donoEntry, lidOnlyCtx)).allowed, true);
+  });
+
+  test("allowedChats check (closed list of chats the command may run in)", async () => {
+    const entry = createMockEntry(
+      { allowedChats: ["120363111111111111@g.us"] },
+      { allowedChats: "This command doesn't run here" }
+    );
+
+    const allowedCtx = createMockContext({ isGroup: true, chatId: "120363111111111111@g.us" });
+    const disallowedCtx = createMockContext({ isGroup: true, chatId: "120363999999999999@g.us" });
+
+    const resAllowed = await checkPermission(entry, allowedCtx);
+    assert.equal(resAllowed.allowed, true);
+
+    const resDisallowed = await checkPermission(entry, disallowedCtx);
+    assert.equal(resDisallowed.allowed, false);
+    if (!resDisallowed.allowed) assert.equal(resDisallowed.message, "This command doesn't run here");
+  });
+
+  test("allowedChats check is skipped entirely when the list is empty/unset", async () => {
+    const entry = createMockEntry({ allowedChats: [] });
+    const anyChatCtx = createMockContext({ isGroup: true, chatId: "120363000000000000@g.us" });
+
+    assert.equal((await checkPermission(entry, anyChatCtx)).allowed, true);
   });
 
   test("blacklist check", async () => {
@@ -196,6 +246,29 @@ describe("commandPermissions", () => {
     clearCooldowns();
     const res3 = await checkPermission(entry, ctx);
     assert.equal(res3.allowed, true);
+  });
+
+  test("evaluation order: dono is checked before allowedChats/blacklist", async () => {
+    const entry = createMockEntry(
+      {
+        dono: "5511999999999@c.us",
+        allowedChats: ["120363111111111111@g.us"],
+        blacklist: { groups: [], users: ["5511888888888@c.us"] },
+      },
+      { donoOnly: "dono message", allowedChats: "chats message", blacklist: "blacklist message" }
+    );
+
+    // Sender fails dono AND would also fail allowedChats/blacklist — dono's
+    // message must win since it's evaluated first.
+    const ctx = createMockContext({
+      sender: senderOf("5511888888888@c.us"),
+      isGroup: true,
+      chatId: "120363999999999999@g.us",
+    });
+
+    const res = await checkPermission(entry, ctx);
+    assert.equal(res.allowed, false);
+    if (!res.allowed) assert.equal(res.message, "dono message");
   });
 
   test("cooldown is NOT consumed when an earlier check fails", async () => {

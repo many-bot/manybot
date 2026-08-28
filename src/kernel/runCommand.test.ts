@@ -6,6 +6,7 @@ import { pluginRegistry } from "#kernel/pluginLoader.js";
 import type { PluginEntry } from "#kernel/pluginLoader.js";
 import type { CommandSpec, CommandSubcommandSpec } from "#kernel/commandsConfig.js";
 import type { PluginContext } from "#kernel/pluginApi.js";
+import { STOP_CHAIN } from "#kernel/commandsConfig.js";
 
 function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
   return {
@@ -13,7 +14,8 @@ function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
     cmd: overrides.cmd ?? "todo",
     aliases: overrides.aliases ?? [],
     plugin: overrides.plugin ?? "todoPlugin",
-    function: overrides.function ?? "addFn",
+    functions: overrides.functions ?? ["addFn"],
+    loading: overrides.loading ?? null,
     text: overrides.text ?? null,
     desc: overrides.desc ?? null,
     category: overrides.category ?? null,
@@ -33,7 +35,8 @@ function emptySub(overrides: Partial<CommandSubcommandSpec>): CommandSubcommandS
     id: overrides.id ?? "todo::list",
     cmd: overrides.cmd ?? "list",
     aliases: overrides.aliases ?? [],
-    function: overrides.function ?? null,
+    functions: overrides.functions ?? null,
+    loading: overrides.loading ?? null,
     desc: overrides.desc ?? null,
     manual: overrides.manual ?? null,
     arguments: overrides.arguments ?? [],
@@ -77,6 +80,11 @@ function registerTodoPlugin(): void {
         handler: async () => {
           throw new Error("boom");
         },
+      },
+      gateFn: {
+        cmd: "gate",
+        aliases: [],
+        handler: async () => STOP_CHAIN,
       },
     },
   };
@@ -127,7 +135,7 @@ describe("kernel/runCommand", () => {
   });
 
   test("resolveDispatch: kind sub when a declared subcommand token matches", () => {
-    const spec = emptySpec({ subcommands: [emptySub({ function: "listFn" })] });
+    const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
     __setRegistryForTests(buildRegistry([spec]));
     const { target } = resolveDispatch("todo", "list");
     assert.equal(target.kind, "sub");
@@ -137,7 +145,7 @@ describe("kernel/runCommand", () => {
   });
 
   test("resolveDispatch: unmatchedSubToken falls through to parent", () => {
-    const spec = emptySpec({ subcommands: [emptySub({ function: "listFn" })] });
+    const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
     __setRegistryForTests(buildRegistry([spec]));
     const { target, unmatchedSubToken } = resolveDispatch("todo", "wat now");
     assert.equal(target.kind, "parent");
@@ -161,7 +169,7 @@ describe("kernel/runCommand", () => {
   });
 
   test("runCommand: routes to the subcommand handler, not the parent's", async () => {
-    const spec = emptySpec({ subcommands: [emptySub({ function: "listFn" })] });
+    const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
     __setRegistryForTests(buildRegistry([spec]));
     const resolution = resolveDispatch("todo", "list");
     const result = await runCommand({
@@ -176,7 +184,7 @@ describe("kernel/runCommand", () => {
   });
 
   test("runCommand: unmatchedSubToken replies with a usage hint and does not dispatch", async () => {
-    const spec = emptySpec({ subcommands: [emptySub({ function: "listFn" })] });
+    const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
     __setRegistryForTests(buildRegistry([spec]));
     const resolution = resolveDispatch("todo", "wat");
     const replies: string[] = [];
@@ -220,7 +228,7 @@ describe("kernel/runCommand", () => {
   });
 
   test("runCommand: re-throws on handler crash after firing the alert", async () => {
-    const spec = emptySpec({ id: "todo::crash", cmd: "crashcmd", function: "crashFn" });
+    const spec = emptySpec({ id: "todo::crash", cmd: "crashcmd", functions: ["crashFn"] });
     __setRegistryForTests(buildRegistry([spec]));
     const resolution = resolveDispatch("crashcmd", "");
     await assert.rejects(
@@ -259,6 +267,170 @@ describe("kernel/runCommand", () => {
   test("renderUsage: empty string for a none target", () => {
     const usage = renderUsage({ kind: "none" });
     assert.equal(usage, "");
+  });
+
+  describe("functions: chain + STOP_CHAIN", () => {
+    test("runs every function in the chain in declared order", async () => {
+      let second = false;
+      let third = false;
+      const plugin: PluginEntry = {
+        name: "chainPlugin",
+        status: "active",
+        run: null,
+        setup: null,
+        exports: {},
+        error: null,
+        guardOptions: {},
+        commands: {
+          firstFn: { cmd: "todo", aliases: [], handler: async () => { second = true; } },
+          secondFn: { cmd: "todo", aliases: [], handler: async () => {
+            assert.equal(second, true, "second handler ran before first finished");
+            third = true;
+          } },
+          thirdFn: { cmd: "todo", aliases: [], handler: async () => {
+            assert.equal(third, true, "third handler ran before second finished");
+          } },
+        },
+      } as unknown as PluginEntry;
+      pluginRegistry.set("chainPlugin", plugin);
+
+      const specs: CommandSpec[] = [
+        {
+          id: "chainPlugin::firstFn",
+          cmd: "chain",
+          aliases: [],
+          plugin: "chainPlugin",
+          functions: ["firstFn", "secondFn", "thirdFn"],
+          loading: null,
+          text: null,
+          desc: null,
+          category: null,
+          group: null,
+          manual: null,
+          deprecatedMessage: null,
+          notifyChanges: null,
+          permissions: null,
+          messages: null,
+          arguments: [],
+          subcommands: [],
+        },
+      ];
+      __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
+      const resolution = resolveDispatch("chain", "");
+      const result = await runCommand({
+        pluginName: "chainPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: () => {} },
+      });
+      assert.equal(result.status, "executed");
+      assert.equal(third, true);
+      pluginRegistry.delete("chainPlugin");
+    });
+
+    test("STOP_CHAIN short-circuits the rest of the chain", async () => {
+      let secondRan = false;
+      const plugin: PluginEntry = {
+        name: "stopPlugin",
+        status: "active",
+        run: null,
+        setup: null,
+        exports: {},
+        error: null,
+        guardOptions: {},
+        commands: {
+          firstFn: { cmd: "stop", aliases: [], handler: async () => STOP_CHAIN },
+          secondFn: { cmd: "stop", aliases: [], handler: async () => { secondRan = true; } },
+        },
+      } as unknown as PluginEntry;
+      pluginRegistry.set("stopPlugin", plugin);
+
+      const specs: CommandSpec[] = [
+        {
+          id: "stopPlugin::firstFn",
+          cmd: "stop",
+          aliases: [],
+          plugin: "stopPlugin",
+          functions: ["firstFn", "secondFn"],
+          loading: null,
+          text: null,
+          desc: null,
+          category: null,
+          group: null,
+          manual: null,
+          deprecatedMessage: null,
+          notifyChanges: null,
+          permissions: null,
+          messages: null,
+          arguments: [],
+          subcommands: [],
+        },
+      ];
+      __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
+      const resolution = resolveDispatch("stop", "");
+      const result = await runCommand({
+        pluginName: "stopPlugin",
+        ctx: fakeCtx(),
+        resolution,
+        reply: { text: () => {} },
+      });
+      assert.equal(result.status, "executed");
+      assert.equal(secondRan, false);
+      pluginRegistry.delete("stopPlugin");
+    });
+
+    test("chain throw propagates and stops the chain", async () => {
+      let secondRan = false;
+      const plugin: PluginEntry = {
+        name: "throwPlugin",
+        status: "active",
+        run: null,
+        setup: null,
+        exports: {},
+        error: null,
+        guardOptions: {},
+        commands: {
+          firstFn: { cmd: "throw", aliases: [], handler: async () => { throw new Error("mid"); } },
+          secondFn: { cmd: "throw", aliases: [], handler: async () => { secondRan = true; } },
+        },
+      } as unknown as PluginEntry;
+      pluginRegistry.set("throwPlugin", plugin);
+
+      const specs: CommandSpec[] = [
+        {
+          id: "throwPlugin::firstFn",
+          cmd: "throw",
+          aliases: [],
+          plugin: "throwPlugin",
+          functions: ["firstFn", "secondFn"],
+          loading: null,
+          text: null,
+          desc: null,
+          category: null,
+          group: null,
+          manual: null,
+          deprecatedMessage: null,
+          notifyChanges: null,
+          permissions: null,
+          messages: null,
+          arguments: [],
+          subcommands: [],
+        },
+      ];
+      __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
+      const resolution = resolveDispatch("throw", "");
+      await assert.rejects(
+        () => runCommand({
+          pluginName: "throwPlugin",
+          ctx: fakeCtx(),
+          resolution,
+          reply: { text: () => {} },
+        }),
+        /mid/
+      );
+      assert.equal(secondRan, false);
+      pluginRegistry.delete("throwPlugin");
+    });
   });
 });
 
