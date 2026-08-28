@@ -22,7 +22,8 @@
 import type { BotMessage } from "#drivers/types.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
-import { CHATS, EXCLUDE_CHATS, CMD_PREFIX } from "#config";
+import { CHATS, EXCLUDE_CHATS } from "#config";
+import { getChatPrefix, getChatLocale } from "#kernel/chatOverrides.js";
 import { buildApi,
          buildChatFromMsg,
          buildMessageContext } from "./api/index.js";
@@ -124,7 +125,7 @@ function startLoadingIndicator(
 
   if (spec.type === "spinner") {
     const frames = spec.frames && spec.frames.length > 0 ? spec.frames : ["⏳"];
-    const intervalMs = spec.intervalMs ?? 1500;
+    const intervalMs = Math.max(1000, spec.intervalMs ?? 1500);
     let frameIdx = 0;
     let sentMsgId: string | null = null;
     const cycle = async () => {
@@ -280,7 +281,9 @@ async function runPluginsForMessage(
   rawJid: string,
   rawKey: BotMessage["quotedKey"]
 ): Promise<void> {
-  const command = extractCommand(msgCtx.body, CMD_PREFIX);
+  const chatPrefix = getChatPrefix(msg.chatId);
+  const chatLocale = getChatLocale(msg.chatId);
+  const command = extractCommand(msgCtx.body, chatPrefix);
   const registry = getCommandRegistry();
 
   // 0. Welcome message (first message within the configured window)
@@ -307,7 +310,9 @@ async function runPluginsForMessage(
     const welcomeMsg = checkAndTriggerWelcomeMessage(
       msgCtx.sender ?? msg.chatId,
       registry,
-      { body: msgCtx.body, timestamp: msg.timestamp }
+      { body: msgCtx.body, timestamp: msg.timestamp },
+      chatLocale,
+      chatPrefix
     );
     if (welcomeMsg) {
       try {
@@ -321,9 +326,9 @@ async function runPluginsForMessage(
 
   // 1. Menu aliases match (overview / category / manual / notFound)
   if (command && registry && registry.menuAliases.has(command)) {
-    const rawArgs = msgCtx.body.trim().slice(CMD_PREFIX.length + command.length).trim();
+    const rawArgs = msgCtx.body.trim().slice(chatPrefix.length + command.length).trim();
     const scope = chat.isGroup ? "group" : "dm";
-    const menuResponse = handleMenuCommand(command, rawArgs, registry, undefined, scope);
+    const menuResponse = handleMenuCommand(command, rawArgs, registry, chatLocale, scope);
     try {
       await msgCtx.reply.text(menuResponse);
     } catch (e) {
@@ -341,7 +346,7 @@ async function runPluginsForMessage(
   // active in production. Kept separate from the `matched` top-level
   // permission pre-check further down (unchanged, still gates the whole
   // per-message plugin loop exactly as before `runCommand` existed).
-  const rawArgsForDispatch = command ? msgCtx.body.trim().slice(CMD_PREFIX.length + command.length).trim() : "";
+  const rawArgsForDispatch = command ? msgCtx.body.trim().slice(chatPrefix.length + command.length).trim() : "";
   const resolution = command ? resolveDispatch(command, rawArgsForDispatch) : { target: { kind: "none" as const } };
 
   if (matched) {
@@ -380,7 +385,7 @@ async function runPluginsForMessage(
   // invoke any plugin (legacy or migrated) for this message.
   if (matched && matched.source === "text" && matched.text !== null) {
     try {
-      const textContent = resolveLocalizedString(matched.text) ?? "";
+      const textContent = resolveLocalizedString(matched.text, chatLocale) ?? "";
       await msgCtx.reply.text(textContent);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -411,6 +416,42 @@ async function runPluginsForMessage(
 
   const matchedPlugin = matched && matched.source === "plugin" ? matched : null;
 
+  // "core" (ping/status/config/...) is a synthetic pseudo-plugin: it only
+  // exists in a *local* `allPlugins` map built inside commandRegistry.ts
+  // for registry-building purposes — it is never inserted into the real
+  // `pluginRegistry` singleton that the loop below iterates. Left as-is,
+  // no "core"-sourced command could ever be dispatched (runCommand() would
+  // never be called for it, plugin count or not), so it's handled here
+  // explicitly, once, before the real-plugin loop.
+  if (matchedPlugin && matchedPlugin.pluginName === "core") {
+    const coreCtx = buildApi({
+      msg,
+      chat,
+      contract,
+      store,
+      pluginRegistry,
+      pluginName:   "core",
+      guardOptions: {},
+    });
+
+    const coreLoading = startLoadingIndicator(
+      resolveLoadingForDispatch(matchedPlugin, resolution),
+      contract,
+      rawJid,
+      rawKey
+    );
+    let coreOutcome: "success" | "error" = "success";
+    try {
+      await runCommand({ pluginName: "core", ctx: coreCtx, resolution, reply: msgCtx.reply, chatId: msg.chatId });
+    } catch (e) {
+      coreOutcome = "error";
+      const err = e instanceof Error ? e : new Error(String(e));
+      logger.warn(`[messageHandler] runCommand crashed for core: ${err.message}`);
+    } finally {
+      await coreLoading.stop(coreOutcome);
+    }
+  }
+
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
@@ -422,7 +463,7 @@ async function runPluginsForMessage(
       guardOptions: plugin.guardOptions,
     });
 
-    const useTyping = plugin.guardOptions?.typing !== false;
+    const useTyping = !matchedPlugin && plugin.guardOptions?.typing !== false;
     let typingInterval: ReturnType<typeof setInterval> | undefined;
 
     if (useTyping) {
@@ -443,10 +484,7 @@ async function runPluginsForMessage(
       // run(ctx).
       if (matchedPlugin && matchedPlugin.pluginName === plugin.name && matchedPlugin.handler) {
         // Loading indicator: the resolved spec is read once per dispatch
-        // and drives start/stop around the runCommand call. When the
-        // spec is `typing` (or absent) the per-plugin legacy `useTyping`
-        // above already covers presence — startLoadingIndicator
-        // recognises that overlap and dedupes by spec.type.
+        // and drives start/stop around the runCommand call.
         const loading = startLoadingIndicator(
           resolveLoadingForDispatch(matchedPlugin, resolution),
           contract,
@@ -460,7 +498,7 @@ async function runPluginsForMessage(
           // Swallow here too, at the boundary: this loop must never crash the bot,
           // same guarantee the legacy runPlugin(plugin, ctx) branch below already has.
           try {
-            await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply });
+            await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply, chatId: msg.chatId });
           } catch (e) {
             outcome = "error";
             const err = e instanceof Error ? e : new Error(String(e));
@@ -486,7 +524,7 @@ async function runPluginsForMessage(
   // alongside this fallback.
   if (!matched && command && registry?.menu.notFoundFallback) {
     try {
-      await msgCtx.reply.text(renderNotFound(command, registry));
+      await msgCtx.reply.text(renderNotFound(command, registry, chatLocale));
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       logger.warn(`[messageHandler] notFoundFallback reply failed: ${err.message}`);

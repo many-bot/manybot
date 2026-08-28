@@ -31,6 +31,7 @@ import {
   type PluginCommandExport,
 } from "./pluginLoader.js";
 import { getActiveDeprecation, syncCommandHistory } from "./commandDeprecation.js";
+import { resolveCoreCommandHandler } from "./coreCommands.js";
 
 export type CommandHandler = (ctx: unknown, input?: unknown) => Promise<unknown>;
 
@@ -376,7 +377,7 @@ function registerInvocationWithDeprecationGuard(
   }
 
   const deprecation = getActiveDeprecation(text);
-  if (deprecation) {
+  if (deprecation && deprecation.id !== entryId) {
     logger.warn(
       t("system.commandDeprecationReservedInvocation", {
         text,
@@ -399,6 +400,8 @@ const DEFAULT_MENU_CONFIG: MenuConfig = {
   cmd: "menu",
   aliases: ["help", "man", "menu", "bot", "?"],
   notFoundFallback: false,
+  suggestSimilar: false,
+  suggestMaxDistance: 2,
   welcomeMessage: null,
   welcomeWindowDays: 3,
   pageSize: 15,
@@ -535,7 +538,33 @@ export function buildCommandRegistry(
 
   const defaultsByKey = new Map<string, PluginDefaultEntry>();
 
-  for (const plugin of pluginRegistry.values()) {
+  const coreFunctionNames = new Set<string>();
+  for (const spec of specs ?? []) {
+    for (const fn of spec.functions) coreFunctionNames.add(fn);
+    for (const sub of spec.subcommands) {
+      for (const fn of sub.functions ?? []) coreFunctionNames.add(fn);
+    }
+  }
+  const allPlugins = new Map(pluginRegistry);
+  allPlugins.set("core", {
+    name: "core",
+    status: "active",
+    run: null,
+    setup: null,
+    commands: Object.fromEntries(
+      [...coreFunctionNames, "ping", "status"].map((name) => [
+        name,
+        {
+          handler: resolveCoreCommandHandler(name),
+        },
+      ])
+    ),
+    exports: null,
+    error: null,
+    guardOptions: { timeout: false },
+  });
+
+  for (const plugin of allPlugins.values()) {
     if (plugin.status !== "active") continue;
     if (!plugin.commands) continue;
 
@@ -695,12 +724,14 @@ export function buildCommandRegistry(
           manuals,
           loadingPresets
         );
-      } else if (spec.plugin && spec.functions.length === 0 && spec.subcommands.length > 0) {
-        // Parent-only container: the top-level entry has no handler of
-        // its own (e.g. `todo:`), it just groups subcommands that each
-        // declare their own `function:`. Never dispatched directly —
-        // resolveDispatch() always routes into one of `subcommands`.
-        const id = `parent::${spec.id}`;
+      } else if (spec.plugin && spec.functions.length === 0) {
+        // Metadata-only plugin entry: no handler of its own. Either a
+        // parent container grouping subcommands that each declare their
+        // own `function:` (e.g. `todo:`), or a bare declarative entry
+        // with no subcommands at all — either way `functions` stays
+        // empty and runCommand() short-circuits to "no_dispatch" (see
+        // its `fnNames.length === 0` check).
+        const id = spec.subcommands.length > 0 ? `parent::${spec.id}` : spec.id;
 
         const entry: CommandEntry = {
           id,
@@ -820,20 +851,24 @@ export function buildCommandRegistry(
     }
   }
 
-  // Validate menu cmd + aliases against command invocations
+  // Validate menu cmd + aliases against command invocations. Fully opt-in:
+  // when menu.enabled is false (default), the native menu claims nothing —
+  // "menu"/"help" stay free for a plugin (legacy or commands.yaml) to use.
   const menuAliases = new Set<string>();
-  const menuInvocations = [menu.cmd, ...menu.aliases.filter(a => a !== menu.cmd)];
-  for (const alias of menuInvocations) {
-    const existing = byInvocation.get(alias);
-    if (existing !== undefined) {
-      logger.warn(
-        t("system.commandRegistryMenuAliasCollision", {
-          alias,
-          winner: existing
-        })
-      );
-    } else {
-      menuAliases.add(alias);
+  if (menu.enabled) {
+    const menuInvocations = [menu.cmd, ...menu.aliases.filter(a => a !== menu.cmd)];
+    for (const alias of menuInvocations) {
+      const existing = byInvocation.get(alias);
+      if (existing !== undefined) {
+        logger.warn(
+          t("system.commandRegistryMenuAliasCollision", {
+            alias,
+            winner: existing
+          })
+        );
+      } else {
+        menuAliases.add(alias);
+      }
     }
   }
 

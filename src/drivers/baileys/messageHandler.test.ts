@@ -269,6 +269,34 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
     assert.equal(sentTexts[0].text, "done");
   });
 
+  // Regression test for the bug where "core" (ping/status/config/...)
+  // was never actually reachable from handleMessage(): it only ever
+  // existed in a *local* allPlugins map built inside commandRegistry.ts
+  // for registry-building purposes, never in the real pluginRegistry
+  // singleton the dispatch loop iterates — so runCommand() was never
+  // called for any core.* command, even though the registry itself
+  // resolved them fine (only !menu, which has its own separate dispatch
+  // path, worked). This must keep passing with 0 real plugins active.
+  test("a matched command sourced from the 'core' pseudo-plugin still dispatches and replies", async () => {
+    pluginRegistry.delete("taskPlugin"); // 0 real plugins active, same as the reported bug
+
+    const spec = emptySpec({
+      id: "core::ping",
+      cmd: "ping",
+      plugin: "core",
+      functions: ["ping"],
+    });
+    __setRegistryForTests(buildRegistry([spec]));
+
+    const msg = makeBotMessage({ body: "!ping" });
+    await handleMessage(msg, contract, store);
+
+    assert.equal(sentTexts.length, 1, "core.ping replied");
+    assert.equal(sentTexts[0].text, "pong");
+    // No restore needed: the next test's beforeEach() re-registers
+    // "taskPlugin" fresh regardless of what this test left behind.
+  });
+
   test("a crash inside the matched command's handler is swallowed at the messageHandler boundary", async () => {
     const spec = emptySpec({ id: "task::crash", cmd: "crashcmd", functions: ["crashFn"] });
     __setRegistryForTests(buildRegistry([spec]));
@@ -340,13 +368,11 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
 
       // reaction is never called — the loading indicator itself is a no-op.
       assert.equal(reactions.length, 0, "no reactions emitted");
-      // Presence still shows up from two pre-existing, independent legacy
-      // paths that have nothing to do with the loading indicator: the
-      // per-plugin useTyping wrapper in messageHandler.ts, and simulateState()
-      // inside ctx.send.text() (api/index.ts) humanizing every outbound send.
-      // A "none" loading spec must add zero presence calls on top of those.
-      assert.equal(presences.filter(p => p.state === "paused" && p.jid === "5511888888888@s.whatsapp.net").length, 2,
-        "paused presence came only from the two pre-existing legacy paths, not from the loading indicator");
+      // Presence still shows up from simulateState() inside ctx.send.text()
+      // (api/index.ts) humanizing every outbound send.
+      // A "none" loading spec must add zero presence calls on top of that.
+      assert.equal(presences.filter(p => p.state === "paused" && p.jid === "5511888888888@s.whatsapp.net").length, 1,
+        "paused presence came only from simulateState path");
     });
 
     test("spinner: sends a frame message and edits it on completion", async () => {
@@ -468,6 +494,58 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
       );
 
       assert.equal(sentTexts.length, 0, "no welcome sent for a stale message");
+    });
+  });
+
+  // ── Per-chat !config overrides (prefix / language) ─────────────────────
+  describe("per-chat overrides (!config prefixo / !config idioma)", () => {
+    // makeBotMessage()'s default chatId ("5511888888888@s.whatsapp.net")
+    // normalized the same way buildApi() scopes ctx.settings.
+    const normalizedChatId = "5511888888888@c.us";
+
+    afterEach(() => {
+      buildSettingsApi("core", normalizedChatId).deleteAll();
+    });
+
+    test("a saved prefix override changes which prefix the bot actually parses", async () => {
+      buildSettingsApi("core", normalizedChatId).set("chat_prefix", "#");
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+
+      await handleMessage(makeBotMessage({ body: "#task" }), contract, store);
+      assert.equal(runCalls.length, 1, "the new '#' prefix dispatches the command");
+      assert.equal(sentTexts[0].text, "done");
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+      assert.equal(runCalls.length, 1, "the old '!' prefix no longer matches for this chat");
+    });
+
+    test("without an override the global prefix still works", async () => {
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+      assert.equal(runCalls.length, 1);
+      assert.equal(sentTexts[0].text, "done");
+    });
+
+    test("a saved language override changes the language of a kernel-authored reply (unknown subcommand)", async () => {
+      buildSettingsApi("core", normalizedChatId).set("chat_locale", "pt");
+      const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task wat" }), contract, store);
+
+      assert.equal(sentTexts.length, 1);
+      assert.match(sentTexts[0].text, /Subcomando "wat" desconhecido/);
+    });
+
+    test("without an override the unknown-subcommand reply uses the global language", async () => {
+      const spec = emptySpec({ subcommands: [emptySub({ functions: ["listFn"] })] });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task wat" }), contract, store);
+
+      assert.equal(sentTexts.length, 1);
+      assert.match(sentTexts[0].text, /Unknown subcommand "wat"/);
     });
   });
 });
