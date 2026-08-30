@@ -1,17 +1,17 @@
 /**
  * @manybot/types
  *
- * Standalone types for the ManyBot plugin context object (`ctx`) —
- * self-contained on purpose, so plugin projects get autocomplete without
- * depending on the whole "@manybot/manybot" package. The only external
- * dependency is @whiskeysockets/baileys, which plugins already touch
- * through ctx.wa.contract/sock.
+ * Tipos independentes para o objeto de contexto (`ctx`) dos plugins do
+ * ManyBot — propositalmente autocontido, para que os projetos de plugin
+ * ganhem autocomplete sem depender do pacote inteiro "@manybot/manybot".
+ * A única dependência externa é @whiskeysockets/baileys, que os plugins
+ * já tocam através de ctx.wa.contract/sock.
  *
- * Install:
+ * Instalação:
  *
  *   npm install --save-dev @manybot/types
  *
- * Usage in a plugin file (plain JS, no build step needed):
+ * Uso em um arquivo de plugin (JS puro, sem etapa de build):
  *
  *   /**
  *    * @param {import('@manybot/types').PluginContext} ctx
@@ -23,34 +23,36 @@
  *     }
  *   }
  *
- * setup(ctx) plugins use SetupContext the same way:
+ * Plugins com setup(ctx) usam SetupContext da mesma forma:
  *
  *   /**
  *    * @param {import('@manybot/types').SetupContext} ctx
  *    *\/
  *   export async function setup(ctx) { ... }
  *
- * If every plugin file lives under one tsconfig/jsconfig with "checkJs",
- * you can skip the per-file import entirely — see the bottom of this file
- * for a global-ambient alternative.
+ * Se todos os arquivos de plugin vivem sob um único tsconfig/jsconfig com
+ * "checkJs", você pode pular o import por arquivo completamente — veja o
+ * final deste arquivo para uma alternativa global-ambiente.
  */
 
 import type { proto } from "@whiskeysockets/baileys";
 
 /**
- * Raw incoming/stored WhatsApp message (Baileys' `proto.IWebMessageInfo`).
- * Prefer {@link WAMessageContext} for everyday plugin logic — reach for this
- * only when you need a field Baileys exposes that the normalized context
- * doesn't wrap (e.g. via `ctx.wa.msg`).
+ * Mensagem bruta do WhatsApp recebida/armazenada (`proto.IWebMessageInfo`
+ * do Baileys). Prefira {@link WAMessageContext} para a lógica cotidiana
+ * de plugins — recorra a este tipo apenas quando precisar de um campo que
+ * o Baileys expõe e que o contexto normalizado não envolve (ex.: via
+ * `ctx.wa.msg`).
  *
  * @see WAMessageContext
  */
 export type WAProtoMsg = proto.IWebMessageInfo;
 
 /**
- * Driver-neutral message envelope. The adapter translates Baileys WAMessages
- * into this shape before the rest of the codebase sees them. Available on
- * `ctx.wa.msg` as an alternative to the old raw `WAProtoMsg`.
+ * Envelope de mensagem neutro em relação ao driver. O adaptador traduz as
+ * WAMessages do Baileys para este formato antes que o resto do código as
+ * veja. Disponível em `ctx.wa.msg` como alternativa ao antigo `WAProtoMsg`
+ * bruto.
  */
 export interface BotMessage {
   id: string;
@@ -71,14 +73,15 @@ export interface BotMessage {
 }
 
 /**
- * Identifier for a specific message on WhatsApp — the driver-neutral
- * shape of a "message key", used as the reference for reactions,
- * edits, deletes, quotes, and poll-vote bookkeeping.
+ * Identificador de uma mensagem específica no WhatsApp — o formato neutro
+ * em relação ao driver de uma "chave de mensagem", usado como referência
+ * para reações, edições, exclusões, citações e contabilização de votos de
+ * enquete.
  *
- * Every field is optional because every driver surface hands partial
- * keys in some contexts (e.g. a reaction handler that only knows the
- * target message ID, not the participant). Pass back whatever you
- * have; the adapter fills the rest.
+ * Todos os campos são opcionais porque cada superfície de driver entrega
+ * chaves parciais em alguns contextos (ex.: um handler de reação que só
+ * conhece o ID da mensagem alvo, não o participante). Repasse o que você
+ * tiver; o adaptador completa o resto.
  */
 export interface BotQuotedRef {
   id?: string | null;
@@ -87,98 +90,98 @@ export interface BotQuotedRef {
   participant?: string | null;
 }
 
-/** Minimal chat summary used by history payloads. */
+/** Resumo mínimo de chat usado nos payloads de histórico. */
 export interface BotChatSummary {
   id: string;
   name?: string;
 }
 
-/** Plain contact summary used by history payloads. */
+/** Resumo simples de contato usado nos payloads de histórico. */
 export interface BotContactSummary {
   id: string;
   name?: string;
   notify?: string;
   verifiedName?: string;
-  /** @lid form, if known. */
+  /** Forma @lid, se conhecida. */
   lid?: string;
 }
 
-/** Payload of `messages.upsert`. */
+/** Payload de `messages.upsert`. */
 export interface MessagesUpsertEvent {
   messages: BotMessage[];
   type: "notify" | "append";
 }
 
-/** Payload of `messages.update`. */
+/** Payload de `messages.update`. */
 export interface MessagesUpdateEvent {
   updates: Array<{ key: BotQuotedRef; update: Record<string, unknown> }>;
 }
 
-/** Payload of `messaging-history.set`. */
+/** Payload de `messaging-history.set`. */
 export interface HistorySetEvent {
   chats: BotChatSummary[];
   contacts: BotContactSummary[];
   messages: BotMessage[];
 }
 
-/** Payload of `chats.upsert`. */
+/** Payload de `chats.upsert`. */
 export interface ChatsUpsertEvent {
   chats: BotChatSummary[];
 }
 
-/** Payload of `chats.update`. */
+/** Payload de `chats.update`. */
 export interface ChatsUpdateEvent {
   updates: Array<{ id: string; name?: string }>;
 }
 
-/** Payload of `contacts.upsert`. */
+/** Payload de `contacts.upsert`. */
 export interface ContactsUpsertEvent {
   contacts: BotContactSummary[];
 }
 
-/** Payload of `contacts.update`. */
+/** Payload de `contacts.update`. */
 export interface ContactsUpdateEvent {
   updates: BotContactSummary[];
 }
 
-/** Payload of `group-participants.update`. */
+/** Payload de `group-participants.update`. */
 export interface GroupParticipantsUpdateEvent {
   id: string;
   author: string;
-  /** JIDs of the affected participants, normalized to user-server form. */
+  /** JIDs dos participantes afetados, normalizados para a forma user-server. */
   participants: string[];
   action: "add" | "remove" | "promote" | "demote" | "modify";
 }
 
-/** Payload of `groups.upsert`. */
+/** Payload de `groups.upsert`. */
 export interface GroupsUpsertEvent {
   groups: Array<{ id: string; subject?: string }>;
 }
 
-/** Payload of `groups.update`. */
+/** Payload de `groups.update`. */
 export interface GroupsUpdateEvent {
   updates: Array<{ id: string }>;
 }
 
-/** Payload of `connection.update`. */
+/** Payload de `connection.update`. */
 export interface ConnectionUpdateEvent {
   connection: "open" | "close" | "connecting";
   lastDisconnect?: { statusCode?: number };
 }
 
-/** Payload of `chats.delete`. */
+/** Payload de `chats.delete`. */
 export interface ChatsDeleteEvent {
   ids: string[];
 }
 
-/** Payload of `messages.delete`. */
+/** Payload de `messages.delete`. */
 export interface MessagesDeleteEvent {
   keys: BotQuotedRef[];
-  /** When true, every message in `jid` was wiped (chat-clear semantics). */
+  /** Quando true, todas as mensagens em `jid` foram apagadas (semântica de limpeza de chat). */
   all?: { jid: string } | null;
 }
 
-/** Payload of `group.join-request`. */
+/** Payload de `group.join-request`. */
 export interface GroupJoinRequestEvent {
   id: string;
   author: string;
@@ -187,18 +190,18 @@ export interface GroupJoinRequestEvent {
   method: "invite_link" | "linked_group_join" | "non_admin_add" | "unknown";
 }
 
-/** Payload of `blocklist.set`. */
+/** Payload de `blocklist.set`. */
 export interface BlocklistSetEvent {
   blocklist: string[];
 }
 
-/** Payload of `blocklist.update`. */
+/** Payload de `blocklist.update`. */
 export interface BlocklistUpdateEvent {
   blocklist: string[];
   type: "add" | "remove";
 }
 
-/** Driver-neutral event names surfaced on `WaContract.on`. */
+/** Nomes de eventos neutros em relação ao driver, expostos em `WaContract.on`. */
 export type WaEventName =
   | "messages.upsert"
   | "messages.update"
@@ -217,7 +220,7 @@ export type WaEventName =
   | "blocklist.update"
   | "connection.update";
 
-/** Per-event payload map. */
+/** Mapa de payload por evento. */
 export type WaEventPayload<E extends WaEventName> =
   E extends "messages.upsert"           ? MessagesUpsertEvent :
   E extends "messages.update"           ? MessagesUpdateEvent :
@@ -237,114 +240,116 @@ export type WaEventPayload<E extends WaEventName> =
   E extends "connection.update"         ? ConnectionUpdateEvent :
   never;
 
-/** Inputs to {@link WaContract.sendPoll}. */
+/** Entradas para {@link WaContract.sendPoll}. */
 export interface BotPollOptions {
   name: string;
   values: string[];
   selectableCount?: number;
 }
 
-/** Reference to a message the bot just sent. */
+/** Referência a uma mensagem que o bot acabou de enviar. */
 export interface SentMessageRef {
   id: string;
   chatId: string;
   timestamp: number;
 }
 
-/** A participant entry in {@link BotGroupMetadata.participants}. */
+/** Uma entrada de participante em {@link BotGroupMetadata.participants}. */
 export interface BotGroupParticipant {
   id: string;
   isAdmin: boolean;
   isSuperAdmin: boolean;
-  /** E.164 phone-number JID, populated when the driver exposes it. */
+  /** JID de número de telefone no formato E.164, preenchido quando o driver o expõe. */
   phoneNumber?: string;
 }
 
-/** Group metadata returned by {@link WaContract.groupMetadata}. */
+/** Metadados de grupo retornados por {@link WaContract.groupMetadata}. */
 export interface BotGroupMetadata {
   subject: string;
   participants: BotGroupParticipant[];
 }
 
-/** Information about the bot's own account. */
+/** Informações sobre a própria conta do bot. */
 export interface BotMe {
   id: string;
   lid?: string;
 }
 
-/** Inputs to {@link WaContract.decryptPollVote}. */
+/** Entradas para {@link WaContract.decryptPollVote}. */
 export interface PollDecryptOpts {
-  /** Key of the poll-vote update message. */
+  /** Chave da mensagem de atualização de voto da enquete. */
   voteKey: BotQuotedRef;
-  /** Key of the poll-creation message. */
+  /** Chave da mensagem de criação da enquete. */
   pollKey: BotQuotedRef;
-  /** Poll encryption key, base64-string or Buffer. */
+  /** Chave de criptografia da enquete, string base64 ou Buffer. */
   pollEncKey: Buffer | string;
 }
 
-/** Successful result of {@link WaContract.decryptPollVote}. */
+/** Resultado de sucesso de {@link WaContract.decryptPollVote}. */
 export interface PollDecryptResult {
-  /** Decrypted list of selected option hashes (SHA-256 of each option name). */
+  /** Lista decifrada dos hashes das opções selecionadas (SHA-256 do nome de cada opção). */
   selectedOptions: string[];
-  /** Raw decrypted vote message — exposed for callers that need fields
-   *  the neutral envelope intentionally doesn't model. */
+  /** Mensagem de voto bruta decifrada — exposta para chamadores que
+   *  precisam de campos que o envelope neutro propositalmente não modela. */
   raw: unknown;
 }
 
-/** Inputs to {@link WaContract.aggregatePollVotes}. */
+/** Entradas para {@link WaContract.aggregatePollVotes}. */
 export interface PollAggregateOpts {
-  /** Poll-creation message key. */
+  /** Chave da mensagem de criação da enquete. */
   pollKey: BotQuotedRef;
-  /** Latest per-voter entries from {@link WaContract.decryptPollVote}. */
+  /** Entradas mais recentes por votante, vindas de {@link WaContract.decryptPollVote}. */
   votes: PollDecryptResult[];
-  /** JID used to filter the bot's own votes out of the tally. */
+  /** JID usado para filtrar os próprios votos do bot fora da contagem. */
   selfJid?: string;
 }
 
-/** One row of the aggregated tally. */
+/** Uma linha da contagem agregada. */
 export interface PollVoteAggregate {
   name: string;
   voters: string[];
 }
 
 /**
- * Driver-neutral contract that the kernel exposes as
- * `ctx.wa.contract`. Every WhatsApp driver — Baileys today, whatsmeow
- * later — implements this interface. Plugins reach into it for the
- * protocol-level operations that aren't abstracted by `ctx.send.*`,
- * `ctx.admin.*`, etc. (e.g. `contract.groupMetadata(jid)`,
+ * Contrato neutro em relação ao driver que o kernel expõe como
+ * `ctx.wa.contract`. Todo driver de WhatsApp — Baileys hoje, whatsmeow
+ * futuramente — implementa esta interface. Os plugins recorrem a ela
+ * para operações em nível de protocolo que não são abstraídas por
+ * `ctx.send.*`, `ctx.admin.*` etc. (ex.: `contract.groupMetadata(jid)`,
  * `contract.readMessages(keys)`).
  *
- * All event names listed in {@link WaEventName} are committed-to —
- * the adapter implements every `bindSockEventsExternal` listener for
- * each one. Optional methods (`resolveLid`, `getHistory`,
- * `decryptPollVote`, `aggregatePollVotes`) are driver-specific
- * extensions; callers MUST handle their absence.
+ * Todos os nomes de evento listados em {@link WaEventName} são
+ * compromissos firmes — o adaptador implementa cada listener
+ * `bindSockEventsExternal` para cada um deles. Os métodos opcionais
+ * (`resolveLid`, `getHistory`, `decryptPollVote`, `aggregatePollVotes`)
+ * são extensões específicas do driver; os chamadores DEVEM lidar com a
+ * ausência deles.
  */
 export interface WaContract {
   readonly name: "baileys" | "whatsmeow";
 
-  // ── lifecycle ───────────────────────────────────────────────────────
+  // ── ciclo de vida ───────────────────────────────────────────────────
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   isReady(): boolean;
 
   /**
-   * Resolve a @lid JID to the real @s.whatsapp.net JID using the
-   * driver's authoritative source. Optional — drivers without a
-   * protocol-level resolver can omit it.
+   * Resolve um JID @lid para o JID real @s.whatsapp.net usando a fonte
+   * autoritativa do driver. Opcional — drivers sem um resolvedor em
+   * nível de protocolo podem omiti-lo.
    */
   resolveLid?(lid: string): Promise<string | null>;
 
-  // ── event subscription ──────────────────────────────────────────────
+  // ── inscrição em eventos ─────────────────────────────────────────────
   /**
-   * Register a listener for a driver event. Returns an unsubscribe
-   * function. Adapters translate the driver's own event shape into
-   * the neutral payload type declared above.
+   * Registra um listener para um evento do driver. Retorna uma função
+   * de cancelamento de inscrição. Os adaptadores traduzem o formato de
+   * evento próprio do driver para o tipo de payload neutro declarado
+   * acima.
    */
   on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void): () => void;
 
-  // ── send (text routes through sendFallbackGuard; these are direct) ─
+  // ── envio (texto passa por sendFallbackGuard; estes são diretos) ────
   sendText(jid: string, text: string, opts?: { quoted?: BotQuotedRef; mentions?: string[] }): Promise<SentMessageRef>;
   sendImage(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean }): Promise<SentMessageRef>;
   sendVideo(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean; gifPlayback?: boolean }): Promise<SentMessageRef>;
@@ -357,11 +362,11 @@ export interface WaContract {
   deleteMessage(jid: string, target: BotQuotedRef, forEveryone: boolean): Promise<void>;
   editMessage(jid: string, target: BotQuotedRef, text: string): Promise<void>;
 
-  // ── presence + read ─────────────────────────────────────────────────
+  // ── presença + leitura ───────────────────────────────────────────────
   sendPresenceUpdate(state: "composing" | "recording" | "paused", jid: string): Promise<void>;
   readMessages(keys: BotQuotedRef[]): Promise<void>;
 
-  // ── contacts ────────────────────────────────────────────────────────
+  // ── contatos ────────────────────────────────────────────────────────
   onWhatsApp(jid: string): Promise<{ exists: boolean }[] | null>;
   getBusinessProfile(jid: string): Promise<unknown | null>;
   profilePictureUrl(jid: string): Promise<string | null>;
@@ -370,7 +375,7 @@ export interface WaContract {
   addOrEditContact(jid: string, info: { fullName: string; firstName?: string; saveOnPrimaryAddressbook?: boolean }): Promise<void>;
   removeContact(jid: string): Promise<void>;
 
-  // ── groups ──────────────────────────────────────────────────────────
+  // ── grupos ──────────────────────────────────────────────────────────
   groupMetadata(jid: string): Promise<BotGroupMetadata>;
   groupParticipantsUpdate(jid: string, users: string[], action: "add" | "remove" | "promote" | "demote"): Promise<Array<{ status: string; jid?: string }>>;
   groupUpdateSubject(jid: string, subject: string): Promise<void>;
@@ -378,45 +383,46 @@ export interface WaContract {
   groupInviteCode(jid: string): Promise<string>;
   groupRevokeInvite(jid: string): Promise<string>;
 
-  // ── profile (bot + group) ───────────────────────────────────────────
+  // ── perfil (bot + grupo) ─────────────────────────────────────────────
   updateProfilePicture(jid: string, buffer: Buffer): Promise<void>;
   updateProfileName(name: string): Promise<void>;
   updateProfileStatus(status: string): Promise<void>;
 
-  // ── me ───────────────────────────────────────────────────────────────
+  // ── eu (me) ─────────────────────────────────────────────────────────
   me(): BotMe;
 
-  // ── media (download) ────────────────────────────────────────────────
+  // ── mídia (download) ────────────────────────────────────────────────
   /**
-   * Download a media payload. Returns null on any failure
-   * (already-downloaded media, expired blob, protocol error, etc).
+   * Baixa um payload de mídia. Retorna null em qualquer falha (mídia já
+   * baixada, blob expirado, erro de protocolo etc).
    */
   downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer } | null>;
 
-  // ── verification primitive ──────────────────────────────────────────
+  // ── primitiva de verificação ─────────────────────────────────────────
   /**
-   * Read the most recent N messages the driver has on hand for `jid`,
-   * in chronological order (oldest → newest). Optional for drivers
-   * that don't keep a local history.
+   * Lê as N mensagens mais recentes que o driver tem disponíveis para
+   * `jid`, em ordem cronológica (mais antiga → mais recente). Opcional
+   * para drivers que não mantêm um histórico local.
    */
   getHistory?(jid: string, opts?: { limit?: number }): Promise<BotMessage[]>;
 
-  // ── poll decryption (Baileys-specific) ──────────────────────────────
+  // ── decifragem de enquete (específico do Baileys) ────────────────────
   /**
-   * Decrypt a single poll-vote update against a known poll creation
-   * message. Optional — only the Baileys driver implements it.
+   * Decifra uma única atualização de voto de enquete em relação a uma
+   * mensagem de criação de enquete conhecida. Opcional — só o driver
+   * Baileys implementa.
    */
   decryptPollVote?(opts: PollDecryptOpts): Promise<PollDecryptResult | null>;
 
   /**
-   * Aggregate a per-voter vote history into a tally keyed by option
-   * name. Optional — same rules as `decryptPollVote`.
+   * Agrega um histórico de votos por votante em uma contagem indexada
+   * pelo nome da opção. Opcional — mesmas regras de `decryptPollVote`.
    */
   aggregatePollVotes?(opts: PollAggregateOpts): PollVoteAggregate[];
 }
 
 /**
- * The bot's in-memory chat/contact/message store.
+ * O armazenamento em memória de chats/contatos/mensagens do bot.
  *
  * @example
  * ```js
@@ -434,40 +440,41 @@ export interface WAStore {
   resolveJid(jid: string): string;
 }
 
-// ── Message sending ────────────────────────────────────────────────────────
+// ── Envio de mensagens ───────────────────────────────────────────────────────
 
-/** Options for {@link WAMessageSender.text}. */
+/** Opções para {@link WAMessageSender.text}. */
 export interface SendTextOptions {
-  /** Show a link preview card if the text contains a URL. Defaults to the driver's own default. */
+  /** Mostra um card de pré-visualização de link se o texto contiver uma URL. Usa o padrão do driver se omitido. */
   linkPreview?: boolean;
-  /** JIDs to mention (tag) in the message, in addition to any `@number` already in the text. */
+  /** JIDs para mencionar (marcar) na mensagem, além de qualquer `@numero` já presente no texto. */
   mentions?: string[];
 }
 
-/** Options shared by media-sending methods ({@link WAMessageSender.image}, {@link WAMessageSender.video}). */
+/** Opções compartilhadas pelos métodos de envio de mídia ({@link WAMessageSender.image}, {@link WAMessageSender.video}). */
 export interface SendMediaOptions {
-  /** Send as a view-once media message. */
+  /** Envia como mensagem de mídia de visualização única. */
   viewOnce?: boolean;
-  /** JIDs to mention (tag) in the caption. */
+  /** JIDs para mencionar (marcar) na legenda. */
   mentions?: string[];
 }
 
-/** Options for {@link WAMessageSender.audio}. */
+/** Opções para {@link WAMessageSender.audio}. */
 export interface SendAudioOptions {
-  /** Send as a voice note (ptt). Defaults to true. */
+  /** Envia como mensagem de voz (ptt). O padrão é true. */
   asVoice?: boolean;
   viewOnce?: boolean;
 }
 
-/** Options for {@link WAMessageSender.poll} and {@link PollApi.create}. */
+/** Opções para {@link WAMessageSender.poll} e {@link PollApi.create}. */
 export interface SendPollOptions {
-  /** Allow voters to select more than one option. Defaults to false (single choice). */
+  /** Permite que os votantes selecionem mais de uma opção. O padrão é false (escolha única). */
   allowMultipleAnswers?: boolean;
 }
 
 /**
- * A pending sent message. `await` it to get the resulting {@link WAMessageContext}
- * (or `undefined` if the send failed). Also exposes chainable post-send actions.
+ * Uma mensagem pendente de envio. Aguarde (`await`) para obter o
+ * {@link WAMessageContext} resultante (ou `undefined` se o envio falhar).
+ * Também expõe ações encadeáveis pós-envio.
  *
  * @example
  * ```js
@@ -478,29 +485,30 @@ export interface SendPollOptions {
  */
 export interface MessageHandle extends PromiseLike<WAMessageContext | undefined> {
   /**
-   * Underlying `BotMessage` (or `undefined` if the send failed). Exposed
-   * so plugins that need the raw key for follow-up operations
-   * (e.g. cross-referencing against history) don't have to re-await.
+   * `BotMessage` subjacente (ou `undefined` se o envio falhar). Exposto
+   * para que plugins que precisem da chave bruta para operações
+   * subsequentes (ex.: cruzamento com o histórico) não precisem
+   * aguardar de novo.
    */
   readonly rawPromise: Promise<BotMessage | undefined>;
-  /** Reply to the message that was just sent (quotes it). */
+  /** Responde à mensagem que acabou de ser enviada (citando-a). */
   readonly reply: WAMessageSender;
-  /** Edit the sent message's text (only works on the bot's own messages). */
+  /** Edita o texto da mensagem enviada (só funciona nas próprias mensagens do bot). */
   edit(text: string): Promise<unknown>;
   /**
-   * Pin the sent message.
-   * @param duration - Pin duration in seconds. Driver default is used if omitted.
-   * @deprecated Not currently supported by the Baileys driver — logs a warning and is a no-op.
+   * Fixa a mensagem enviada.
+   * @param duration - Duração da fixação em segundos. Usa o padrão do driver se omitido.
+   * @deprecated Não suportado atualmente pelo driver Baileys — registra um aviso e não faz nada.
    */
   pin(duration?: number): Promise<void>;
   /**
-   * Delete the sent message.
-   * @param forEveryone - If true, deletes for all recipients; otherwise only for the bot. Defaults to true.
+   * Exclui a mensagem enviada.
+   * @param forEveryone - Se true, exclui para todos os destinatários; caso contrário, só para o bot. O padrão é true.
    */
   delete(forEveryone?: boolean | undefined): Promise<unknown>;
   /**
-   * React to the sent message.
-   * @param emoji - A single emoji character, e.g. `"👍"`. Pass `""` to remove an existing reaction.
+   * Reage à mensagem enviada.
+   * @param emoji - Um único caractere de emoji, ex.: `"👍"`. Passe `""` para remover uma reação existente.
    */
   react(emoji: string): Promise<unknown>;
   then<TResult1 = WAMessageContext | undefined, TResult2 = never>(
@@ -508,32 +516,33 @@ export interface MessageHandle extends PromiseLike<WAMessageContext | undefined>
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
   ): Promise<TResult1 | TResult2>;
   /**
-   * Attach a handler for a rejection on the underlying send. Mirrors
-   * `Promise.prototype.catch` so the handle can be used in
-   * promise-chained error paths.
+   * Anexa um handler para uma rejeição no envio subjacente. Espelha
+   * `Promise.prototype.catch` para que o handle possa ser usado em
+   * cadeias de tratamento de erro baseadas em promises.
    */
   catch<TResult = never>(
     onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null | undefined,
   ): Promise<WAMessageContext | undefined | TResult>;
   /**
-   * Attach a handler run when the underlying send settles. Mirrors
-   * `Promise.prototype.finally`.
+   * Anexa um handler executado quando o envio subjacente é resolvido.
+   * Espelha `Promise.prototype.finally`.
    */
   finally(onfinally?: (() => void) | null | undefined): Promise<WAMessageContext | undefined>;
 }
 
 /**
- * Send methods bound to a specific chat/JID. Every method returns a {@link MessageHandle}.
+ * Métodos de envio vinculados a um chat/JID específico. Todo método
+ * retorna um {@link MessageHandle}.
  *
  * @see SendApi
  * @see SetupSendApi
  */
 export interface WAMessageSender {
   /**
-   * Send a text message.
-   * @param content - The message body.
-   * @param opts - Link preview and mention settings.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma mensagem de texto.
+   * @param content - O corpo da mensagem.
+   * @param opts - Configurações de pré-visualização de link e menções.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    * @example
    * ```js
    * await ctx.send.text("Hello world", { mentions: ["5511999999999@s.whatsapp.net"] });
@@ -541,63 +550,64 @@ export interface WAMessageSender {
    */
   text(content: string, opts?: SendTextOptions): MessageHandle;
   /**
-   * Send an image.
-   * @param filePath - Local path or raw Buffer of the image.
-   * @param caption - Optional caption shown under the image.
-   * @param opts - Media options such as view-once.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma imagem.
+   * @param filePath - Caminho local ou Buffer bruto da imagem.
+   * @param caption - Legenda opcional exibida abaixo da imagem.
+   * @param opts - Opções de mídia como visualização única.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   image(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
-   * Send a video.
-   * @param filePath - Local path or raw Buffer of the video.
-   * @param caption - Optional caption shown under the video.
-   * @param opts - Media options such as view-once or gifPlayback.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia um vídeo.
+   * @param filePath - Caminho local ou Buffer bruto do vídeo.
+   * @param caption - Legenda opcional exibida abaixo do vídeo.
+   * @param opts - Opções de mídia como visualização única ou gifPlayback.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   video(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
-   * Send an image/video as a GIF (auto-loops, muted). Accepts `.gif` and
-   * `.mp4` inputs — `.gif` files are converted to mp4 via ffmpeg automatically.
-   * @param filePath - Local path or raw Buffer of the image/video.
-   * @param caption - Optional caption shown below the GIF.
-   * @param opts - Media options such as view-once.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma imagem/vídeo como GIF (loop automático, mudo). Aceita
+   * entradas `.gif` e `.mp4` — arquivos `.gif` são convertidos para mp4
+   * automaticamente via ffmpeg.
+   * @param filePath - Caminho local ou Buffer bruto da imagem/vídeo.
+   * @param caption - Legenda opcional exibida abaixo do GIF.
+   * @param opts - Opções de mídia como visualização única.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   gif(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
-   * Send an audio message.
-   * @param filePath - Local path or raw Buffer of the audio.
-   * @param opts - Whether to send as a voice note (ptt) and/or view-once.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma mensagem de áudio.
+   * @param filePath - Caminho local ou Buffer bruto do áudio.
+   * @param opts - Se deve enviar como mensagem de voz (ptt) e/ou visualização única.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   audio(source: string | Buffer, opts?: SendAudioOptions): MessageHandle;
   /**
-   * Send a sticker.
-   * @param source - Local file path or a raw image `Buffer` to convert into a sticker.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma figurinha.
+   * @param source - Caminho local ou um Buffer bruto de imagem para converter em figurinha.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   sticker(source: string | Buffer): MessageHandle;
   /**
-   * Send an arbitrary file as a document attachment.
-   * @param filePath - Local path or raw Buffer of the file.
-   * @param filename - Display filename shown to the recipient; defaults to the basename of `filePath`.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia um arquivo arbitrário como anexo de documento.
+   * @param filePath - Caminho local ou Buffer bruto do arquivo.
+   * @param filename - Nome de arquivo exibido ao destinatário; o padrão é o nome-base de `filePath`.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
   file(source: string | Buffer, filename?: string): MessageHandle;
   /**
-   * Send a poll (without vote tracking — use {@link PollApi.create} if you need results/winner).
-   * @param question - The poll question.
-   * @param options - Poll answer options (2 or more).
-   * @param opts - Poll settings such as allowing multiple answers.
-   * @returns A {@link MessageHandle} for the sent message.
+   * Envia uma enquete (sem rastreamento de votos — use {@link PollApi.create} se precisar de resultados/vencedor).
+   * @param question - A pergunta da enquete.
+   * @param options - Opções de resposta da enquete (2 ou mais).
+   * @param opts - Configurações da enquete, como permitir múltiplas respostas.
+   * @returns Um {@link MessageHandle} para a mensagem enviada.
    * @see PollApi.create
    */
   poll(question: string, options: string[], opts?: SendPollOptions): MessageHandle;
 }
 
 /**
- * `ctx.send` in runtime context — bound to the current chat, plus `.to()` for other chats.
+ * `ctx.send` no contexto de execução — vinculado ao chat atual, mais `.to()` para outros chats.
  *
  * @example
  * ```js
@@ -607,30 +617,30 @@ export interface WAMessageSender {
  */
 export interface SendApi extends WAMessageSender {
   /**
-   * Get a sender bound to a different chat.
-   * @param targetJid - The destination chat/contact JID.
-   * @returns A {@link WAMessageSender} scoped to `targetJid`.
+   * Obtém um sender vinculado a um chat diferente.
+   * @param targetJid - O JID do chat/contato de destino.
+   * @returns Um {@link WAMessageSender} vinculado a `targetJid`.
    */
   to(targetJid: string): WAMessageSender;
 }
 
 /**
- * `ctx.send` in setup context — there's no "current chat" yet, only `.to()`.
+ * `ctx.send` no contexto de setup — ainda não há um "chat atual", só `.to()`.
  *
  * @see SendApi
  */
 export interface SetupSendApi {
   /**
-   * Get a sender bound to a specific chat.
-   * @param targetJid - The destination chat/contact JID.
-   * @returns A {@link WAMessageSender} scoped to `targetJid`.
+   * Obtém um sender vinculado a um chat específico.
+   * @param targetJid - O JID do chat/contato de destino.
+   * @returns Um {@link WAMessageSender} vinculado a `targetJid`.
    */
   to(targetJid: string): WAMessageSender;
 }
 
-// ── Message context (ctx.msg) ──────────────────────────────────────────────
+// ── Contexto de mensagem (ctx.msg) ───────────────────────────────────────────
 
-/** Normalized kind of an incoming WhatsApp message. */
+/** Tipo normalizado de uma mensagem recebida do WhatsApp. */
 export type WAMessageType =
   | "chat"
   | "image"
@@ -642,46 +652,47 @@ export type WAMessageType =
   | "unknown";
 
 /**
- * Normalized contact info, as returned by {@link WAMessageContext.getContact}
- * and {@link ContactsApi.get}.
+ * Informações de contato normalizadas, conforme retornadas por
+ * {@link WAMessageContext.getContact} e {@link ContactsApi.get}.
  */
 export interface NormalizedContact {
   /**
-   * The contact's primary identifier. For users, this is the `@lid` JID when
-   * known, or `null` if the LID could not be resolved. For groups, this is the
-   * `@g.us` JID.
+   * O identificador primário do contato. Para usuários, é o JID `@lid`
+   * quando conhecido, ou `null` se o LID não pôde ser resolvido. Para
+   * grupos, é o JID `@g.us`.
    */
   id: string | null;
   /**
-   * The contact's phone number in canonical E.164 format (with leading `+`),
-   * or `null` when unresolved or not a valid phone number.
+   * O número de telefone do contato no formato canônico E.164 (com `+`
+   * à esquerda), ou `null` quando não resolvido ou não for um número
+   * válido.
    */
   number: string | null;
   /**
-   * Phone number digits only (no `+`), or `null`.
+   * Apenas os dígitos do número de telefone (sem `+`), ou `null`.
    */
   numberRaw: string | null;
   /**
-   * International formatted phone number (e.g. `+55 16 99999 9999`), or `null`.
+   * Número de telefone formatado internacionalmente (ex.: `+55 16 99999 9999`), ou `null`.
    */
   numberPretty: string | null;
   /**
-   * ISO 3166-1 alpha-2 country code (e.g. `BR`, `PH`, `US`), or `null`.
+   * Código de país ISO 3166-1 alpha-2 (ex.: `BR`, `PH`, `US`), ou `null`.
    */
   country: string | null;
   /**
-   * ITU country calling code (e.g. `55`, `63`, `1`), or `null`.
+   * Código de discagem internacional ITU (ex.: `55`, `63`, `1`), ou `null`.
    */
   countryCallingCode: string | null;
   pushname: string | null;
   name: string | null;
-  /** Always `null` in Baileys (no shortName equivalent on the wire). */
+  /** Sempre `null` no Baileys (não há equivalente de shortName no protocolo). */
   shortName: null;
-  /** Whether this is a WhatsApp Business account, resolved via a live `getBusinessProfile()` call. */
+  /** Se é uma conta WhatsApp Business, resolvido através de uma chamada em tempo real a `getBusinessProfile()`. */
   isBusiness: boolean;
-  /** Always `false` today — not yet derived from real WhatsApp data. Don't rely on it. */
+  /** Sempre `false` hoje — ainda não derivado de dados reais do WhatsApp. Não confie neste campo. */
   isEnterprise: boolean;
-  /** Always `false` today — not yet derived from real WhatsApp data. Don't use this to check whether a contact has blocked *you*. */
+  /** Sempre `false` hoje — ainda não derivado de dados reais do WhatsApp. Não use isto para verificar se um contato bloqueou *você*. */
   isBlocked: boolean;
   isMe: boolean;
   isWAAccount: boolean;
@@ -691,20 +702,22 @@ export interface NormalizedContact {
 }
 
 /**
- * Array of past messages (oldest → newest), as returned by `ctx.chat.history`.
- * Behaves like a normal array (`history[10]`, `.length`, `.map()`, ...) plus
- * two convenience filters, both chainable and re-wrapped as WAHistoryArray.
+ * Array de mensagens passadas (da mais antiga → mais recente), conforme
+ * retornado por `ctx.chat.history`. Comporta-se como um array normal
+ * (`history[10]`, `.length`, `.map()`, ...) mais dois filtros de
+ * conveniência, ambos encadeáveis e re-envolvidos como WAHistoryArray.
  */
 export interface WAHistoryArray extends Array<WAMessageContext> {
-  /** Last `n` messages (oldest → newest). Omit `n` for the full list. */
+  /** As últimas `n` mensagens (mais antiga → mais recente). Omita `n` para a lista completa. */
   last(n?: number): WAHistoryArray;
-  /** Only messages sent by `senderId`. */
+  /** Apenas mensagens enviadas por `senderId`. */
   from(senderId: string): WAHistoryArray;
 }
 
 /**
- * Normalized view of the incoming message, available as `ctx.msg` in
- * runtime context. Prefer this over `ctx.wa.msg` for everyday logic.
+ * Visão normalizada da mensagem recebida, disponível como `ctx.msg` no
+ * contexto de execução. Prefira este tipo em vez de `ctx.wa.msg` para a
+ * lógica cotidiana.
  *
  * @example
  * ```js
@@ -721,92 +734,92 @@ export interface WAMessageContext {
   body: string;
   type: string;
   fromMe: boolean;
-  /** LID-canonical sender JID (`@lid`), or `null` when no LID is known yet for this contact. */
+  /** JID do remetente canônico-LID (`@lid`), ou `null` quando ainda não há LID conhecido para este contato. */
   sender: string | null;
-  /** Phone-number form (`@c.us`) of the sender, or `null` when not available. For matching against phone-number-based config; prefer `sender` for identity. */
+  /** Forma de número de telefone (`@c.us`) do remetente, ou `null` quando indisponível. Para comparar com config baseada em número de telefone; prefira `sender` para identidade. */
   senderPn: string | null;
   senderName: string;
-  /** Command name without the prefix; empty string if this isn't a command. */
+  /** Nome do comando sem o prefixo; string vazia se não for um comando. */
   command: string;
-  /** Everything after the command, split on whitespace. */
+  /** Tudo após o comando, dividido por espaço em branco. */
   args: string[];
   /**
-   * True if this message invoked the given command (case-insensitive).
-   * @param cmd - Command name, without the prefix.
-   * @returns Whether `ctx.msg.command` matches `cmd`.
+   * True se esta mensagem invocou o comando informado (sem diferenciar maiúsculas/minúsculas).
+   * @param cmd - Nome do comando, sem o prefixo.
+   * @returns Se `ctx.msg.command` corresponde a `cmd`.
    */
   is(cmd: string): boolean;
   hasMedia: boolean;
   isGif: boolean;
   /**
-   * Download this message's media, if any.
-   * @param opts - When `asMp4` is true, animated stickers are converted to mp4.
-   * @returns The media as base64 `data` with its `mimetype`, or `null` if there's no media
-   * or the download failed.
+   * Baixa a mídia desta mensagem, se houver.
+   * @param opts - Quando `asMp4` é true, figurinhas animadas são convertidas para mp4.
+   * @returns A mídia como `data` em base64 com seu `mimetype`, ou `null` se não houver mídia
+   * ou o download tiver falhado.
    */
   downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
   hasReply: boolean;
   /**
-   * Fetch the message this one is quoting/replying to. Returns the same
-   * normalized shape as `ctx.msg` itself (not raw Baileys data) — so
-   * `.hasMedia`, `.downloadMedia()`, `.reply.text(...)`, etc. all work
-   * directly on the result.
+   * Busca a mensagem que esta está citando/respondendo. Retorna o mesmo
+   * formato normalizado do próprio `ctx.msg` (não os dados brutos do
+   * Baileys) — então `.hasMedia`, `.downloadMedia()`, `.reply.text(...)`
+   * etc. funcionam diretamente no resultado.
    *
-   * Resolves synchronously from data the current message already carries
-   * (the quote is embedded in its `contextInfo`) — no network call, so
-   * there's no meaningful delay to await here.
+   * Resolve de forma síncrona a partir de dados que a mensagem atual já
+   * carrega (a citação vem embutida no seu `contextInfo`) — sem chamada
+   * de rede, então não há atraso relevante para aguardar aqui.
    *
-   * The quoted message's `.senderName` reflects a real display name only if
-   * the bot has already seen that sender post at least once while online;
-   * otherwise it falls back to their bare number (same caveat as
-   * {@link WAMessageContext.getContact}).
-   * @returns The quoted message as a {@link WAMessageContext}, or `null` if this message isn't a reply.
+   * O `.senderName` da mensagem citada só reflete um nome de exibição
+   * real se o bot já viu aquele remetente postar pelo menos uma vez
+   * enquanto estava online; caso contrário, recorre ao número puro
+   * (mesma ressalva de {@link WAMessageContext.getContact}).
+   * @returns A mensagem citada como um {@link WAMessageContext}, ou `null` se esta mensagem não for uma resposta.
    */
   getReply(): Promise<WAMessageContext | null>;
-  /** True if the message contains any @mention at all. */
+  /** True se a mensagem contém qualquer @menção. */
   hasMention: boolean;
-  /** True if the message @mentions the bot itself. */
+  /** True se a mensagem @menciona o próprio bot. */
   hasBotMention: boolean;
-  /** `contextInfo.mentionedJid`, PN already resolved to `@lid` where known. Empty array if no mentions. */
+  /** `contextInfo.mentionedJid`, com PN já resolvido para `@lid` quando conhecido. Array vazio se não houver menções. */
   mentionedJid: string[];
-  /** Reply to this message (quotes it). */
+  /** Responde a esta mensagem (citando-a). */
   reply: WAMessageSender;
   /**
-   * React to this message.
-   * @param emoji - A single emoji character, e.g. `"👍"`. Pass `""` to remove an existing reaction.
+   * Reage a esta mensagem.
+   * @param emoji - Um único caractere de emoji, ex.: `"👍"`. Passe `""` para remover uma reação existente.
    */
   react(emoji: string): Promise<unknown>;
   /**
-   * Delete this message.
-   * @param forEveryone - If true, deletes for all recipients; otherwise only for the bot. Defaults to true.
+   * Exclui esta mensagem.
+   * @param forEveryone - Se true, exclui para todos os destinatários; caso contrário, só para o bot. O padrão é true.
    */
   delete(forEveryone?: boolean | undefined): Promise<unknown>;
   /**
-   * Edit this message's text (only works on the bot's own messages).
-   * @param text - The new text content.
+   * Edita o texto desta mensagem (só funciona nas próprias mensagens do bot).
+   * @param text - O novo conteúdo de texto.
    */
   edit(text: string): Promise<unknown>;
   /**
-   * Pin this message.
-   * @param duration - Pin duration in seconds. Driver default is used if omitted.
-   * @deprecated Not supported with Baileys yet — logs a warning and is a no-op.
+   * Fixa esta mensagem.
+   * @param duration - Duração da fixação em segundos. Usa o padrão do driver se omitido.
+   * @deprecated Ainda não suportado com o Baileys — registra um aviso e não faz nada.
    */
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
   /**
-   * Fetch normalized info about the message sender.
-   * @returns The sender's {@link NormalizedContact}, or `null` if the bot doesn't have a
-   * record for this contact yet (common for a `@lid` JID the bot hasn't seen post before —
-   * this resolves on their *next* live message, since the pushname is learned from the
-   * message itself, not just from WhatsApp's contact sync). Always check for `null` before
-   * reading fields off the result.
+   * Busca informações normalizadas sobre o remetente da mensagem.
+   * @returns O {@link NormalizedContact} do remetente, ou `null` se o bot ainda não tiver
+   * um registro para este contato (comum para um JID `@lid` que o bot ainda não viu postar —
+   * isso se resolve na *próxima* mensagem ao vivo dele, já que o pushname é aprendido a partir da
+   * própria mensagem, não apenas da sincronização de contatos do WhatsApp). Sempre verifique
+   * `null` antes de ler campos do resultado.
    */
   getContact(): Promise<NormalizedContact | null>;
 }
 
-// ── Chat context (ctx.chat) ─────────────────────────────────────────────────
+// ── Contexto de chat (ctx.chat) ──────────────────────────────────────────────
 
-/** A group chat participant, as returned by {@link ChatContext.getParticipants}. */
+/** Um participante de grupo, conforme retornado por {@link ChatContext.getParticipants}. */
 export interface GroupParticipant {
   id: string;
   isAdmin: boolean;
@@ -814,7 +827,7 @@ export interface GroupParticipant {
 }
 
 /**
- * Normalized view of the current chat, available as `ctx.chat` in runtime context.
+ * Visão normalizada do chat atual, disponível como `ctx.chat` no contexto de execução.
  *
  * @example
  * ```js
@@ -829,37 +842,38 @@ export interface ChatContext {
   name: string;
   isGroup: boolean;
   /**
-   * Past messages in this chat (oldest → newest). Convenience filters:
-   * `history.last(n)`, `history.from(senderId)`.
+   * Mensagens passadas deste chat (mais antiga → mais recente). Filtros de
+   * conveniência: `history.last(n)`, `history.from(senderId)`.
    */
   history: WAHistoryArray;
   /**
-   * List the chat's group participants.
-   * @returns The group's participants, or `[]` for non-group chats.
+   * Lista os participantes de grupo do chat.
+   * @returns Os participantes do grupo, ou `[]` para chats que não são grupo.
    */
   getParticipants(): Promise<GroupParticipant[]>;
   /**
-   * Check whether a given contact is a group admin.
-   * @param contactId - The contact/participant JID to check.
-   * @returns Whether that contact is an admin of this group.
+   * Verifica se um determinado contato é admin do grupo.
+   * @param contactId - O JID do contato/participante a verificar.
+   * @returns Se aquele contato é admin deste grupo.
    */
   isAdmin(contactId: string): Promise<boolean>;
-  /** @returns Whether the sender of the current message is a group admin. */
+  /** @returns Se o remetente da mensagem atual é admin do grupo. */
   isSenderAdmin(): Promise<boolean>;
-  /** @returns Whether the bot itself is a group admin. */
+  /** @returns Se o próprio bot é admin do grupo. */
   isBotAdmin(): Promise<boolean>;
   /**
-   * Clear all messages in this chat.
-   * @deprecated Not supported with Baileys — logs a warning and is a no-op.
+   * Limpa todas as mensagens deste chat.
+   * @deprecated Não suportado com o Baileys — registra um aviso e não faz nada.
    */
   clearMessages(): Promise<void>;
 }
 
-// ── Admin API (ctx.admin) ───────────────────────────────────────────────────
+// ── API de administração (ctx.admin) ─────────────────────────────────────────
 
 /**
- * Result of an admin action that targets the current chat by default.
- * Awaitable directly, or redirect it to another group with `.to(jid)`.
+ * Resultado de uma ação de admin que, por padrão, tem como alvo o chat
+ * atual. Pode ser aguardado (`await`) diretamente, ou redirecionado para
+ * outro grupo com `.to(jid)`.
  *
  * @example
  * ```js
@@ -868,8 +882,8 @@ export interface ChatContext {
  */
 export interface TargetableAction<T = unknown> extends PromiseLike<T> {
   /**
-   * Redirect this action to a different group instead of the current chat.
-   * @param targetJid - The target group JID.
+   * Redireciona esta ação para um grupo diferente em vez do chat atual.
+   * @param targetJid - O JID do grupo de destino.
    */
   to(targetJid: string): Promise<T>;
   then<TResult1 = T, TResult2 = never>(
@@ -883,84 +897,93 @@ export interface TargetableAction<T = unknown> extends PromiseLike<T> {
 }
 
 /**
- * Group administration actions, scoped to the current chat in runtime context.
- * In setup context these all throw at call time (no current chat), except
- * `.add(...).to(jid)` and `.getInviteLink(groupId)`, which both accept an
- * explicit group directly.
+ * Ações de administração de grupo, vinculadas ao chat atual no contexto
+ * de execução. No contexto de setup, todo método exige um alvo explícito
+ * — seja via `.to(jid)` no {@link TargetableAction} retornado, seja (para
+ * `getInviteLink`) diretamente como argumento `groupId`.
  */
 export interface AdminApi {
   /**
-   * Add one or more members to the group.
-   * @param memberIds - A single JID or an array of JIDs to add.
-   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
+   * Adiciona um ou mais membros ao grupo.
+   * @param memberIds - Um único JID ou um array de JIDs para adicionar.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
   add(memberIds: string | string[]): TargetableAction;
   /**
-   * Remove one or more members from the group.
-   * @param memberIds - A single JID or an array of JIDs to remove.
+   * Remove um ou mais membros do grupo.
+   * @param memberIds - Um único JID ou um array de JIDs para remover.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  kick(memberIds: string | string[]): Promise<unknown>;
+  kick(memberIds: string | string[]): TargetableAction;
   /**
-   * Promote one or more members to group admin.
-   * @param memberIds - A single JID or an array of JIDs to promote.
+   * Promove um ou mais membros a admin do grupo.
+   * @param memberIds - Um único JID ou um array de JIDs para promover.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  promote(memberIds: string | string[]): Promise<unknown>;
+  promote(memberIds: string | string[]): TargetableAction;
   /**
-   * Demote one or more admins back to regular members.
-   * @param memberIds - A single JID or an array of JIDs to demote.
+   * Rebaixa um ou mais admins de volta a membros comuns.
+   * @param memberIds - Um único JID ou um array de JIDs para rebaixar.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  demote(memberIds: string | string[]): Promise<unknown>;
+  demote(memberIds: string | string[]): TargetableAction;
   /**
-   * Rename the group.
-   * @param name - The new group subject/name.
+   * Renomeia o grupo.
+   * @param name - O novo assunto/nome do grupo.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  setSubject(name: string): Promise<unknown>;
+  setSubject(name: string): TargetableAction;
   /**
-   * Set the group description.
-   * @param text - The new description text.
+   * Define a descrição do grupo.
+   * @param text - O novo texto de descrição.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  setDescription(text: string): Promise<unknown>;
+  setDescription(text: string): TargetableAction;
   /**
-   * Set the group's profile picture.
-   * @param source - Local file path or a raw image `Buffer`.
+   * Define a foto de perfil do grupo.
+   * @param source - Caminho local do arquivo ou um Buffer bruto de imagem.
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  setProfilePic(source: string | Buffer): Promise<unknown>;
+  setProfilePic(source: string | Buffer): TargetableAction;
   /**
-   * Get a group's invite link.
-   * @param groupId - Target group JID. Defaults to the current chat; required in setup context.
-   * @returns The group's current invite link.
+   * Obtém o link de convite de um grupo.
+   * @param groupId - JID do grupo alvo. Usa o chat atual por padrão; obrigatório no contexto de setup.
+   * @returns O link de convite atual do grupo.
    */
   getInviteLink(groupId?: string): Promise<string>;
-  /** Revoke the current invite link, invalidating it (a new one is generated on next request). */
-  revokeInvite(): Promise<unknown>;
+  /**
+   * Revoga o link de convite atual, invalidando-o (um novo é gerado na próxima solicitação).
+   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
+   */
+  revokeInvite(): TargetableAction;
 }
 
-// ── Me API (ctx.me) — the bot's own account ────────────────────────────────
+// ── API "Me" (ctx.me) — a própria conta do bot ───────────────────────────────
 
-/** Actions on the bot's own WhatsApp account/profile. */
+/** Ações sobre a própria conta/perfil do WhatsApp do bot. */
 export interface MeApi {
   /**
-   * Set the bot's display name.
-   * @param name - The new display name.
+   * Define o nome de exibição do bot.
+   * @param name - O novo nome de exibição.
    */
   setName(name: string): Promise<unknown>;
   /**
-   * Set the bot's "About" status text.
-   * @param text - The new about text.
+   * Define o texto de status "Recado" do bot.
+   * @param text - O novo texto de recado.
    */
   setAbout(text: string): Promise<unknown>;
   /**
-   * Set the bot's profile picture.
-   * @param source - Local file path or a raw image `Buffer`.
+   * Define a foto de perfil do bot.
+   * @param source - Caminho local do arquivo ou um Buffer bruto de imagem.
    */
   setProfilePic(source: string | Buffer): Promise<unknown>;
 }
 
-// ── Poll API (ctx.poll) ──────────────────────────────────────────────────────
+// ── API de enquete (ctx.poll) ─────────────────────────────────────────────────
 
 /**
- * Handle to a poll with live vote tracking, returned by {@link PollApi.create}
- * and {@link PollApi.get}.
+ * Handle para uma enquete com rastreamento de votos em tempo real,
+ * retornado por {@link PollApi.create} e {@link PollApi.get}.
  *
  * @example
  * ```js
@@ -971,27 +994,27 @@ export interface MeApi {
 export interface PollHandle {
   readonly msgId: string;
   /**
-   * Register a callback invoked on every vote change.
-   * @param cb - Receives the current tally and the raw Baileys vote payload.
-   * @returns `this`, for chaining further `.onVote(...)` calls.
+   * Registra um callback chamado a cada mudança de voto.
+   * @param cb - Recebe a contagem atual e o payload de voto bruto do Baileys.
+   * @returns `this`, para encadear mais chamadas `.onVote(...)`.
    */
   onVote(cb: (results: Record<string, number>, raw: unknown) => void): this;
-  /** @returns Current tally as a plain object: `{ optionName: voteCount }`. */
+  /** @returns A contagem atual como um objeto simples: `{ nomeDaOpcao: numeroDeVotos }`. */
   results(): Record<string, number>;
-  /** @returns Name(s) of the leading option(s). Empty array if no votes yet. */
+  /** @returns Nome(s) da(s) opção(ões) líder(es). Array vazio se ainda não houver votos. */
   winner(): string[];
-  /** Stop tracking this poll. Further votes will no longer update {@link PollHandle.results}. */
+  /** Para de rastrear esta enquete. Novos votos não atualizarão mais {@link PollHandle.results}. */
   close(): void;
 }
 
-/** Poll creation and lookup, with vote tracking (unlike {@link WAMessageSender.poll}). */
+/** Criação e busca de enquetes, com rastreamento de votos (diferente de {@link WAMessageSender.poll}). */
 export interface PollApi {
   /**
-   * Send a poll and start tracking votes.
-   * @param question - The poll question.
-   * @param options - Poll answer options (2 or more).
-   * @param opts - Poll settings such as allowing multiple answers.
-   * @returns A {@link PollHandle} for tracking results.
+   * Envia uma enquete e começa a rastrear os votos.
+   * @param question - A pergunta da enquete.
+   * @param options - Opções de resposta da enquete (2 ou mais).
+   * @param opts - Configurações da enquete, como permitir múltiplas respostas.
+   * @returns Um {@link PollHandle} para rastrear os resultados.
    * @example
    * ```js
    * const poll = await ctx.poll.create("Lunch?", ["Pizza", "Sushi", "Burger"]);
@@ -999,70 +1022,71 @@ export interface PollApi {
    */
   create(question: string, options: string[], opts?: { allowMultipleAnswers?: boolean }): Promise<PollHandle>;
   /**
-   * Retrieve an active poll by its message ID.
-   * @param msgId - The poll message's ID.
-   * @returns The matching {@link PollHandle}, or `null` if not found/no longer tracked.
+   * Recupera uma enquete ativa pelo ID da mensagem.
+   * @param msgId - O ID da mensagem da enquete.
+   * @returns O {@link PollHandle} correspondente, ou `null` se não encontrada/não rastreada mais.
    */
   get(msgId: string): PollHandle | null;
 }
 
-// ── Contacts API (ctx.contacts) ──────────────────────────────────────────────
+// ── API de contatos (ctx.contacts) ─────────────────────────────────────────────
 
-/** Lookup and management of WhatsApp contacts. */
+/** Busca e gerenciamento de contatos do WhatsApp. */
 export interface ContactsApi {
   /**
-   * Fetch normalized info about a contact.
-   * @param contactId - The contact's JID.
-   * @param opts - When `contactId` is a raw `@lid` and `opts.groupId` is given, cross-checks
-   * it against a live `groupMetadata()` call for that group (which carries WhatsApp's own
-   * current `phoneNumber` for `@lid` participants) before resolving, instead of trusting only
-   * the store's heuristic, possibly-stale `@lid` → phone-number mapping. Pass this whenever
-   * you have a groupId handy and can't otherwise be sure the mapping is fresh — e.g. inside a
-   * `group-participants.update` handler. Best-effort: silently falls back to the existing
-   * heuristic on any failure.
-   * @returns The contact's {@link NormalizedContact} info, or `null` if the bot doesn't have
-   * a record for this JID yet (common right after a new `@lid` contact's *first* message —
-   * it resolves once they've posted at least one message while the bot was online). Inside a
-   * message handler, prefer {@link WAMessageContext.getContact} for the current sender — it
-   * additionally resolves `@lid` for you.
+   * Busca informações normalizadas sobre um contato.
+   * @param contactId - O JID do contato.
+   * @param opts - Quando `contactId` é um `@lid` bruto e `opts.groupId` é informado, faz uma
+   * verificação cruzada contra uma chamada em tempo real a `groupMetadata()` daquele grupo (que
+   * carrega o `phoneNumber` atual e oficial do WhatsApp para participantes `@lid`) antes de
+   * resolver, em vez de confiar apenas no mapeamento heurístico e possivelmente desatualizado
+   * `@lid` → número de telefone do armazenamento local. Informe isso sempre que tiver um groupId
+   * à mão e não puder garantir por outra via que o mapeamento está atualizado — ex.: dentro de um
+   * handler de `group-participants.update`. Melhor esforço: recorre silenciosamente à heurística
+   * existente em caso de qualquer falha.
+   * @returns As informações {@link NormalizedContact} do contato, ou `null` se o bot ainda não
+   * tiver um registro para este JID (comum logo após a *primeira* mensagem de um novo contato
+   * `@lid` — resolve-se assim que ele tiver postado ao menos uma mensagem com o bot online).
+   * Dentro de um handler de mensagem, prefira {@link WAMessageContext.getContact} para o
+   * remetente atual — ele também resolve o `@lid` para você.
    */
   get(contactId: string, opts?: { groupId?: string }): Promise<NormalizedContact | null>;
   /**
-   * Get a contact's profile picture URL. Hits the WhatsApp network on every
-   * call (typically ~150-350ms) — there's no caching layer, so avoid
-   * calling this in a tight loop (e.g. once per group member) without
-   * spacing calls out.
-   * @param contactId - The contact's JID.
-   * @returns The picture URL, or `null` — both for a contact with no picture set *and* for
-   * a network failure/timeout. The two cases aren't distinguishable from the return value.
+   * Obtém a URL da foto de perfil de um contato. Acessa a rede do
+   * WhatsApp a cada chamada (tipicamente ~150-350ms) — não há camada de
+   * cache, então evite chamar isto em um loop apertado (ex.: uma vez
+   * por membro do grupo) sem espaçar as chamadas.
+   * @param contactId - O JID do contato.
+   * @returns A URL da foto, ou `null` — tanto para um contato sem foto definida *quanto* para
+   * uma falha de rede/timeout. Os dois casos não são distinguíveis pelo valor de retorno.
    */
   getPfpUrl(contactId: string): Promise<string | null>;
   /**
-   * Download the contact's profile picture to disk.
-   * @param contactId - The contact's JID.
-   * @param destPath - Where to save the image, e.g. via `ctx.storage.resolve(...)`.
-   * @returns The saved file's path, or `null` if unavailable.
+   * Baixa a foto de perfil do contato para o disco.
+   * @param contactId - O JID do contato.
+   * @param destPath - Onde salvar a imagem, ex.: via `ctx.storage.resolve(...)`.
+   * @returns O caminho do arquivo salvo, ou `null` se indisponível.
    */
   getPfpPath(contactId: string, destPath: string): Promise<string | null>;
   /**
-   * Get a contact's "About" status text.
-   * @param contactId - The contact's JID.
-   * @returns The about text, or `null` if unavailable.
+   * Obtém o texto de status "Recado" de um contato.
+   * @param contactId - O JID do contato.
+   * @returns O texto do recado, ou `null` se indisponível.
    */
   getAbout(contactId: string): Promise<string | null>;
   /**
-   * Block a contact.
-   * @param contactId - The contact's JID.
+   * Bloqueia um contato.
+   * @param contactId - O JID do contato.
    */
   block(contactId: string): Promise<void>;
   /**
-   * Unblock a contact.
-   * @param contactId - The contact's JID.
+   * Desbloqueia um contato.
+   * @param contactId - O JID do contato.
    */
   unblock(contactId: string): Promise<void>;
 }
 
-// ── Chats API (ctx.chats) ───────────────────────────────────────────────────
+// ── API de chats (ctx.chats) ─────────────────────────────────────────────────
 
 export interface ChatSummary {
   id: string;
@@ -1070,54 +1094,54 @@ export interface ChatSummary {
   isGroup: boolean;
 }
 
-/** Read-only chat listing, available as `ctx.chats`. */
+/** Listagem de chats somente leitura, disponível como `ctx.chats`. */
 export interface ChatsApi {
-  /** All known chats (cache-only, no network). */
+  /** Todos os chats conhecidos (apenas cache, sem rede). */
   all(): ChatSummary[];
 }
 
-// ── Storage API (ctx.storage) ────────────────────────────────────────────────
+// ── API de armazenamento (ctx.storage) ────────────────────────────────────────
 
-/** Per-plugin private file storage. */
+/** Armazenamento de arquivos privado por plugin. */
 export interface StorageApi {
-  /** Absolute path to this plugin's private data directory. */
+  /** Caminho absoluto para o diretório de dados privado deste plugin. */
   dir: string;
   /**
-   * Resolve a path inside the plugin's data directory, creating parent
-   * directories as needed.
-   * @param relativePath - Path relative to {@link StorageApi.dir}.
-   * @returns The resolved absolute path.
-   * @throws If `relativePath` attempts path traversal or is an absolute path.
+   * Resolve um caminho dentro do diretório de dados do plugin, criando
+   * diretórios pais conforme necessário.
+   * @param relativePath - Caminho relativo a {@link StorageApi.dir}.
+   * @returns O caminho absoluto resolvido.
+   * @throws Se `relativePath` tentar um path traversal ou for um caminho absoluto.
    */
   resolve(relativePath: string): string;
 }
 
-// ── Config / i18n / utils / download / plugins / log APIs ───────────────────
+// ── APIs de config / i18n / utils / download / plugins / log ─────────────────
 
-/** Read-only access to the bot's configuration values. */
+/** Acesso somente leitura aos valores de configuração do bot. */
 export interface ConfigApi {
   /**
-   * Read a config value.
-   * @param key - The config key.
-   * @param defaultValue - Value returned if `key` isn't set.
-   * @returns The config value, or `defaultValue` if not set.
+   * Lê um valor de configuração.
+   * @param key - A chave de configuração.
+   * @param defaultValue - Valor retornado se `key` não estiver definida.
+   * @returns O valor de configuração, ou `defaultValue` se não definido.
    */
   get<T = unknown>(key: string, defaultValue?: T): T;
 }
 
-/** Translation/localization helpers, available as `ctx.i18n` (and `ctx.t` as a shortcut to `ctx.i18n.t`). */
+/** Auxiliares de tradução/localização, disponíveis como `ctx.i18n` (e `ctx.t` como atalho para `ctx.i18n.t`). */
 export interface I18nApi {
   /**
-   * Translate a key.
-   * @param args - Translation key followed by any interpolation values, forwarded to the underlying i18n engine.
-   * @returns The translated string.
+   * Traduz uma chave.
+   * @param args - Chave de tradução seguida de quaisquer valores de interpolação, repassados ao mecanismo de i18n subjacente.
+   * @returns A string traduzida.
    */
   t(key: string): string;
   t(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
   /**
-   * Create a scoped `t()` bound to a plugin's own locale files.
-   * @param pluginMetaUrl - Pass `import.meta.url` from the plugin file.
-   * @returns A `t()` function scoped to that plugin's locales.
+   * Cria um `t()` vinculado aos próprios arquivos de idioma de um plugin.
+   * @param pluginMetaUrl - Passe `import.meta.url` do arquivo do plugin.
+   * @returns Uma função `t()` vinculada aos idiomas daquele plugin.
    * @example
    * ```js
    * const { t } = ctx.i18n.createT(import.meta.url);
@@ -1125,42 +1149,43 @@ export interface I18nApi {
    * ```
    */
   createT(pluginMetaUrl: string): { t: I18nApi["t"]; lang: string | null };
-  /** Reload locale files from disk. */
+  /** Recarrega os arquivos de idioma do disco. */
   reload(): void;
-  /** @returns The currently active language code. */
+  /** @returns O código do idioma atualmente ativo. */
   getCurrentLang(): string;
 }
 
-/** Miscellaneous filesystem helpers, available as `ctx.utils`. */
+/** Auxiliares diversos de sistema de arquivos, disponíveis como `ctx.utils`. */
 export interface UtilsApi {
   /**
-   * Delete all contents of a folder without removing the folder itself.
-   * @param dirPath - Path to the directory to empty.
+   * Apaga todo o conteúdo de uma pasta sem remover a pasta em si.
+   * @param dirPath - Caminho do diretório a esvaziar.
    */
   emptyFolder(folderPath: string): void;
 }
 
-/** Background download queue, available as `ctx.download`. Only one job runs at a time. */
+/** Fila de downloads em segundo plano, disponível como `ctx.download`. Apenas um job roda por vez. */
 export interface DownloadApi {
   /**
-   * Enqueue a download work function to run in the background, serialized
-   * behind any other pending job. Don't download directly inside a message
-   * handler — that blocks the event loop, and plugins are dispatched in
-   * sequence, so it delays every other plugin's response too.
-   * @param workFn - The function performing the download.
-   * @param errorFn - Called with the error if `workFn` throws/rejects. If
-   * omitted, the error is logged instead of being silently swallowed.
+   * Enfileira uma função de trabalho de download para rodar em segundo
+   * plano, serializada atrás de qualquer outro job pendente. Não baixe
+   * diretamente dentro de um handler de mensagem — isso bloqueia o
+   * event loop, e como os plugins são despachados em sequência, atrasa
+   * também a resposta de todos os outros plugins.
+   * @param workFn - A função que realiza o download.
+   * @param errorFn - Chamada com o erro se `workFn` lançar/rejeitar. Se
+   * omitida, o erro é registrado em log em vez de ser silenciosamente engolido.
    */
   enqueue(workFn: () => Promise<void>, errorFn?: (error: Error) => Promise<void>): void;
 }
 
-/** Cron-style task scheduling, available as `ctx.scheduler`. */
+/** Agendamento de tarefas no estilo cron, disponível como `ctx.scheduler`. */
 export interface SchedulerApi {
   /**
-   * Register a cron task, scoped to this plugin.
-   * @param expression - A cron expression, e.g. `"0 9 * * 1"` (every Monday at 9am).
-   * @param fn - The function to run on schedule.
-   * @returns A handle whose `.stop()` cancels the task.
+   * Registra uma tarefa cron, vinculada a este plugin.
+   * @param expression - Uma expressão cron, ex.: `"0 9 * * 1"` (toda segunda-feira às 9h).
+   * @param fn - A função a executar conforme o agendamento.
+   * @returns Um handle cujo `.stop()` cancela a tarefa.
    * @example
    * ```js
    * ctx.scheduler.schedule("0 9 * * 1", async () => {
@@ -1171,72 +1196,73 @@ export interface SchedulerApi {
   schedule(expression: string, fn: () => Promise<void>): { stop: () => void };
 }
 
-/** Cross-plugin communication, available as `ctx.plugins`. */
+/** Comunicação entre plugins, disponível como `ctx.plugins`. */
 export interface PluginsApi {
   /**
-   * Look up another plugin's public API.
-   * @param name - The other plugin's name.
-   * @returns Its public API, or `null` if it's not active.
+   * Busca a API pública de outro plugin.
+   * @param name - O nome do outro plugin.
+   * @returns Sua API pública, ou `null` se ele não estiver ativo.
    */
   get(name: string): unknown;
   /**
-   * Look up another plugin's public API, requiring it to exist.
-   * @param name - The other plugin's name.
-   * @returns Its public API.
-   * @throws If the plugin doesn't exist or isn't active.
+   * Busca a API pública de outro plugin, exigindo que ele exista.
+   * @param name - O nome do outro plugin.
+   * @returns Sua API pública.
+   * @throws Se o plugin não existir ou não estiver ativo.
    */
   require(name: string): unknown;
   /**
-   * Check whether another plugin exists and is active.
-   * @param name - The plugin name to check.
+   * Verifica se outro plugin existe e está ativo.
+   * @param name - O nome do plugin a verificar.
    */
   exists(name: string): boolean;
 }
 
-// ── Commands API (ctx.commands) — kernel/commandAccess.ts, Phase 2 ──────────
+// ── API de comandos (ctx.commands) — kernel/commandAccess.ts, Fase 2 ─────────
 
-/** Item shape returned by {@link CommandsApi.list}. */
+/** Formato de item retornado por {@link CommandsApi.list}. */
 export interface CommandInfo {
-  /** Stable identifier for the command (plugin-scoped). */
+  /** Identificador estável para o comando (vinculado ao plugin). */
   id: string;
-  /** The bare command token, without the prefix, e.g. `"sticker"`. */
+  /** O token de comando puro, sem o prefixo, ex.: `"sticker"`. */
   cmd: string;
-  /** Additional invocation aliases for this command. */
+  /** Aliases adicionais de invocação para este comando. */
   aliases: string[];
-  /** The command's menu category, or `null` if uncategorized. */
+  /** A categoria de menu do comando, ou `null` se não categorizado. */
   category: string | null;
-  /** Short description shown in the menu, or `null` if none. */
+  /** Descrição curta exibida no menu, ou `null` se não houver. */
   desc: string | null;
 }
 
 /**
- * Read-only queries against the command registry, available as `ctx.commands`.
- * Lets a plugin check whether another command exists, or read its
- * description/manual, without `ctx.plugins.require()`'ing the owning plugin.
+ * Consultas somente leitura ao registro de comandos, disponíveis como
+ * `ctx.commands`. Permite que um plugin verifique se outro comando
+ * existe, ou leia sua descrição/manual, sem precisar dar
+ * `ctx.plugins.require()` no plugin dono.
  */
 export interface CommandsApi {
   /**
-   * Check whether a command (or alias) is registered.
-   * @param invocation - The bare command token or alias, without the prefix.
+   * Verifica se um comando (ou alias) está registrado.
+   * @param invocation - O token de comando ou alias puro, sem o prefixo.
    */
   exists(invocation: string): boolean;
   /**
-   * Get a command's short description.
-   * @param invocation - The bare command token or alias, without the prefix.
-   * @param lang - Language code to translate into. Defaults to the active language.
-   * @returns The description, or `null` if the command doesn't exist or has none.
+   * Obtém a descrição curta de um comando.
+   * @param invocation - O token de comando ou alias puro, sem o prefixo.
+   * @param lang - Código de idioma para tradução. O padrão é o idioma ativo.
+   * @returns A descrição, ou `null` se o comando não existir ou não tiver nenhuma.
    */
   desc(invocation: string, lang?: string): string | null;
   /**
-   * Get a command's full manual/help text.
-   * @param invocation - The bare command token or alias, without the prefix.
-   * @param lang - Language code to translate into. Defaults to the active language.
-   * @returns The manual text, or `null` if the command doesn't exist or has none.
+   * Obtém o manual/texto de ajuda completo de um comando.
+   * @param invocation - O token de comando ou alias puro, sem o prefixo.
+   * @param lang - Código de idioma para tradução. O padrão é o idioma ativo.
+   * @returns O texto do manual, ou `null` se o comando não existir ou não tiver nenhum.
    */
   manual(invocation: string, lang?: string): string | null;
   /**
-   * List every registered command.
-   * @param lang - Language code to translate descriptions into. Defaults to the active language.
+   * Lista todos os comandos registrados.
+   * @param lang - Código de idioma para traduzir as descrições. O padrão é o idioma ativo.
    */
   list(lang?: string): Array<{
     id: string;
@@ -1246,14 +1272,15 @@ export interface CommandsApi {
     desc: string | null;
   }>;
   /**
-   * Check whether `text` matches one of the configured menu/help aliases
-   * (e.g. `"menu"`, `"help"`, `"?"`), independent of the command prefix.
-   * @param text - The raw text to check.
+   * Verifica se `text` corresponde a um dos aliases de menu/ajuda
+   * configurados (ex.: `"menu"`, `"help"`, `"?"`), independente do
+   * prefixo de comando.
+   * @param text - O texto bruto a verificar.
    */
   isMenuAlias(text: string): boolean;
 }
 
-/** Scoped logger, available as `ctx.log`. */
+/** Logger vinculado ao contexto, disponível como `ctx.log`. */
 export interface LogApi {
   info(...args: unknown[]): void;
   warn(...args: unknown[]): void;
@@ -1261,37 +1288,38 @@ export interface LogApi {
   success(...args: unknown[]): void;
 }
 
-// ── Settings API (ctx.settings) — kernel/settingsDb.ts ───────────────────────
-// Persistent per-chat settings backed by SQLite.
+// ── API de configurações (ctx.settings) — kernel/settingsDb.ts ───────────────
+// Configurações persistentes por chat, armazenadas em SQLite.
 
-/** Get/set/delete operations for a single settings scope (a chat, or global). */
+/** Operações de get/set/delete para um único escopo de configurações (um chat, ou global). */
 export interface ScopedAccessor {
   /**
-   * Read a setting value.
-   * @param key - The setting key.
-   * @param defaultValue - Value returned if `key` isn't set.
-   * @returns The setting value, or `defaultValue` if not set.
+   * Lê um valor de configuração.
+   * @param key - A chave da configuração.
+   * @param defaultValue - Valor retornado se `key` não estiver definida.
+   * @returns O valor da configuração, ou `defaultValue` se não definido.
    */
   get<T = unknown>(key: string, defaultValue?: T): T;
-  /** @returns All settings in this scope as a plain object. */
+  /** @returns Todas as configurações deste escopo como um objeto simples. */
   getAll(): Record<string, unknown>;
   /**
-   * Write a setting value.
-   * @param key - The setting key.
-   * @param value - The value to store (must be JSON-serializable).
+   * Grava um valor de configuração.
+   * @param key - A chave da configuração.
+   * @param value - O valor a armazenar (deve ser serializável em JSON).
    */
   set(key: string, value: unknown): void;
   /**
-   * Remove a single setting.
-   * @param key - The setting key to delete.
+   * Remove uma única configuração.
+   * @param key - A chave da configuração a excluir.
    */
   delete(key: string): void;
-  /** Remove every setting in this scope. */
+  /** Remove todas as configurações deste escopo. */
   deleteAll(): void;
 }
 
 /**
- * Persistent, per-chat settings storage backed by SQLite, available as `ctx.settings`.
+ * Armazenamento de configurações persistente por chat, apoiado em
+ * SQLite, disponível como `ctx.settings`.
  *
  * @example
  * ```js
@@ -1300,61 +1328,61 @@ export interface ScopedAccessor {
  * ```
  */
 export interface SettingsApi extends ScopedAccessor {
-  /** Settings scoped to the bot as a whole, instead of the current chat. */
+  /** Configurações vinculadas ao bot como um todo, em vez do chat atual. */
   global: ScopedAccessor;
   /**
-   * Get an accessor for a different chat's settings.
-   * @param targetChatId - The chat ID whose settings you want to access.
-   * @returns A {@link ScopedAccessor} scoped to `targetChatId`.
+   * Obtém um acessor para as configurações de outro chat.
+   * @param targetChatId - O ID do chat cujas configurações você quer acessar.
+   * @returns Um {@link ScopedAccessor} vinculado a `targetChatId`.
    */
   forChat(targetChatId: string): ScopedAccessor;
   /**
-   * Link the current chat to a shared community, so it shares settings with
-   * other chats in the same community.
-   * @param communityId - The community ID to link to.
+   * Vincula o chat atual a uma comunidade compartilhada, para que ele
+   * compartilhe configurações com outros chats da mesma comunidade.
+   * @param communityId - O ID da comunidade a vincular.
    */
   link(communityId: string): void;
-  /** Unlink the current chat from its community, if any. */
+  /** Desvincula o chat atual de sua comunidade, se houver. */
   unlink(): void;
-  /** @returns The current chat's community ID, or `null` if not linked. */
+  /** @returns O ID da comunidade do chat atual, ou `null` se não vinculado. */
   getCommunityId(): string | null;
-  /** @returns IDs of every chat linked to the same community as the current chat. */
+  /** @returns IDs de todos os chats vinculados à mesma comunidade do chat atual. */
   getCommunityChats(): string[];
 }
 
-// ── Events API (ctx.events) ──────────────────────────────────────────────────
+// ── API de eventos (ctx.events) ──────────────────────────────────────────────
 
-/** Subscribe to raw Baileys socket / internal events, available as `ctx.events`. */
+/** Inscreve-se em eventos brutos do socket Baileys / eventos internos, disponível como `ctx.events`. */
 export interface EventsApi {
   /**
-   * Subscribe to an internal event.
-   * @param event - Event name, e.g. `"messages.upsert"`, `"connection.update"`, `"group-participants.update"`.
-   * @param handler - Called with the same payload the driver emits for that event.
-   * @returns An unsubscribe function.
+   * Inscreve-se em um evento interno.
+   * @param event - Nome do evento, ex.: `"messages.upsert"`, `"connection.update"`, `"group-participants.update"`.
+   * @param handler - Chamado com o mesmo payload que o driver emite para aquele evento.
+   * @returns Uma função de cancelamento de inscrição.
    * @example
    * ```js
    * const off = ctx.events.on("group-participants.update", (update) => {
    *   ctx.log.info("participants changed", update);
    * });
-   * // later: off();
+   * // depois: off();
    * ```
    */
   on(event: string, handler: (...args: unknown[]) => void): () => void;
 
   /**
-   * Wait for an internal event to fire once.
-   * @param event - Event name, e.g. `"connection.update"`.
-   * @returns A promise resolving with that event's payload the next time it fires.
+   * Aguarda um evento interno ser disparado uma vez.
+   * @param event - Nome do evento, ex.: `"connection.update"`.
+   * @returns Uma promise resolvida com o payload daquele evento na próxima vez que ele disparar.
    */
   once(event: string): Promise<unknown>;
 
-  /** Remove every listener this plugin registered via {@link EventsApi.on}. */
+  /** Remove todo listener que este plugin registrou via {@link EventsApi.on}. */
   cleanup(): void;
 }
 
-// ── Shared base (both setup and runtime contexts get these) ─────────────────
+// ── Base compartilhada (tanto setup quanto runtime context recebem isto) ────
 
-/** APIs available in both {@link SetupContext} and {@link PluginContext}. */
+/** APIs disponíveis tanto em {@link SetupContext} quanto em {@link PluginContext}. */
 export interface BaseApi {
   log: LogApi;
   t: I18nApi["t"];
@@ -1367,17 +1395,18 @@ export interface BaseApi {
   chats: ChatsApi;
   contacts: ContactsApi;
   storage: StorageApi;
-  /** Read-only command registry queries. @see CommandsApi */
+  /** Consultas somente leitura ao registro de comandos. @see CommandsApi */
   commands: CommandsApi;
-  /** Normalized bot JID, or `null` if the socket isn't ready yet. */
+  /** JID normalizado do bot, ou `null` se o socket ainda não estiver pronto. */
   botId: string | null;
 }
 
-// ── Setup context — plugin.setup(ctx), called once on load ──────────────────
+// ── Contexto de setup — plugin.setup(ctx), chamado uma vez no carregamento ──
 
 /**
- * Context passed to a plugin's `setup(ctx)` export, called once when the
- * plugin is loaded/enabled. There's no "current chat" yet at this point.
+ * Contexto passado à exportação `setup(ctx)` de um plugin, chamado uma
+ * vez quando o plugin é carregado/habilitado. Ainda não há um "chat
+ * atual" neste ponto.
  *
  * @example
  * ```js
@@ -1398,56 +1427,56 @@ export interface SetupContext extends BaseApi {
   settings: { global: ScopedAccessor };
 }
 
-// ── Session API (ctx.session) — kernel/chatSession.ts, Phase 7 ──────────────
-// Exclusive chat-scoped lock, so two plugins can't run an interactive flow
-// (games, a timed prompt, ...) in the same chat at once. The kernel only
-// tracks WHO holds the lock; all flow state (timeout, collected input, turn
-// logic, ...) stays inside the plugin. Runtime-only — no current chat to
-// lock at setup time.
+// ── API de sessão (ctx.session) — kernel/chatSession.ts, Fase 7 ─────────────
+// Trava exclusiva por chat, para que dois plugins não possam rodar um fluxo
+// interativo (jogos, um prompt cronometrado, ...) no mesmo chat ao mesmo
+// tempo. O kernel só rastreia QUEM detém a trava; todo o estado do fluxo
+// (timeout, entrada coletada, lógica de turnos, ...) fica dentro do plugin.
+// Somente em runtime — não há chat atual para travar no momento do setup.
 
-/** Exclusive per-chat session lock, available as `ctx.session` (runtime only). */
+/** Trava de sessão exclusiva por chat, disponível como `ctx.session` (somente em runtime). */
 export interface SessionApi {
   /**
-   * Open the session for this plugin in the current chat.
-   * @returns `true` if acquired (or already held by this same plugin — safe
-   * to call again on a later message of the same flow), `false` if another
-   * plugin currently holds it.
+   * Abre a sessão para este plugin no chat atual.
+   * @returns `true` se adquirida (ou já detida por este mesmo plugin —
+   * seguro chamar de novo em uma mensagem posterior do mesmo fluxo),
+   * `false` se outro plugin detém a sessão no momento.
    */
   acquire(): boolean;
-  /** Release the session, but only if this plugin currently holds it. */
+  /** Libera a sessão, mas só se este plugin a detém no momento. */
   release(): void;
-  /** Whether the current chat has an open session, held by anyone. */
+  /** Se o chat atual tem uma sessão aberta, detida por quem quer que seja. */
   isLocked(): boolean;
-  /** Whether this plugin is the one currently holding the session. */
+  /** Se este plugin é quem detém a sessão no momento. */
   isMine(): boolean;
 }
 
-// ── runCommand (ctx.runCommand) — kernel/runCommand.ts, Phase 3/8 ───────────
+// ── runCommand (ctx.runCommand) — kernel/runCommand.ts, Fase 3/8 ────────────
 
-/** Result of {@link PluginContext.runCommand}. */
+/** Resultado de {@link PluginContext.runCommand}. */
 export interface RunCommandResult {
   status:
-    /** The command ran (and sent a reply, if any). */
+    /** O comando rodou (e enviou uma resposta, se houver). */
     | "executed"
-    /** The caller doesn't have permission to run this command. */
+    /** Quem chamou não tem permissão para rodar este comando. */
     | "permission_denied"
-    /** A required argument was missing. */
+    /** Um argumento obrigatório estava faltando. */
     | "argument_missing"
-    /** The subcommand token wasn't recognized. */
+    /** O token de subcomando não foi reconhecido. */
     | "unknown_sub"
-    /** A text-only (fixed reply) command, or an unknown invocation — resolves instead of throwing. */
+    /** Um comando de texto fixo (resposta fixa), ou uma invocação desconhecida — resolve em vez de lançar erro. */
     | "no_dispatch";
-  /** The reply text that was actually sent, or `null` if nothing was sent. */
+  /** O texto de resposta que foi realmente enviado, ou `null` se nada foi enviado. */
   sentReply: string | null;
-  /** A suggested reply to show the caller when `sentReply` is `null` (e.g. on `"no_dispatch"`). */
+  /** Uma resposta sugerida para mostrar a quem chamou quando `sentReply` é `null` (ex.: em `"no_dispatch"`). */
   suggestedReply: string | null;
 }
 
-// ── Runtime context — plugin.default(ctx), called on every message ──────────
+// ── Contexto de execução — plugin.default(ctx), chamado a cada mensagem ─────
 
 /**
- * Context passed to a plugin's default export, called on every incoming
- * message.
+ * Contexto passado à exportação padrão de um plugin, chamado a cada
+ * mensagem recebida.
  *
  * @example
  * ```js
@@ -1481,40 +1510,42 @@ export interface PluginContext extends BaseApi {
   me: MeApi;
   poll: PollApi;
   settings: SettingsApi;
-  /** Exclusive chat-scoped session lock. @see SessionApi */
+  /** Trava de sessão exclusiva por chat. @see SessionApi */
   session: SessionApi;
   /**
-   * Invoke another registered command through the same kernel pipeline used
-   * for real inbound messages (permission check → subcommand routing →
-   * required-argument validation → handler dispatch → crash alert on throw).
-   * Runs against a context scoped to the TARGET command's owning plugin
-   * (own `storage`, `plugins`, guard options), not the caller's — same
-   * principle as `ctx.plugins.require()`, but for the command surface.
-   * @param invocation - The bare command token or alias, without the prefix (e.g. `"sticker"`, not `"!sticker"`).
-   * @param rawArgs - The remainder of the line, unparsed.
+   * Invoca outro comando registrado através do mesmo pipeline do kernel
+   * usado para mensagens reais recebidas (verificação de permissão →
+   * roteamento de subcomando → validação de argumento obrigatório →
+   * despacho do handler → alerta de crash em caso de erro). Roda contra
+   * um contexto vinculado ao plugin DONO do comando alvo (seu próprio
+   * `storage`, `plugins`, opções de guarda), não o do chamador — mesmo
+   * princípio de `ctx.plugins.require()`, mas para a superfície de
+   * comandos.
+   * @param invocation - O token de comando ou alias puro, sem o prefixo (ex.: `"sticker"`, não `"!sticker"`).
+   * @param rawArgs - O restante da linha, sem parsing.
    */
   runCommand(invocation: string, rawArgs?: string): Promise<RunCommandResult>;
-  /** WhatsApp-specific escape hatch, for when the abstracted API isn't enough. */
+  /** Escape hatch específico do WhatsApp, para quando a API abstraída não é suficiente. `null` quando nenhum driver de WhatsApp está ativo (ex.: em um bot exclusivo de Telegram). */
   wa: {
-    /** Driver-neutral contract (replaces the old `WASocket` field). */
+    /** Contrato neutro em relação ao driver (substitui o antigo campo `WASocket`). */
     contract: WaContract;
-    /** In-memory store (replaces the old `WAStore` field). */
+    /** Armazenamento em memória (substitui o antigo campo `WAStore`). */
     store: WAStore;
-    /** Driver-neutral message envelope (replaces the old `WAProtoMsg` field). */
+    /** Envelope de mensagem neutro em relação ao driver (substitui o antigo campo `WAProtoMsg`). */
     msg: BotMessage;
-    /** Download the current message's media; `asMp4` converts animated stickers to mp4. */
+    /** Baixa a mídia da mensagem atual; `asMp4` converte figurinhas animadas para mp4. */
     downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
   } | null;
-  /** Reserved for a future Telegram driver — always `null` on WhatsApp. */
+  /** Reservado para um futuro driver de Telegram — sempre `null` no WhatsApp. */
   tg: null;
-  /** Reserved for a future Discord driver — always `null` on WhatsApp. */
+  /** Reservado para um futuro driver de Discord — sempre `null` no WhatsApp. */
   dc: null;
 }
 
-// ── Plugin module shape ──────────────────────────────────────────────────────
+// ── Formato do módulo de plugin ───────────────────────────────────────────────
 
 /**
- * What a plugin file is expected to export.
+ * O que se espera que um arquivo de plugin exporte.
  *
  * @example
  * ```js
@@ -1527,30 +1558,31 @@ export interface PluginContext extends BaseApi {
  */
 export interface PluginModule {
   /**
-   * Called once when the plugin is loaded/enabled.
-   * @param ctx - The {@link SetupContext} for this plugin.
+   * Chamado uma vez quando o plugin é carregado/habilitado.
+   * @param ctx - O {@link SetupContext} deste plugin.
    */
   setup?(ctx: SetupContext): unknown | Promise<unknown>;
   /**
-   * Called on every incoming message.
-   * @param ctx - The {@link PluginContext} for this plugin.
+   * Chamado a cada mensagem recebida.
+   * @param ctx - O {@link PluginContext} deste plugin.
    */
   default?(ctx: PluginContext): unknown | Promise<unknown>;
 }
 
-// ── Optional: zero-import global types ───────────────────────────────────────
+// ── Opcional: tipos globais sem import ─────────────────────────────────────
 //
-// If you'd rather not write `@param {import('...').PluginContext}` in every
-// plugin file, uncomment the block below and make sure this file is included
-// by whatever tsconfig/jsconfig covers your plugins (add its path to
-// "include"). Then every plugin can just write:
+// Se preferir não escrever `@param {import('...').PluginContext}` em todo
+// arquivo de plugin, descomente o bloco abaixo e garanta que este arquivo
+// esteja incluído em qualquer tsconfig/jsconfig que cubra seus plugins
+// (adicione o caminho dele em "include"). Aí todo plugin pode simplesmente
+// escrever:
 //
 //   /**
 //    * @param {PluginContext} ctx
 //    */
 //   export default async function (ctx) { ... }
 //
-// with no import at all.
+// sem nenhum import.
 //
 // declare global {
 //   type PluginContext = import("@manybot/types").PluginContext;

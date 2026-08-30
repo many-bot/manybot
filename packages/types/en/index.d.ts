@@ -884,9 +884,9 @@ export interface TargetableAction<T = unknown> extends PromiseLike<T> {
 
 /**
  * Group administration actions, scoped to the current chat in runtime context.
- * In setup context these all throw at call time (no current chat), except
- * `.add(...).to(jid)` and `.getInviteLink(groupId)`, which both accept an
- * explicit group directly.
+ * In setup context every method requires an explicit target — either via
+ * `.to(jid)` on the returned {@link TargetableAction}, or (for
+ * `getInviteLink`) directly as a `groupId` argument.
  */
 export interface AdminApi {
   /**
@@ -898,41 +898,50 @@ export interface AdminApi {
   /**
    * Remove one or more members from the group.
    * @param memberIds - A single JID or an array of JIDs to remove.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  kick(memberIds: string | string[]): Promise<unknown>;
+  kick(memberIds: string | string[]): TargetableAction;
   /**
    * Promote one or more members to group admin.
    * @param memberIds - A single JID or an array of JIDs to promote.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  promote(memberIds: string | string[]): Promise<unknown>;
+  promote(memberIds: string | string[]): TargetableAction;
   /**
    * Demote one or more admins back to regular members.
    * @param memberIds - A single JID or an array of JIDs to demote.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  demote(memberIds: string | string[]): Promise<unknown>;
+  demote(memberIds: string | string[]): TargetableAction;
   /**
    * Rename the group.
    * @param name - The new group subject/name.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  setSubject(name: string): Promise<unknown>;
+  setSubject(name: string): TargetableAction;
   /**
    * Set the group description.
    * @param text - The new description text.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  setDescription(text: string): Promise<unknown>;
+  setDescription(text: string): TargetableAction;
   /**
    * Set the group's profile picture.
    * @param source - Local file path or a raw image `Buffer`.
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  setProfilePic(source: string | Buffer): Promise<unknown>;
+  setProfilePic(source: string | Buffer): TargetableAction;
   /**
    * Get a group's invite link.
    * @param groupId - Target group JID. Defaults to the current chat; required in setup context.
    * @returns The group's current invite link.
    */
   getInviteLink(groupId?: string): Promise<string>;
-  /** Revoke the current invite link, invalidating it (a new one is generated on next request). */
-  revokeInvite(): Promise<unknown>;
+  /**
+   * Revoke the current invite link, invalidating it (a new one is generated on next request).
+   * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
+   */
+  revokeInvite(): TargetableAction;
 }
 
 // ── Me API (ctx.me) — the bot's own account ────────────────────────────────
