@@ -23,6 +23,7 @@ stale, or structurally mismatched context fields.
 
 * Phase 3's hard enforcement of "every command must be in `commands.yaml`" — the plan itself defers this ("Enforcement will happen once YAML becomes the primary path, rather than opt-in") and the file's own top warning requires 5.x to keep working exactly as it does now; flipping this now would be a breaking change, not a bug fix.
 * Phase 3's dual-use conflict warning (same function referenced in YAML `function:` AND called directly via `ctx.plugins.require(...)` by another plugin) — safe to add (additive, warning-only) but needs a design pass: static analysis of plugin source isn't practical, so this would have to be a runtime check inside `ctx.plugins.require()`/`ctx.plugins.get()` comparing the requested function name against the set of function names registered as `function:` targets in the command registry.
+* Decided (08/30): rename `mentionedJid` → `mentionedLid` everywhere in v6 (`IMsg`/`WAMessageContext`, `drivers/types.ts`, `packages/types/{en,pt}/index.d.ts`, adapter/driver code). Field always returns `@lid`, never a generic JID — current name is confusing. Breaking rename, not yet implemented.
 
 ## Files Touched (all sessions, cumulative)
 
