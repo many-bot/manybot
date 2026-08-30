@@ -200,6 +200,40 @@ function getMsgSenderPn(msg: BotMessage): string | null {
   return null;
 }
 
+/**
+ * Split a quoted message's `contextInfo.participant` into `fromLid`/`fromPn`
+ * the same way the adapter's `toBotMessage()` splits `key.participant` /
+ * `key.participantAlt` via `splitLidPn()` — see the comment there. Unlike
+ * the key, `contextInfo` carries only a single `participant` field (no
+ * companion "Alt"), and it holds whichever form matches the chat's current
+ * addressing mode: under the modern default "lid" mode that's the @lid
+ * form, under legacy "pn" mode it's the phone-number form. Blindly
+ * assigning it to `fromPn` (as the quoted-message synthetic used to)
+ * leaves `fromLid` unset — so `getMsgSender()` (which only reads
+ * `participantAlt`/`fromLid`) falls through to `null` — while
+ * `getMsgSenderPn()` happily normalizes and returns the @lid value
+ * verbatim, since it never checks the suffix. Route by suffix here, and
+ * fill in the other side from the store's learned LID<->PN mapping when
+ * one is known.
+ */
+function splitQuotedParticipant(
+  store: BotStore,
+  participant: string | null | undefined,
+): { fromLid?: string; fromPn?: string } {
+  if (!participant) return {};
+  if (participant.endsWith("@lid")) {
+    const resolved = store.resolveJid(participant);
+    return {
+      fromLid: participant,
+      fromPn:  resolved !== participant ? resolved : undefined,
+    };
+  }
+  return {
+    fromLid: store.resolvePn(participant) ?? undefined,
+    fromPn:  participant,
+  };
+}
+
 /** Quoted-message metadata as the rest of the api uses it. */
 function getQuotedContext(msg: BotMessage): BotQuotedRef | null {
   if (!msg.quotedKey) return null;
@@ -1078,16 +1112,34 @@ export function buildMessageContext(
   const quotedRaw: BotMessage | null = contextInfo?.quotedMessage
     ? (() => {
         const decoded = decodeContent(contextInfo.quotedMessage);
+        const { fromLid: quotedFromLid, fromPn: quotedFromPn } =
+          splitQuotedParticipant(store, contextInfo.participant);
+        // contextInfo itself never carries the quoted message's original
+        // send time (WhatsApp's ContextInfo proto has no timestamp field —
+        // only stanzaId/participant/quotedMessage). Best-effort recover it
+        // from the message store, keyed by the same chatId+stanzaId, when
+        // the original is still cached (it usually is, since a reply
+        // almost always quotes a recent message in the same chat). Stays
+        // 0 — same as before — only when the original has aged out of the
+        // store's per-chat cap or the chat history hasn't been seen yet.
+        const quotedOriginal = contextInfo.stanzaId
+          ? store.messages.get(msg.chatId)?.get(contextInfo.stanzaId)
+          : undefined;
+        const quotedTimestamp = quotedOriginal
+          ? Number((quotedOriginal as unknown as { messageTimestamp?: number | string }).messageTimestamp ?? 0) * 1000
+          : 0;
         return {
           id:          contextInfo.stanzaId ?? "",
           chatId:      msg.chatId,
           fromMe:      false,
           type:        decoded.type,
           contentHash: "",
-          timestamp:   0,
+          timestamp:   quotedTimestamp,
           body:        decoded.body,
           mimetype:    decoded.mimetype,
-          fromPn:      contextInfo.participant ?? undefined,
+          fromLid:     quotedFromLid,
+          fromPn:      quotedFromPn,
+          participantAlt: quotedFromLid,
           pushName:    lookupPushName(contextInfo.participant),
           _raw: {
             contextInfo: {
@@ -1105,16 +1157,28 @@ export function buildMessageContext(
       // key-only synthetic so hasReply()/getReply() still work, but
       // hasMedia/downloadMedia on the result will degrade gracefully
       // (type=other, mimetype=undefined).
-      ? {
-          id:          msg.quotedKey.id ?? "",
-          chatId:      msg.chatId,
-          fromMe:      false,
-          type:        "other",
-          contentHash: "",
-          timestamp:   0,
-          fromPn:      msg.quotedKey.participant ?? undefined,
-          pushName:    lookupPushName(msg.quotedKey.participant),
-        }
+      ? (() => {
+          const { fromLid: quotedFromLid, fromPn: quotedFromPn } =
+            splitQuotedParticipant(store, msg.quotedKey!.participant);
+          const quotedOriginal = msg.quotedKey!.id
+            ? store.messages.get(msg.chatId)?.get(msg.quotedKey!.id!)
+            : undefined;
+          const quotedTimestamp = quotedOriginal
+            ? Number((quotedOriginal as unknown as { messageTimestamp?: number | string }).messageTimestamp ?? 0) * 1000
+            : 0;
+          return {
+            id:          msg.quotedKey!.id ?? "",
+            chatId:      msg.chatId,
+            fromMe:      false,
+            type:        "other",
+            contentHash: "",
+            timestamp:   quotedTimestamp,
+            fromLid:     quotedFromLid,
+            fromPn:      quotedFromPn,
+            participantAlt: quotedFromLid,
+            pushName:    lookupPushName(msg.quotedKey!.participant),
+          };
+        })()
       : null;
 
   return {
