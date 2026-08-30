@@ -1892,6 +1892,10 @@ async function resolveMentionJids(
 }
 
 function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | null) {
+  const me = contract.me();
+  const botJid = me.id ? normalizeJid(jidNormalizedUser(me.id)) : null;
+  const botLid = me.lid ? normalizeJid(me.lid) : null;
+
   /**
    * Resolve admin-supplied identifiers (bare phone number, @c.us,
    * @s.whatsapp.net, or @lid) to the exact jid WhatsApp has on file for
@@ -2047,6 +2051,12 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     async kick(memberIds: string | string[]) {
       requireChat();
       const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
+      if (users.some((u) => {
+        const n = normalizeJid(u);
+        return (botJid && n === botJid) || (botLid && n === botLid);
+      })) {
+        throw new Error(t("driver.cannotKickSelf") as string);
+      }
       return runParticipantsUpdate(chatJid!, users, "remove");
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */

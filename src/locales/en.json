@@ -113,6 +113,7 @@
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" does not match a current participant in group \"{{group}}\" (check whether the person is still in the group, or use a reply/mention instead of typing the number).",
+    "cannotKickSelf": "Refusing to remove the bot itself from the group via admin.kick().",
     "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rejected for: {{detail}}",
     "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") failed for group \"{{group}}\" with participants [{{users}}]: {{message}}",
     "pollDecryptFailed": "Failed to decrypt poll vote: {{error}}"

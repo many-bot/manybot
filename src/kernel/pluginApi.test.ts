@@ -447,6 +447,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     assert.equal(calls.groupParticipantUpdates.length, 2);
     assert.equal(calls.groupParticipantUpdates[1].action, "remove");
 
+    await assert.rejects(() => ctx.admin.kick("5516999999999@s.whatsapp.net"));
+    assert.equal(calls.groupParticipantUpdates.length, 2);
+
     const inviteLink = await ctx.admin.getInviteLink();
     assert.match(inviteLink, /chat\.whatsapp\.com\/mock-invite-code-123/);
 

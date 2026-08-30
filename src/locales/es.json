@@ -113,6 +113,7 @@
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" no coincide con ningún participante actual del grupo \"{{group}}\" (comprueba si la persona sigue en el grupo o usa una respuesta/mención en lugar de escribir el número).",
+    "cannotKickSelf": "Se rechaza eliminar al propio bot del grupo mediante admin.kick().",
     "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rechazado para: {{detail}}",
     "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") falló para el grupo \"{{group}}\" con participantes [{{users}}]: {{message}}",
     "pollDecryptFailed": "No se pudo descifrar el voto de la encuesta: {{error}}"
