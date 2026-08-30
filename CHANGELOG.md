@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.9.0 - In-Development
+## v5.9.0 - 2026-08-30 
 
 ### New Features
 - **Full `commands.yaml` v6 config support** — every field exercised by the reference `~/.manybot/commands.yaml` now parses, validates, and runs end-to-end (not parse-only):
