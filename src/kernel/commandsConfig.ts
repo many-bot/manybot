@@ -836,6 +836,7 @@ function parseFunctionList(
 }
 
 const DEFAULT_MENU_CONFIG: MenuConfig = {
+  enabled: false,
   title: "🤖 ManyBot — Menu",
   intro: {
     en: "Use {prefix}<command> to run it or {prefix}help <command> to view its manual.",

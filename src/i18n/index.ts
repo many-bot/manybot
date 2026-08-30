@@ -49,27 +49,10 @@ function loadLocale(lang: string): Record<string, unknown> | null {
 }
 
 /**
- * Detects the OS locale without depending on a single env var, since LANG
- * isn't reliably set on macOS GUI sessions or Windows. Used as a fallback
- * when CONFIG.LANGUAGE isn't available yet (e.g. circular import during
- * config bootstrap) or isn't set.
- */
-function detectSystemLang(): string {
-  try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    if (locale) return locale.split("-")[0].toLowerCase();
-  } catch {
-    // Intl unavailable — fall through to env vars
-  }
-
-  const envLocale = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || process.env.LANGUAGE;
-  if (envLocale) return envLocale.split(/[_.]/)[0].toLowerCase();
-
-  return DEFAULT_LANG;
-}
-
-/**
- * Gets configured language or falls back to system locale, then English.
+ * Gets configured language or falls back to English. `CONFIG.LANGUAGE` is
+ * the single source of truth (set from manybot.toml, defaulted to "en") —
+ * this never guesses from the OS locale, so bot output language doesn't
+ * depend on the host machine/CI environment it happens to run on.
  * @returns {string}
  */
 function getConfiguredLang(): string {
@@ -83,7 +66,7 @@ function getConfiguredLang(): string {
   }
 
   if (!lang) {
-    lang = detectSystemLang();
+    lang = DEFAULT_LANG;
   }
 
   const filePath = path.join(LOCALES_DIR, `${lang}.json`);
@@ -305,3 +288,4 @@ export function getCurrentLang(): string {
 }
 
 export default { t, createPluginT, reloadTranslations, getCurrentLang };
+

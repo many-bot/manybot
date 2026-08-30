@@ -8,6 +8,14 @@ import type { CommandSpec, CommandSubcommandSpec } from "#kernel/commandsConfig.
 import type { PluginContext } from "#kernel/pluginApi.js";
 import { STOP_CHAIN } from "#kernel/commandsConfig.js";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
+import { CONFIG } from "#config";
+
+// Pin the "no override" global language independently of whatever
+// ~/.manybot/manybot.toml happens to say on the machine running the
+// suite — CONFIG.LANGUAGE is read from the real config dir unless
+// MANYBOT_CONFIG_DIR is set, and i18n's `currentLang` locks in on the
+// first t()/tFor() call, so this must run before any test does.
+CONFIG.LANGUAGE = "en";
 
 function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
   return {

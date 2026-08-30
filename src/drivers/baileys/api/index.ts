@@ -282,6 +282,26 @@ async function getGroupMetadataCached(contract: WaContract, jid: string): Promis
   return meta;
 }
 
+/**
+ * Same fetch as {@link getGroupMetadataCached}, but always hits the network
+ * and never reads the TTL cache — used for admin permission checks
+ * (`isAdmin`/`isSenderAdmin`), which gate the `admin:`/`botAdmin:` command
+ * permission and so cannot tolerate the up-to-5-minute staleness window.
+ * Invalidation on `group-participants.update` closes most of that window,
+ * but Baileys' own event-buffer bugs during reconnects (see the welcome-
+ * message gating fix) can drop the event entirely — leaving a demoted
+ * admin able to keep running admin-only commands until the TTL expires,
+ * or indefinitely if no later promote/demote re-triggers invalidation.
+ * The result is still written into the shared cache so unrelated cached
+ * reads (`getParticipants()`, chat name) benefit from the fresh fetch too.
+ */
+async function getGroupMetadataFresh(contract: WaContract, jid: string): Promise<WAGroupMetadata> {
+  const sock = rawSocketOf(contract);
+  const meta = await sock.groupMetadata(jid);
+  groupMetaCache.set(jid, { meta, at: Date.now() });
+  return meta;
+}
+
 let groupMetaInvalidationBound = false;
 function bindGroupMetaInvalidation(contract: WaContract) {
   if (groupMetaInvalidationBound) return;
@@ -292,6 +312,15 @@ function bindGroupMetaInvalidation(contract: WaContract) {
   contract.on("groups.update", (p) => {
     for (const u of p.updates) if (u.id) groupMetaCache.delete(u.id);
   });
+}
+
+/** Test-only: clears the group-metadata cache and re-arms invalidation
+ *  binding so each test starts isolated (module-level singletons otherwise
+ *  persist for the life of the process). Not for production use. */
+export function __resetGroupMetaCacheForTests(): void {
+  groupMetaCache.clear();
+  groupNameCache.clear();
+  groupMetaInvalidationBound = false;
 }
 
 /**
@@ -2541,13 +2570,16 @@ export function buildApi({
 
       /**
        * Check if a contact is an admin of this group.
+       * Always fetches fresh (bypasses the group-metadata TTL cache) —
+       * this gates the `admin:` command permission, so it cannot risk
+       * serving a stale "still admin" result after a demote.
        * @param {string} contactId
        * @returns {Promise<boolean>}
        */
       async isAdmin(contactId: string): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await getGroupMetadataCached(contract, rawJid);
+          const meta = await getGroupMetadataFresh(contract, rawJid);
           return meta.participants.some(
             p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );
@@ -2558,12 +2590,15 @@ export function buildApi({
 
       /**
        * Check if the message sender is an admin of this group.
+       * Always fetches fresh (bypasses the group-metadata TTL cache) — see
+       * {@link isAdmin} for why: this gates the `botAdmin:`/`admin:`
+       * permission checks in commandPermissions.ts.
        * @returns {Promise<boolean>}
        */
       async isSenderAdmin(): Promise<boolean> {
         if (!chat.isGroup) return false;
         try {
-          const meta = await getGroupMetadataCached(contract, rawJid);
+          const meta = await getGroupMetadataFresh(contract, rawJid);
           // The adapter's pre-extracted participant fields give us both the
           // LID and PN forms of the sender; match either against the group's
           // own participant list.
@@ -2579,6 +2614,9 @@ export function buildApi({
 
       /**
        * Check if the bot is an admin of this group.
+       * Always fetches fresh (bypasses the group-metadata TTL cache) — see
+       * {@link isAdmin} for why: this gates the `botAdmin:` permission
+       * check in commandPermissions.ts.
        * @returns {Promise<boolean>}
        */
       async isBotAdmin(): Promise<boolean> {
@@ -2588,7 +2626,7 @@ export function buildApi({
         const botCandidates = [me.id, botLid];
         if (!botCandidates.some(Boolean)) return false;
         try {
-          const meta = await getGroupMetadataCached(contract, rawJid);
+          const meta = await getGroupMetadataFresh(contract, rawJid);
           return meta.participants.some(
             p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
           );

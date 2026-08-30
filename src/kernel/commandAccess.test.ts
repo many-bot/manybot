@@ -1,7 +1,7 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { exists, desc, manual, list, isMenuAlias } from "#kernel/commandAccess.js";
-import { buildCommandRegistry } from "#kernel/commandRegistry.js";
+import { buildCommandRegistry, DEFAULT_MENU_CONFIG } from "#kernel/commandRegistry.js";
 import type { PluginEntry } from "#kernel/pluginLoader.js";
 
 function createTestRegistry() {
@@ -35,7 +35,13 @@ function createTestRegistry() {
     utils: { label: { pt: "Utilitários", en: "Utilities" }, order: 1 },
   };
 
-  return buildCommandRegistry(null, plugins, undefined, undefined, categories);
+  return buildCommandRegistry(
+    null,
+    plugins,
+    undefined,
+    { ...DEFAULT_MENU_CONFIG, enabled: true },
+    categories,
+  );
 }
 
 describe("kernel/commandAccess", () => {

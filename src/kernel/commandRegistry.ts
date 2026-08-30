@@ -389,7 +389,8 @@ function registerInvocationWithDeprecationGuard(
   return registerInvocation(byInvocation, text, entryId, isOverride);
 }
 
-const DEFAULT_MENU_CONFIG: MenuConfig = {
+export const DEFAULT_MENU_CONFIG: MenuConfig = {
+  enabled: false,
   title: "🤖 ManyBot — Menu",
   intro: {
     en: "Use {prefix}<command> to run it or {prefix}help <command> to view its manual.",
