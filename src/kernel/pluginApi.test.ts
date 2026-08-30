@@ -34,6 +34,10 @@ interface MockCallHistory {
   deletes: Array<{ jid: string; target: BotQuotedRef; forEveryone: boolean }>;
   blockUpdates: Array<{ jid: string; action: "block" | "unblock" }>;
   groupParticipantUpdates: Array<{ jid: string; users: string[]; action: string }>;
+  subjectUpdates: Array<{ jid: string; subject: string }>;
+  descriptionUpdates: Array<{ jid: string; description: string }>;
+  profilePicUpdates: Array<{ jid: string }>;
+  revokeInvites: string[];
   nameUpdates: string[];
   statusUpdates: string[];
 }
@@ -52,6 +56,10 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
     deletes: [],
     blockUpdates: [],
     groupParticipantUpdates: [],
+    subjectUpdates: [],
+    descriptionUpdates: [],
+    profilePicUpdates: [],
+    revokeInvites: [],
     nameUpdates: [],
     statusUpdates: [],
   };
@@ -224,12 +232,21 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
       calls.groupParticipantUpdates.push({ jid, users, action });
       return users.map((u) => ({ status: "200", jid: u }));
     },
-    groupUpdateSubject: async () => {},
-    groupUpdateDescription: async () => {},
+    groupUpdateSubject: async (jid, subject) => {
+      calls.subjectUpdates.push({ jid, subject });
+    },
+    groupUpdateDescription: async (jid, description) => {
+      calls.descriptionUpdates.push({ jid, description });
+    },
     groupInviteCode: async () => "mock-invite-code-123",
-    groupRevokeInvite: async () => "mock-new-invite-code-456",
+    groupRevokeInvite: async (jid) => {
+      calls.revokeInvites.push(jid);
+      return "mock-new-invite-code-456";
+    },
 
-    updateProfilePicture: async () => {},
+    updateProfilePicture: async (jid) => {
+      calls.profilePicUpdates.push({ jid });
+    },
     updateProfileName: async (name) => {
       calls.nameUpdates.push(name);
     },
@@ -359,6 +376,56 @@ describe("kernel/pluginApi — buildSetupApi with Mock WaContract", () => {
     assert.equal(calls.groupParticipantUpdates[0].action, "add");
     assert.equal(calls.groupParticipantUpdates[0].jid, "120363000000000@g.us");
   });
+
+  test("setup admin.kick/promote/demote().to() target the explicit group", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+    const groupJid = "120363000000000@g.us";
+
+    await ctx.admin.promote("5516777777777@s.whatsapp.net").to(groupJid);
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.action, "promote");
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.jid, groupJid);
+
+    await ctx.admin.demote("5516777777777@s.whatsapp.net").to(groupJid);
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.action, "demote");
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.jid, groupJid);
+
+    await ctx.admin.kick("5516777777777@s.whatsapp.net").to(groupJid);
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.action, "remove");
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.jid, groupJid);
+
+    // self-kick guard still applies when targeting an explicit group
+    await assert.rejects(async () => { await ctx.admin.kick("5516999999999@s.whatsapp.net").to(groupJid); });
+  });
+
+  test("setup admin.setSubject/setDescription/setProfilePic/revokeInvite().to() target the explicit group", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+    const groupJid = "120363000000000@g.us";
+
+    await ctx.admin.setSubject("New Subject").to(groupJid);
+    assert.deepEqual(calls.subjectUpdates, [{ jid: groupJid, subject: "New Subject" }]);
+
+    await ctx.admin.setDescription("New Description").to(groupJid);
+    assert.deepEqual(calls.descriptionUpdates, [{ jid: groupJid, description: "New Description" }]);
+
+    await ctx.admin.setProfilePic(Buffer.from("pic-data")).to(groupJid);
+    assert.deepEqual(calls.profilePicUpdates, [{ jid: groupJid }]);
+
+    const invite = await ctx.admin.revokeInvite().to(groupJid);
+    assert.match(String(invite), /mock-new-invite-code-456/);
+    assert.deepEqual(calls.revokeInvites, [groupJid]);
+  });
+
+  test("setup admin.* without .to() throws (no current chat bound)", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+
+    await assert.rejects(async () => { await ctx.admin.kick("5516777777777@s.whatsapp.net"); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.promote("5516777777777@s.whatsapp.net"); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.demote("5516777777777@s.whatsapp.net"); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.setSubject("X"); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.setDescription("X"); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.setProfilePic(Buffer.from("x")); }, /runtime group context/);
+    await assert.rejects(async () => { await ctx.admin.revokeInvite(); }, /runtime group context/);
+  });
 });
 
 describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
@@ -447,7 +514,7 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     assert.equal(calls.groupParticipantUpdates.length, 2);
     assert.equal(calls.groupParticipantUpdates[1].action, "remove");
 
-    await assert.rejects(() => ctx.admin.kick("5516999999999@s.whatsapp.net"));
+    await assert.rejects(async () => { await ctx.admin.kick("5516999999999@s.whatsapp.net"); });
     assert.equal(calls.groupParticipantUpdates.length, 2);
 
     const inviteLink = await ctx.admin.getInviteLink();

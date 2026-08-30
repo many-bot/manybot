@@ -294,14 +294,14 @@ export interface ITargetableAction<T = unknown> {
 // `assertParticipantsUpdateOk` in drivers/baileys/api/index.ts).
 export interface IAdmin {
   add(memberIds: string | string[]): ITargetableAction;
-  kick(memberIds: string | string[]): Promise<unknown>;
-  promote(memberIds: string | string[]): Promise<unknown>;
-  demote(memberIds: string | string[]): Promise<unknown>;
-  setSubject(name: string): Promise<unknown>;
-  setDescription(text: string): Promise<unknown>;
-  setProfilePic(source: string | Buffer): Promise<unknown>;
+  kick(memberIds: string | string[]): ITargetableAction;
+  promote(memberIds: string | string[]): ITargetableAction;
+  demote(memberIds: string | string[]): ITargetableAction;
+  setSubject(name: string): ITargetableAction;
+  setDescription(text: string): ITargetableAction;
+  setProfilePic(source: string | Buffer): ITargetableAction;
   getInviteLink(groupId?: string): Promise<string>;
-  revokeInvite(): Promise<unknown>;
+  revokeInvite(): ITargetableAction;
 }
 
 // Sub-facet: bot's own profile.
@@ -474,8 +474,11 @@ export interface PluginContext {
  * Differs from `PluginContext` only in:
  *   - no `msg` or `chat` (no inbound message yet);
  *   - `send` exposes only `.to(targetJid)` (no implicit destination);
- *   - `admin` operations targeting the *current* chat throw (no chat
- *     bound yet — `.to(target).add(...)` is the supported shape);
+ *   - every `admin` method targeting the *current* chat throws (no chat
+ *     bound yet) — `.to(target)` is the supported shape for all of them
+ *     in setup (e.g. `ctx.admin.promote(id).to(groupJid)`), same shape
+ *     used from an event handler registered via `ctx.events.on(...)`
+ *     (e.g. auto-promote/kick/welcome on group-participants-update);
  *   - `settings` exposes only `global` (no current chat to scope to).
  */
 export interface SetupContext {

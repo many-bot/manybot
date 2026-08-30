@@ -2133,6 +2133,45 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     };
   }
 
+  /**
+   * Same `.to(target)` shape as `createTargetableAction`, for group-level
+   * ops that take no `memberIds` (setSubject/setDescription/setProfilePic/
+   * revokeInvite) — no participant resolution needed, just a group jid.
+   */
+  function createTargetableGroupAction<T = unknown>(
+    action: (jid: string) => Promise<T>
+  ) {
+    const executeCurrent = async () => {
+      requireChat();
+      return action(chatJid!);
+    };
+    return {
+      async to(targetJid: string) {
+        await getGroup(targetJid);
+        return action(targetJid);
+      },
+      then<TResult1 = T, TResult2 = never>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+        onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null
+      ): Promise<TResult1 | TResult2> {
+        return executeCurrent().then(onfulfilled, onrejected);
+      },
+      catch<TResult = never>(
+        onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | undefined | null
+      ): Promise<T | TResult> {
+        return executeCurrent().catch(onrejected);
+      },
+      finally(onfinally?: (() => void) | undefined | null): Promise<T> {
+        return executeCurrent().finally(onfinally);
+      },
+    };
+  }
+
+  function isSelf(u: string): boolean {
+    const n = normalizeJid(u);
+    return (botJid && n === botJid) || (botLid && n === botLid) || false;
+  }
+
   return {
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     add(memberIds: string | string[]) {
@@ -2143,44 +2182,38 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
       );
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
-    async kick(memberIds: string | string[]) {
-      requireChat();
-      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
-      if (users.some((u) => {
-        const n = normalizeJid(u);
-        return (botJid && n === botJid) || (botLid && n === botLid);
-      })) {
-        throw new Error(t("driver.cannotKickSelf") as string);
-      }
-      return runParticipantsUpdate(chatJid!, users, "remove");
+    kick(memberIds: string | string[]) {
+      return createTargetableAction(async (jid, users) => {
+        if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf") as string);
+        return runParticipantsUpdate(jid, users, "remove");
+      }, memberIds);
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
-    async promote(memberIds: string | string[]) {
-      requireChat();
-      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
-      return runParticipantsUpdate(chatJid!, users, "promote");
+    promote(memberIds: string | string[]) {
+      return createTargetableAction(
+        (jid, users) => runParticipantsUpdate(jid, users, "promote"),
+        memberIds
+      );
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
-    async demote(memberIds: string | string[]) {
-      requireChat();
-      const users = await resolveTargets(chatJid!, Array.isArray(memberIds) ? memberIds : [memberIds]);
-      return runParticipantsUpdate(chatJid!, users, "demote");
+    demote(memberIds: string | string[]) {
+      return createTargetableAction(
+        (jid, users) => runParticipantsUpdate(jid, users, "demote"),
+        memberIds
+      );
     },
     /** @param {string} name */
-    async setSubject(name: string) {
-      requireChat();
-      return contract.groupUpdateSubject(chatJid!, name);
+    setSubject(name: string) {
+      return createTargetableGroupAction((jid) => contract.groupUpdateSubject(jid, name));
     },
     /** @param {string} text */
-    async setDescription(text: string) {
-      requireChat();
-      return contract.groupUpdateDescription(chatJid!, text);
+    setDescription(text: string) {
+      return createTargetableGroupAction((jid) => contract.groupUpdateDescription(jid, text));
     },
     /** @param {string|Buffer} source */
-    async setProfilePic(source: string | Buffer) {
-      requireChat();
+    setProfilePic(source: string | Buffer) {
       const buffer = Buffer.isBuffer(source) ? source : readFileSync(source);
-      return contract.updateProfilePicture(chatJid!, buffer);
+      return createTargetableGroupAction((jid) => contract.updateProfilePicture(jid, buffer));
     },
     async getInviteLink(groupId?: string) {
       const jid = groupId ?? chatJid;
@@ -2188,9 +2221,8 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
       const code = await contract.groupInviteCode(jid);
       return `https://chat.whatsapp.com/${code}`;
     },
-    async revokeInvite() {
-      requireChat();
-      return contract.groupRevokeInvite(chatJid!);
+    revokeInvite() {
+      return createTargetableGroupAction((jid) => contract.groupRevokeInvite(jid));
     },
   };
 }
