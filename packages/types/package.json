@@ -1,6 +1,6 @@
 {
   "name": "@manybot/types",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Type definitions for building ManyBot plugins (ctx, PluginContext, SetupContext)",
   "license": "GPL-3.0-only",
   "type": "module",
