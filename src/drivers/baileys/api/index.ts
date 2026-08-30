@@ -608,8 +608,9 @@ function mentionDisplayName(jid: string): string {
  * @param {RawStoreContact}     [info]
  * @param {string|null}         [botJid]
  * @param {WaContract}          [contract]
+ * @param {string|null}         [botLid]
  */
-async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract: WaContract | undefined, store: BotStore): Promise<IContact | null> {
+async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact | undefined, botJid: string | null | undefined, contract: WaContract | undefined, store: BotStore, botLid?: string | null): Promise<IContact | null> {
   // Compute the canonical ID form (LID for users, group JID for groups,
   // null when we can't pin a LID) and the resolved PN form (if any) in
   // one pass — both are derived from the same LID↔PN cache + protocol-level
@@ -696,7 +697,7 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
     isBusiness,
     isEnterprise:       false,
     isBlocked:          false,
-    isMe:               botJid ? jid === normalizeJid(botJid) : false,
+    isMe:               (botJid && jid === normalizeJid(botJid)) || (botLid && jid === normalizeJid(botLid)) || false,
     isWAAccount,
     isUser:             !isGroup,
     isGroup,
@@ -761,7 +762,15 @@ function buildChatsApi(store: BotStore) {
 
 // ── Contact API ───────────────────────────────────────────────────────────────
 
-export function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null): IContacts {
+export function buildContactsApi(contract: WaContract, store: BotStore, botJid: string | null, botLid?: string | null): IContacts {
+  // Teach the store the bot's own LID↔PN mapping proactively — it's
+  // known synchronously from contract.me() and doesn't need a resolveLid()
+  // round trip or a prior sync to have taught the store this pairing
+  // (e.g. contacts.get() on the bot's own id before any message from the
+  // bot's own account arrived to populate it via message handling).
+  // Without this, self-lookups keep every phone-number field null.
+  if (botLid && botJid) store.learnLid(botLid, botJid);
+
   return {
     /**
      * Get a normalized contact object by JID.
@@ -835,7 +844,8 @@ export function buildContactsApi(contract: WaContract, store: BotStore, botJid: 
         botJid &&
         normalizedContactId.endsWith("@lid") &&
         resolved === normalizeJid(botJid) &&
-        normalizedContactId !== normalizeJid(botJid)
+        normalizedContactId !== normalizeJid(botJid) &&
+        !(botLid && normalizedContactId === normalizeJid(botLid))
       ) {
         logger.warn(`[contacts.get] "${contactId}" resolved to the bot's own JID — discarding stale lidMap entry, treating as unresolved.`);
         store.forgetLid(normalizedContactId);
@@ -860,7 +870,7 @@ export function buildContactsApi(contract: WaContract, store: BotStore, botJid: 
         notify:       resolvedInfo?.notify ?? raw?.notify,
         verifiedName: resolvedInfo?.verifiedName ?? raw?.verifiedName,
       } : undefined;
-      return normalizeContact(resolved, info, botJid, contract, store);
+      return normalizeContact(resolved, info, botJid, contract, store, botLid);
     },
 
     /**
@@ -1207,7 +1217,8 @@ export function buildMessageContext(
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[store.resolveJid(msg.fromPn ?? "")]
                 ?? (store.contacts as Record<string, import("#drivers/baileys/sdk/baileysSock.js").RawStoreContact>)[denormalizeJid(store.resolveJid(msg.fromPn ?? ""))];
       const botJid = contract.me().id ? jidNormalizedUser(contract.me().id) : null;
-      return normalizeContact(contactId, info, botJid, contract, store);
+      const botLid = contract.me().lid ? normalizeJid(contract.me().lid as string) : null;
+      return normalizeContact(contactId, info, botJid, contract, store, botLid);
     },
   };
 }
@@ -2361,7 +2372,9 @@ function buildBaseApi(
   pluginRegistry: Map<string, PluginEntry>,
   pluginName:     string
 ) {
-  const botJid = contract.me().id ? jidNormalizedUser(contract.me().id as string) : null;
+  const me     = contract.me();
+  const botJid = me.id ? jidNormalizedUser(me.id) : null;
+  const botLid = me.lid ? normalizeJid(me.lid) : null;
   if (!botJid) logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
 
   return {
@@ -2374,9 +2387,9 @@ function buildBaseApi(
     scheduler: buildSchedulerApi(pluginName),
     plugins:   buildPluginsApi(pluginRegistry),
     chats:     buildChatsApi(store),
-    contacts:  buildContactsApi(contract, store, botJid),
+    contacts:  buildContactsApi(contract, store, botJid, botLid),
     storage:   buildStorageApi(pluginName),
-    botId:     botJid,
+    botId:     botLid ?? botJid,
     commands:  buildCommandsApi(),
   };
 }

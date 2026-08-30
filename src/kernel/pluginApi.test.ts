@@ -317,7 +317,7 @@ describe("kernel/pluginApi — buildSetupApi with Mock WaContract", () => {
     assert.ok(ctx.chats);
     assert.ok(ctx.contacts);
     assert.ok(ctx.storage);
-    assert.equal(ctx.botId, "5516999999999@s.whatsapp.net");
+    assert.equal(ctx.botId, "99999@lid");
 
     // Setup send only has .to()
     assert.ok(ctx.send.to);
@@ -460,6 +460,15 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     // new contract invariant; assert accordingly.
     assert.equal(contact?.number, "+5516999999999");
     assert.equal(contact?.isMe, true);
+
+    // Looking up the bot by its own LID (ctx.botId) must resolve the
+    // same identity — number populated via the proactively-learned
+    // LID↔PN mapping, not left null for lack of a resolveLid() hit.
+    const selfByLid = await ctx.contacts.get(ctx.botId!);
+    assert.ok(selfByLid);
+    assert.equal(selfByLid?.id, "99999@lid");
+    assert.equal(selfByLid?.number, "+5516999999999");
+    assert.equal(selfByLid?.isMe, true);
 
     await ctx.contacts.block("5516777777777@s.whatsapp.net");
     assert.equal(calls.blockUpdates.length, 1);
