@@ -1908,15 +1908,26 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
   const botLid = me.lid ? normalizeJid(me.lid) : null;
 
   /**
-   * Resolve admin-supplied identifiers (bare phone number, @c.us,
-   * @s.whatsapp.net, or @lid) to the exact jid WhatsApp has on file for
-   * that participant *in this group*. A naive toWireJid() guess is only
-   * correct for pn-addressed groups — lid-addressed groups (increasingly
-   * common, e.g. when a member hides their phone number) only recognize
-   * that member by @lid, which a phone number typed by the admin can't
-   * produce on its own. Baileys' raw groupMetadata() participants carry
-   * `id` (whatever WA addresses them as here), `jid` (its best
-   * phone-number guess) and `lid` — check all three.
+   * Resolve admin-supplied identifiers (bare phone number, bare LID,
+   * @c.us, @s.whatsapp.net, or @lid) to the exact jid WhatsApp has on
+   * file for that participant *in this group*. A naive toWireJid() guess
+   * is only correct for pn-addressed groups — lid-addressed groups
+   * (increasingly common, e.g. when a member hides their phone number)
+   * only recognize that member by @lid, which a phone number typed by
+   * the admin can't produce on its own. Baileys' raw groupMetadata()
+   * participants carry `id` (whatever WA addresses them as here), `jid`
+   * (its best phone-number guess) and `lid` — check all three.
+   *
+   * When the identifier has no explicit domain (the admin typed a bare
+   * number), we don't know if it's a PN or a LID — toWireJid() would
+   * silently guess PN, which never matches a participant that's only
+   * addressable by @lid even when the digits are identical (e.g. typed
+   * "118077710708981", the actual member is "118077710708981@lid"). In
+   * that case, compare by digits alone against id/jid/lid instead of
+   * forcing a domain. When the identifier *does* carry an explicit
+   * domain (@c.us, @s.whatsapp.net, @lid), the domain is meaningful
+   * (disambiguates a PN from a same-digit LID) and the original
+   * wire/resolved comparison is used as before.
    *
    * Throws per-identifier if it doesn't match a current member, instead
    * of silently sending a guessed jid that WhatsApp rejects deep inside
@@ -1926,16 +1937,25 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     const meta = await getGroupMetadataCached(contract, groupJid);
     const out: string[] = [];
     for (const id of identifiers) {
+      const hasExplicitDomain = /@(s\.whatsapp\.net|lid|g\.us|c\.us)$/.test(id.trim());
       const wire     = toWireJid(id);
       const resolved = normalizeJid(store.resolveJid(id));
+      const idDigits = id.replace(/\D/g, "");
       const match = meta.participants.find((p) => {
         const pAny = p as unknown as { id: string; jid?: string; lid?: string };
-        return (
-          toWireJid(pAny.id) === wire ||
-          normalizeJid(store.resolveJid(pAny.id)) === resolved ||
-          (pAny.jid ? toWireJid(pAny.jid) === wire : false) ||
-          (pAny.lid ? toWireJid(pAny.lid) === wire : false)
-        );
+        if (hasExplicitDomain) {
+          return (
+            toWireJid(pAny.id) === wire ||
+            normalizeJid(store.resolveJid(pAny.id)) === resolved ||
+            (pAny.jid ? toWireJid(pAny.jid) === wire : false) ||
+            (pAny.lid ? toWireJid(pAny.lid) === wire : false)
+          );
+        }
+        // Bare number, no domain hint: match by digits against id/jid/lid,
+        // instead of assuming a PN domain that may not be the one WhatsApp
+        // actually uses for this participant (see PN-vs-LID note above).
+        const cands = [pAny.id, pAny.jid, pAny.lid].filter((v): v is string => !!v);
+        return idDigits.length > 0 && cands.some((c) => c.replace(/\D/g, "") === idDigits);
       }) as unknown as { id: string } | undefined;
       if (!match) {
         throw new Error(t("driver.groupParticipantNotFound", { id, group: groupJid }) as string);
