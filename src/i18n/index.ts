@@ -184,6 +184,30 @@ function translate(
 }
 
 /**
+ * Resolves a plugin's root directory (the one containing manyplug.json)
+ * starting from the entry file's directory. The manifest's `main` can point
+ * into a build subfolder (e.g. "dist/main.js"), so the entry file's own
+ * directory is not always the plugin root — `locale/` always lives next to
+ * manyplug.json, not next to the compiled entry.
+ * @param {string} startDir
+ * @returns {string}
+ */
+function findPluginRoot(startDir: string): string {
+  let dir = startDir;
+
+  for (let i = 0; i < 6; i++) {
+    if (fs.existsSync(path.join(dir, "manyplug.json"))) {
+      return dir;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  return startDir;
+}
+
+/**
  * Creates an isolated translation function for a plugin.
  * Plugins should have their own locale/ folder with en.json, es.json, etc.
  *
@@ -203,7 +227,8 @@ function translate(
  * @returns {{ t: Function, lang: string }}
  */
 export function createPluginT(pluginMetaUrl: string) {
-  const pluginDir = path.dirname(fileURLToPath(pluginMetaUrl));
+  const entryDir = path.dirname(fileURLToPath(pluginMetaUrl));
+  const pluginDir = findPluginRoot(entryDir);
   const pluginLocaleDir = path.join(pluginDir, "locale");
 
   ensureLoaded();
