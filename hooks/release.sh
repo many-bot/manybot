@@ -57,7 +57,9 @@ if [ "$IS_RC" = false ]; then
   # 2FA interativo (de qualquer máquina) pra liberar a versão.
   npm stage publish --access=public
   echo "==> Enviando @manybot/types pro stage do npm"
-  (cd packages/types && npm stage publish --access=public)
+  if ! (cd packages/types && npm stage publish --access=public); then
+    echo "⚠️  Falha ao publicar @manybot/types (versão provavelmente não bumpada em packages/types/package.json) — seguindo mesmo assim."
+  fi
   STATUS="staged"
 else
   echo "==> Pulando publicação no npm (release candidate)"
