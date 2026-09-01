@@ -1,11 +1,12 @@
 # Changelog
 
-## v5.10.1 - 2026-08-30
+## v5.11.0 - 2026-09-01
+
+### New Features
+- **`AUTO_READ_MESSAGES` configuration** — Now you can choose whether the bot should automatically mark every incoming message as read (blue check). Off by default to avoid interfering with specific integrations.
+- **Enhanced Contact Discovery** — Improved how the bot retrieves contact names and pushnames during the `getId` process by merging cached snapshots, ensuring names are available immediately even in new sessions.
 
 ### Fixed
-- **i18n:** Fixed plugin locale discovery. The `createT` function now correctly searches for the plugin root (containing `manyplug.json`) instead of assuming the locale folder is adjacent to the entry file. This ensures translations work correctly for plugins with separate build/dist directories.
-- **UI:** Minor spacing adjustment in the CLI banner.
-
----
-
-Previous releases are tracked via Git tags.
+- **`EADDRINUSE` crashes during plugin reload** — Plugins now correctly run their `api.events.cleanup()` export before being reloaded or disabled, ensuring ports and resources are released.
+- **Contact lookup accuracy** — Added `denormalizeJid` to improve contact lookup across different WhatsApp JID formats.
+- **Plugin cleanup consistency** — Refactored cleanup logic into a centralized `cleanupPluginExports` function to ensure reliable resource release.

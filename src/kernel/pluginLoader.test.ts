@@ -7,7 +7,7 @@ import path from "path";
 const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-plugin-loader-"));
 process.env.MANYBOT_CONFIG_DIR = configDir;
 
-const { cleanupPlugins, loadPlugin, loadPlugins, pluginRegistry, reloadCommandRegistry, reloadPlugin } =
+const { cleanupPlugins, loadPlugin, loadPlugins, pluginRegistry, reloadCommandRegistry, reloadPlugin, syncPlugins } =
   await import("#kernel/pluginLoader.js");
 const { getCommandRegistry } = await import("#kernel/commandRegistry.js");
 const pluginsDir = path.join(configDir, "plugins");
@@ -106,6 +106,63 @@ describe("kernel/pluginLoader", () => {
     assert.equal(plugin?.status, "active");
     assert.deepEqual(plugin?.exports, { version: 1 });
     assert.equal(plugin?.errorCount, 0);
+  });
+
+  // Regression test for the EADDRINUSE crash: a plugin that opens a local
+  // server (or anything else) in setup() and releases it via its own
+  // `api.events.cleanup()` export must have that cleanup run BEFORE the
+  // module is reimported — otherwise the old instance is still holding
+  // the port when the new instance's setup() tries to bind it again.
+  test("reloadPlugin runs the plugin's own cleanup export before reimporting it", async () => {
+    const logFile = path.join(configDir, "reload-cleanup.log");
+    await fs.rm(logFile, { force: true });
+
+    await writePlugin("server-plugin", "{}", `
+      import fs from "fs";
+      export default async function run() {}
+      export const api = {
+        events: {
+          cleanup: async () => {
+            fs.appendFileSync(${JSON.stringify(logFile)}, "cleanup\\n");
+          }
+        }
+      };
+    `);
+
+    await loadPlugin("server-plugin");
+    await fs.access(logFile).catch(() => {});
+    assert.equal(await fs.readFile(logFile, "utf8").catch(() => ""), "");
+
+    await reloadPlugin("server-plugin");
+
+    assert.equal(await fs.readFile(logFile, "utf8"), "cleanup\n");
+  });
+
+  test("syncPlugins runs a removed plugin's own cleanup export before disabling it", async () => {
+    const logFile = path.join(configDir, "disable-cleanup.log");
+    await fs.rm(logFile, { force: true });
+
+    await writePlugin("droppable", "{}", `
+      import fs from "fs";
+      export default async function run() {}
+      export const api = {
+        events: {
+          cleanup: async () => {
+            fs.appendFileSync(${JSON.stringify(logFile)}, "cleanup\\n");
+          }
+        }
+      };
+    `);
+
+    await fs.writeFile(path.join(configDir, "manybot.toml"), `PLUGINS = ["droppable"]\n`, "utf8");
+    await loadPlugins(["droppable"]);
+    assert.equal(pluginRegistry.get("droppable")?.status, "active");
+
+    await fs.writeFile(path.join(configDir, "manybot.toml"), `PLUGINS = []\n`, "utf8");
+    await syncPlugins();
+
+    assert.equal(pluginRegistry.get("droppable")?.status, "disabled");
+    assert.equal(await fs.readFile(logFile, "utf8"), "cleanup\n");
   });
 });
 

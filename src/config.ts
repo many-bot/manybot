@@ -267,6 +267,11 @@ UPDATE_CHECK_INTERVAL_HOURS = 24
 # saved here automatically.
 LOGIN_METHOD = ""
 
+# Mark every incoming message as read (blue check) as soon as it arrives.
+# Off by default — some integrations rely on messages staying unread until
+# actually handled.
+AUTO_READ_MESSAGES = false
+
 # ── Status page ────────────────────────────────────────────────────────────
 # Local HTTP page showing whether the bot is online or offline.
 STATUS_ENABLED = true
@@ -329,6 +334,11 @@ UPDATE_CHECK_INTERVAL_HOURS = 24
 # PHONE_NUMBER). Deixe em branco para escolher interativamente na primeira
 # execução — a escolha é salva aqui automaticamente.
 LOGIN_METHOD = ""
+
+# Marca toda mensagem recebida como lida (check azul) assim que ela chega.
+# Desligado por padrão — algumas integrações dependem das mensagens
+# ficarem não lidas até serem realmente tratadas.
+AUTO_READ_MESSAGES = false
 
 # ── Página de status ────────────────────────────────────────────────────────
 # Página HTTP local mostrando se o bot está online ou offline.
@@ -396,6 +406,7 @@ export interface Config {
   PHONE_NUMBER:  string | null;
   OWNER_NUMBER:  string | null;
   LOGIN_METHOD:  "phone" | "qr" | null;
+  AUTO_READ_MESSAGES: boolean;
 
   ADMIN_JID: string;
   SMTP_HOST: string;
@@ -445,6 +456,7 @@ const DEFAULTS: Config = {
   PHONE_NUMBER:  null,
   OWNER_NUMBER:  null,
   LOGIN_METHOD:  null,
+  AUTO_READ_MESSAGES: false,
   ADMIN_JID: "",
   SMTP_HOST: "",
   SMTP_PORT: 587,
@@ -504,6 +516,8 @@ function normalize(cfg: Config): Config {
   cfg.UPDATE_CHECK_ENABLED = rawUpdateEnabled !== false && rawUpdateEnabled !== "false";
   const rawSmtpInsecure = cfg.SMTP_INSECURE as unknown;
   cfg.SMTP_INSECURE = rawSmtpInsecure === true || rawSmtpInsecure === "true";
+  const rawAutoRead = cfg.AUTO_READ_MESSAGES as unknown;
+  cfg.AUTO_READ_MESSAGES = rawAutoRead === true || rawAutoRead === "true";
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
 
   const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;
@@ -610,6 +624,7 @@ export const SMTP_PASS                   = CONFIG.SMTP_PASS;
 export const SMTP_FROM                   = CONFIG.SMTP_FROM;
 export const SMTP_TO                     = CONFIG.SMTP_TO;
 export const SMTP_INSECURE               = CONFIG.SMTP_INSECURE;
+export const AUTO_READ_MESSAGES          = CONFIG.AUTO_READ_MESSAGES;
 export const UPDATE_CHECK_ENABLED        = CONFIG.UPDATE_CHECK_ENABLED;
 export const UPDATE_CHECK_INTERVAL_HOURS = CONFIG.UPDATE_CHECK_INTERVAL_HOURS;
 export const STATUS_ENABLED              = CONFIG.STATUS_ENABLED;

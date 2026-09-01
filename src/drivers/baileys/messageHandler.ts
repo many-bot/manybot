@@ -22,7 +22,7 @@
 import type { BotMessage } from "#drivers/types.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
-import { CHATS, EXCLUDE_CHATS } from "#config";
+import { CHATS, EXCLUDE_CHATS, AUTO_READ_MESSAGES } from "#config";
 import { getChatPrefix, getChatLocale } from "#kernel/chatOverrides.js";
 import { buildApi,
          buildChatFromMsg,
@@ -228,16 +228,22 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
     return;
   }
 
-  // Mark as read/delivered to reduce the chance WhatsApp resends it
-  // (`msg.quotedKey`/`fromLid`/`fromPn` carry the LID/PN parts so the
-  // contract can reconstruct a proper key on each driver).
+  // `msg.quotedKey`/`fromLid`/`fromPn` carry the LID/PN parts so the
+  // contract can reconstruct a proper key on each driver. Used below both
+  // to (optionally) mark the message as read and later when dispatching
+  // to plugins.
   const rawKey: BotMessage["quotedKey"] = msg.id ? {
     id:        msg.id,
     remoteJid: msg.chatId,
     fromMe:    false,
     participant: msg.fromPn ?? msg.fromLid ?? undefined,
   } : undefined;
-  if (rawKey) {
+
+  // Mark as read/delivered to reduce the chance WhatsApp resends it.
+  // Opt-in via AUTO_READ_MESSAGES: this sets the blue check on every
+  // incoming message, which some integrations don't want (they rely on
+  // messages staying unread until actually handled).
+  if (AUTO_READ_MESSAGES && rawKey) {
     contract.readMessages([rawKey]).catch(() => {});
   }
 

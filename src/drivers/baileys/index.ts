@@ -23,7 +23,7 @@
 import { createSocket, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { createBaileysAdapter } from "./adapter.js";
 import { handleMessage } from "./messageHandler.js";
-import { normalizeJid, splitLidPn } from "#drivers/jid.js";
+import { normalizeJid, denormalizeJid, splitLidPn } from "#drivers/jid.js";
 import { loadPlugins, setupPlugins, loadIntegrationPlugin } from "#kernel/pluginLoader.js";
 import { isIntegrationOptIn }        from "#kernel/integrationMode.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
@@ -468,7 +468,12 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
   async getId(): Promise<void> {
     logger.info(`[getid] ${t("getid.connecting")}`);
 
-    await hydrateFromCache(sharedStore);
+    // NOTE: getId() runs on its own diagnostic session/store (see below),
+    // never the shared bot store — hydrating `sharedStore` here is a
+    // no-op for this function. The real hydration happens per-attempt
+    // once the local `store` exists (loads the main bot's on-disk cache,
+    // which is where most contacts' pushnames actually live — a brand
+    // new session only has ~5s of live sync to learn them from).
 
     const CONNECT_TIMEOUT_MS = 25000;
     const MAX_ATTEMPTS = 3;
@@ -505,6 +510,13 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
 
         sock = created.sock;
         store = created.store;
+
+        // Merge in the main bot's cached chats/contacts (union, never
+        // overwrite — same as hydrateFromCache) so pushnames learned in
+        // previous normal runs are available immediately, not just
+        // whatever a few seconds of live sync happens to bring in.
+        const cachedSnapshot = await loadChatCache();
+        if (cachedSnapshot) store.hydrate(cachedSnapshot);
       }
     }
 
@@ -529,8 +541,27 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
       process.exit(1);
     }
 
+    // A contact's pushname/name can be learned under either JID form
+    // (raw @lid or resolved PN) and either wire spelling (denormalized)
+    // — same lookup pattern as lookupPushName() in api/index.ts.
+    const lookupContactInfo = (jid: string) => {
+      const contacts = store!.contacts;
+      return contacts[jid]
+        ?? contacts[denormalizeJid(jid)]
+        ?? contacts[store!.resolveJid(jid)]
+        ?? contacts[denormalizeJid(store!.resolveJid(jid))];
+    };
+
     const sorted = chats
-      .map((c: { id: string; name?: string }) => ({ id: c.id, name: c.name ?? "" }))
+      .map((c: { id: string; name?: string }) => {
+        // upsertChat() already defaults `name` to the JID's local part
+        // when WhatsApp gives no chat name, so a truthy c.name isn't
+        // proof of a real name — treat that placeholder as absent too.
+        const hasRealName = c.name && c.name !== c.id.split("@")[0];
+        const contact = lookupContactInfo(c.id);
+        const name = (hasRealName ? c.name : undefined) ?? contact?.name ?? contact?.verifiedName ?? contact?.notify ?? c.name ?? "";
+        return { id: c.id, name };
+      })
       .sort((a: { id: string; name: string }, b: { id: string; name: string }) => a.name.localeCompare(b.name));
 
     // Allow selecting multiple chats (Space to toggle, Enter to confirm).

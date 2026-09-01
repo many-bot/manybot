@@ -332,6 +332,35 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
 }
 
 /**
+ * Run a plugin's own `api.events.cleanup()` export, if it has one.
+ *
+ * This is the plugin's chance to release anything it opened itself
+ * that the kernel has no knowledge of — most commonly a local HTTP/TCP
+ * server started from `setup()`. `cleanupPluginEvents()` (WA-side
+ * listeners) is a separate concern and does NOT cover this.
+ *
+ * Must be awaited and run to completion BEFORE the plugin module is
+ * re-imported (reload) or the plugin is torn down (disable/shutdown) —
+ * otherwise a plugin that binds a port in `setup()` will still be
+ * holding it when the new instance tries to bind the same port,
+ * producing `EADDRINUSE` and crashing the process.
+ */
+async function cleanupPluginExports(plugin: PluginEntry): Promise<void> {
+  try {
+    const evts = (plugin.exports as Record<string, unknown> | null)?.["events"] as Record<string, unknown> | undefined;
+    await (evts?.["cleanup"] as (() => Promise<void>) | undefined)?.();
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    logger.error(
+      t("system.pluginCleanupFailed", {
+        name: plugin.name,
+        message: err.message
+      })
+    );
+  }
+}
+
+/**
  * Reload a single plugin dynamically.
  */
 export async function reloadPlugin(name: string): Promise<void> {
@@ -341,6 +370,11 @@ export async function reloadPlugin(name: string): Promise<void> {
   if (globalContract) {
     cleanupPluginEvents(name, globalContract);
   }
+
+  // Close whatever the CURRENT instance opened (e.g. a local server)
+  // before importing a fresh copy of the module — otherwise the new
+  // setup() call fights the old one for the same port.
+  await cleanupPluginExports(plugin);
 
   await loadPlugin(name, true);
 
@@ -390,6 +424,10 @@ export async function syncPlugins(): Promise<void> {
         if (globalContract) {
           cleanupPluginEvents(name, globalContract);
         }
+        // Same reasoning as reloadPlugin(): a disabled plugin must
+        // release anything it opened itself (e.g. a local server)
+        // or it keeps holding the port even though it's no longer active.
+        await cleanupPluginExports(plugin);
         plugin.status = "disabled";
         unwatchPlugin(name);
       }
@@ -543,18 +581,7 @@ export async function cleanupPlugins(): Promise<void> {
   pluginWatchers.clear();
 
   for (const plugin of pluginRegistry.values()) {
-    try {
-      const evts = (plugin.exports as Record<string, unknown> | null)?.["events"] as Record<string, unknown> | undefined;
-      await (evts?.["cleanup"] as (() => Promise<void>) | undefined)?.();
-
-    } catch (e) { const err = e instanceof Error ? e : new Error(String(e));
-      logger.error(
-        t("system.pluginCleanupFailed", {
-          name: plugin.name,
-          message: err.message
-        })
-      );
-    }
+    await cleanupPluginExports(plugin);
   }
 }
 
