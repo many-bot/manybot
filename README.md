@@ -5,7 +5,7 @@
 ![Node.js 24+](https://img.shields.io/badge/Node.js-24+-339933?logo=node.js&logoColor=white)
 ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
 ![GPL v3](https://img.shields.io/badge/License-GPL--v3-blue.svg)
-![Linux](https://img.shields.io/badge/Linux%20%7C%20Windows-lightgrey)
+![Linux / Windows](https://img.shields.io/badge/Linux%20%7C%20Windows-lightgrey)
 ![Baileys](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=white)
 
 </div>
@@ -82,12 +82,7 @@ TEST_CHAT="5516999999999" MANYBOT_RUN_WHATSAPP_TESTS=1 \
 
 ## Contributing
 
-All kinds of contributions are welcome:
-
-- **Bug reports and feature requests**: open an issue on GitHub or Codeberg
-- **Code**: pull requests are welcome on [GitHub](https://github.com/many-bot/manybot) or [Codeberg](https://codeberg.org/many-bot/manybot); patches by email (`manybot@pm.me`) are also accepted.
-- **Plugins**: submit your plugin to [manyplug-repo](https://github.com/many-bot/manyplug-repo), which has instructions on how to do it
-- **Anything else**: suggestions, translations, documentation fixes, art - reach out by email or open an issue
+Please read [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
