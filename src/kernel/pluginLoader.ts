@@ -133,6 +133,8 @@ function watchDirRecursive(rootDir: string, onChange: fs.WatchListener<string>):
   return watchers;
 }
 let configWatcher: fs.FSWatcher | null = null;
+let configReloadTimeout: NodeJS.Timeout | null = null;
+let yamlReloadTimeout: NodeJS.Timeout | null = null;
 
 /**
  * Load all active plugins listed in `activePlugins`.
@@ -531,13 +533,11 @@ function startConfigWatcher() {
   };
 
   try {
-    let configTimeout: NodeJS.Timeout | null = null;
-    let yamlTimeout: NodeJS.Timeout | null = null;
-
     const scheduleTomlReload = (filename: string | null) => {
       if (!isTomlChange(filename)) return;
-      if (configTimeout) clearTimeout(configTimeout);
-      configTimeout = setTimeout(async () => {
+      if (configReloadTimeout) clearTimeout(configReloadTimeout);
+      configReloadTimeout = setTimeout(async () => {
+        configReloadTimeout = null;
         logger.info(`[watcher] Config file change detected: ${filename}. Syncing plugins...`);
         await syncPlugins();
       }, 500);
@@ -545,8 +545,9 @@ function startConfigWatcher() {
 
     const scheduleYamlReload = (filename: string | null) => {
       if (!isYamlChange(filename)) return;
-      if (yamlTimeout) clearTimeout(yamlTimeout);
-      yamlTimeout = setTimeout(async () => {
+      if (yamlReloadTimeout) clearTimeout(yamlReloadTimeout);
+      yamlReloadTimeout = setTimeout(async () => {
+        yamlReloadTimeout = null;
         logger.info(`[watcher] commands.yaml change detected (${filename}). Reloading command registry...`);
         await reloadCommandRegistry();
       }, 500);
@@ -574,6 +575,14 @@ export async function cleanupPlugins(): Promise<void> {
   if (configWatcher) {
     configWatcher.close();
     configWatcher = null;
+  }
+  if (configReloadTimeout) {
+    clearTimeout(configReloadTimeout);
+    configReloadTimeout = null;
+  }
+  if (yamlReloadTimeout) {
+    clearTimeout(yamlReloadTimeout);
+    yamlReloadTimeout = null;
   }
   for (const watchers of pluginWatchers.values()) {
     for (const w of watchers) w.close();

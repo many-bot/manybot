@@ -347,7 +347,12 @@ export interface IEvents {
   cleanup(): void;
 }
 
-// Sub-facet: chat context for the current message.
+// Sub-facet: chat context for the current message. `getChat()` is a
+// native, additive lookup that returns the SAME shape scoped to a
+// different chat (group or DM) by JID — not just the one bound to the
+// current message. It's the escape hatch for "give me the participants/
+// admin status/history of a group I'm not currently handling a message
+// from" without a separate, thinner API to keep in sync.
 export interface IChat {
   id: string;
   name: string;
@@ -358,6 +363,17 @@ export interface IChat {
   isSenderAdmin(): Promise<boolean>;
   isBotAdmin(): Promise<boolean>;
   clearMessages(): Promise<void>;
+  /**
+   * Look up any other chat (group or DM) by its JID, returning a new
+   * `IChat` instance with this exact same shape (itself `getChat()`-able
+   * too). `isSenderAdmin()` on the result still refers to the sender of
+   * the message that triggered the current plugin invocation — there is
+   * no other "sender" to ask about.
+   * @param jid - The target chat's JID (e.g. `"123...@g.us"`).
+   * @returns The chat, or `null` if `jid` is an unreachable/invalid
+   *   group (bot not a member, wrong id, etc.) — never throws.
+   */
+  getChat(jid: string): Promise<IChat | null>;
 }
 
 // Sub-facet: utils for the message being handled. Imported as the

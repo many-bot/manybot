@@ -10,7 +10,7 @@
  */
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
-import type { PluginContext, SetupContext, IContact, IContacts, IConfig } from "#kernel/pluginApi.js";
+import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
 import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
@@ -2590,7 +2590,203 @@ function buildRunCommandFacet(
   };
 }
 
-// ── Runtime API ───────────────────────────────────────────────────────────────
+// ── Chat facet (ctx.chat) ───────────────────────────────────────────────────
+
+/**
+ * Resolve a display name + isGroup for an arbitrary chat jid — used by
+ * `ctx.chat.getChat()` to look up a chat the plugin isn't currently
+ * handling a message from (unlike `buildChatFromMsg`, which only ever
+ * builds the CURRENT chat and can fall back to a numeric name because
+ * that chat is guaranteed to exist).
+ *
+ * For a group jid this always goes through the same TTL-cached
+ * `groupMetadata()` fetch as the rest of the chat facet — if that fails
+ * (invalid group id, bot not a member, network error), the group can't
+ * be resolved at all, so this returns `null` rather than inventing a
+ * name. A non-group jid (DM) has no equivalent network call to validate
+ * against, so it always succeeds with a best-effort name from the store.
+ */
+async function resolveChatMeta(jid: string, contract: WaContract, store: BotStore): Promise<{ name: string; isGroup: boolean } | null> {
+  const isGroup = jid.endsWith("@g.us");
+  if (!isGroup) {
+    const stored = store.chats.get(jid);
+    return { name: stored?.name ?? jid.split("@")[0], isGroup: false };
+  }
+  try {
+    const meta = await getGroupMetadataCached(contract, jid);
+    return { name: meta.subject || jid.split("@")[0], isGroup: true };
+  } catch (err) {
+    logger.warn(`[chat.getChat] groupMetadata failed for "${jid}" — ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/**
+ * Builds the `ctx.chat` facet — same object shape whether it's the chat
+ * bound to the current message (`buildApi`'s own `chat:` field) or one
+ * fetched on demand via `ctx.chat.getChat(otherJid)`. Every method here
+ * closes over `targetRawJid`/`targetIsGroup` (the chat this instance is
+ * ABOUT), while `msg`/`sender`/`matchesParticipant` stay fixed to the
+ * message that triggered the plugin — e.g. `isSenderAdmin()` on a chat
+ * fetched via `getChat()` answers "is the ORIGINAL sender an admin of
+ * THIS OTHER group", which is the only sender identity available.
+ *
+ * @param {string}      targetRawJid    raw (non-normalized) jid this chat is about
+ * @param {string}      targetName
+ * @param {boolean}     targetIsGroup
+ * @param {WaContract}  contract
+ * @param {BotStore}    store
+ * @param {BotMessage}  msg             the message that triggered the plugin (fixed across getChat())
+ * @param {string}      sender          resolved sender of `msg` (fixed across getChat())
+ * @param {(candidates: (string|null|undefined)[], participantId: string) => boolean} matchesParticipant
+ * @returns {IChat}
+ */
+function buildChatFacet(
+  targetRawJid:       string,
+  targetName:         string,
+  targetIsGroup:      boolean,
+  contract:           WaContract,
+  store:              BotStore,
+  msg:                BotMessage,
+  sender:             string | null,
+  matchesParticipant: (candidates: (string | null | undefined)[], participantId: string) => boolean,
+): IChat {
+  const targetNormJid = normalizeJid(targetRawJid);
+
+  return {
+    id:      targetNormJid,
+    name:    targetName,
+    isGroup: targetIsGroup,
+
+    /**
+     * Cached message history for this chat (oldest → newest), capped at
+     * the store's per-chat limit. Supports index access (`history[10]`)
+     * and two chainable filters: `.last(n)` and `.from(senderId)`.
+     * @returns {WAHistoryArray}
+     */
+    get history(): WAHistoryArray {
+      const chatMsgs = store.messages.get(targetRawJid);
+      const entries = chatMsgs
+        ? [...chatMsgs.values()].map((m) => buildMessageContext(toBotMessage(m as WAProtoMsg), contract, store, { cooldown: false, jitter: false }))
+        : [];
+      return makeHistoryArray(entries, store);
+    },
+
+    /**
+     * List of group participants.
+     * Returns [] for non-group chats.
+     * @returns {Promise<Array<{ id: string, isAdmin: boolean, isSuperAdmin: boolean }>>}
+     */
+    async getParticipants(): Promise<Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }>> {
+      if (!targetIsGroup) return [];
+      try {
+        const meta = await getGroupMetadataCached(contract, targetRawJid);
+        return meta.participants.map(p => ({
+          id:           normalizeJid(p.id),
+          isAdmin:      p.admin === "admin" || p.admin === "superadmin",
+          isSuperAdmin: p.admin === "superadmin",
+        }));
+      } catch {
+        return [];
+      }
+    },
+
+    /**
+     * Check if a contact is an admin of this group.
+     * Always fetches fresh (bypasses the group-metadata TTL cache) —
+     * this gates the `admin:`/`botAdmin:` command permission, so it
+     * cannot risk serving a stale "still admin" result after a demote.
+     * @param {string} contactId
+     * @returns {Promise<boolean>}
+     */
+    async isAdmin(contactId: string): Promise<boolean> {
+      if (!targetIsGroup) return false;
+      try {
+        const meta = await getGroupMetadataFresh(contract, targetRawJid);
+        return meta.participants.some(
+          p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
+        );
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * Check if the message that triggered this plugin was sent by an
+     * admin of this group.
+     * Always fetches fresh (bypasses the group-metadata TTL cache) — see
+     * {@link isAdmin} for why: this gates the `botAdmin:`/`admin:`
+     * permission checks in commandPermissions.ts.
+     * @returns {Promise<boolean>}
+     */
+    async isSenderAdmin(): Promise<boolean> {
+      if (!targetIsGroup) return false;
+      try {
+        const meta = await getGroupMetadataFresh(contract, targetRawJid);
+        // The adapter's pre-extracted participant fields give us both the
+        // LID and PN forms of the sender; match either against the group's
+        // own participant list.
+        const rawSenderParticipant =
+          msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? msg.chatId ?? "";
+        return meta.participants.some(
+          p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin")
+        );
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * Check if the bot is an admin of this group.
+     * Always fetches fresh (bypasses the group-metadata TTL cache) — see
+     * {@link isAdmin} for why: this gates the `botAdmin:` permission
+     * check in commandPermissions.ts.
+     * @returns {Promise<boolean>}
+     */
+    async isBotAdmin(): Promise<boolean> {
+      if (!targetIsGroup) return false;
+      const me       = contract.me();
+      const botLid   = (me as unknown as { lid?: string })?.lid;
+      const botCandidates = [me.id, botLid];
+      if (!botCandidates.some(Boolean)) return false;
+      try {
+        const meta = await getGroupMetadataFresh(contract, targetRawJid);
+        return meta.participants.some(
+          p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
+        );
+      } catch {
+        return false;
+      }
+    },
+
+    /** Clear all messages in this chat — not supported in Baileys. */
+    async clearMessages() {
+      logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
+    },
+
+    /**
+     * Native lookup of ANY chat (group or DM) by its JID — unlike every
+     * other method on this facet, which is bound to the chat this
+     * instance is about, `getChat()` returns a NEW `IChat` instance
+     * scoped to `targetJid`, with the exact same shape/methods (it's
+     * itself `getChat()`-able too). Useful for a group discovered via
+     * `ctx.chats.all()`, one stored earlier by a plugin, or otherwise
+     * not the chat currently being handled.
+     * @param {string} targetJid
+     * @returns {Promise<IChat | null>} `null` if `targetJid` is an
+     *   unreachable/invalid group (bot not a member, wrong id, etc.) —
+     *   never throws.
+     */
+    async getChat(targetJid: string): Promise<IChat | null> {
+      const jid  = normalizeJid(targetJid);
+      const meta = await resolveChatMeta(jid, contract, store);
+      if (!meta) return null;
+      return buildChatFacet(jid, meta.name, meta.isGroup, contract, store, msg, sender, matchesParticipant);
+    },
+  };
+}
+
+
 
 /**
  * Runtime API — full context with message and chat.
@@ -2669,117 +2865,7 @@ export function buildApi({
 
     // ── chat ─────────────────────────────────────────────────────────────────
 
-    chat: {
-      id:      normJid,
-      name:    chat.name,
-      isGroup: chat.isGroup,
-
-      /**
-       * Cached message history for this chat (oldest → newest), capped at
-       * the store's per-chat limit. Supports index access (`history[10]`)
-       * and two chainable filters: `.last(n)` and `.from(senderId)`.
-       * @returns {WAHistoryArray}
-       */
-      get history(): WAHistoryArray {
-        const chatMsgs = store.messages.get(rawJid);
-        const entries = chatMsgs
-          ? [...chatMsgs.values()].map((m) => buildMessageContext(toBotMessage(m as WAProtoMsg), contract, store, { cooldown: false, jitter: false }))
-          : [];
-        return makeHistoryArray(entries, store);
-      },
-
-      /**
-       * List of group participants.
-       * Returns [] for non-group chats.
-       * @returns {Promise<Array<{ id: string, isAdmin: boolean, isSuperAdmin: boolean }>>}
-       */
-      async getParticipants(): Promise<Array<{ id: string; isAdmin: boolean; isSuperAdmin: boolean }>> {
-        if (!chat.isGroup) return [];
-        try {
-          const meta = await getGroupMetadataCached(contract, rawJid);
-          return meta.participants.map(p => ({
-            id:           normalizeJid(p.id),
-            isAdmin:      p.admin === "admin" || p.admin === "superadmin",
-            isSuperAdmin: p.admin === "superadmin",
-          }));
-        } catch {
-          return [];
-        }
-      },
-
-      /**
-       * Check if a contact is an admin of this group.
-       * Always fetches fresh (bypasses the group-metadata TTL cache) —
-       * this gates the `admin:` command permission, so it cannot risk
-       * serving a stale "still admin" result after a demote.
-       * @param {string} contactId
-       * @returns {Promise<boolean>}
-       */
-      async isAdmin(contactId: string): Promise<boolean> {
-        if (!chat.isGroup) return false;
-        try {
-          const meta = await getGroupMetadataFresh(contract, rawJid);
-          return meta.participants.some(
-            p => matchesParticipant([contactId], p.id) && (p.admin === "admin" || p.admin === "superadmin")
-          );
-        } catch {
-          return false;
-        }
-      },
-
-      /**
-       * Check if the message sender is an admin of this group.
-       * Always fetches fresh (bypasses the group-metadata TTL cache) — see
-       * {@link isAdmin} for why: this gates the `botAdmin:`/`admin:`
-       * permission checks in commandPermissions.ts.
-       * @returns {Promise<boolean>}
-       */
-      async isSenderAdmin(): Promise<boolean> {
-        if (!chat.isGroup) return false;
-        try {
-          const meta = await getGroupMetadataFresh(contract, rawJid);
-          // The adapter's pre-extracted participant fields give us both the
-          // LID and PN forms of the sender; match either against the group's
-          // own participant list.
-          const rawSenderParticipant =
-            msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? msg.chatId ?? "";
-          return meta.participants.some(
-            p => matchesParticipant([sender, rawSenderParticipant], p.id) && (p.admin === "admin" || p.admin === "superadmin")
-          );
-        } catch {
-          return false;
-        }
-      },
-
-      /**
-       * Check if the bot is an admin of this group.
-       * Always fetches fresh (bypasses the group-metadata TTL cache) — see
-       * {@link isAdmin} for why: this gates the `botAdmin:` permission
-       * check in commandPermissions.ts.
-       * @returns {Promise<boolean>}
-       */
-      async isBotAdmin(): Promise<boolean> {
-        if (!chat.isGroup) return false;
-        const me       = contract.me();
-        const botLid   = (me as unknown as { lid?: string })?.lid;
-        const botCandidates = [me.id, botLid];
-        if (!botCandidates.some(Boolean)) return false;
-        try {
-          const meta = await getGroupMetadataFresh(contract, rawJid);
-          return meta.participants.some(
-            p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
-          );
-        } catch {
-          return false;
-        }
-      },
-
-      /** Clear all messages in this chat — not supported in Baileys. */
-      async clearMessages() {
-        logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
-      },
-
-    },
+    chat: buildChatFacet(rawJid, chat.name, chat.isGroup, contract, store, msg, sender, matchesParticipant),
 
     // ── admin ─────────────────────────────────────────────────────────────────
 

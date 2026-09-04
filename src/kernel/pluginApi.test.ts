@@ -742,6 +742,64 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
     assert.equal(await ctx.contacts.getAbout("5516999999999-with-status@s.whatsapp.net"), null);
   });
 
+  test("chat.getChat() looks up an arbitrary group by jid with the same IChat shape, and returns null on failure", async () => {
+    const msg = makeBotMessage();
+    const chat = {
+      id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
+      name: "Test Group",
+      isGroup: true,
+    };
+
+    const ctx = buildApi({
+      msg,
+      chat,
+      contract: mockContract,
+      store,
+      pluginRegistry,
+      pluginName: "test_plugin",
+      guardOptions: { cooldown: false, jitter: false },
+    });
+
+    // Success — mockContract.groupMetadata() answers any jid (see rawMockSock above).
+    const other = await ctx.chat.getChat("120363999999999@g.us");
+    assert.ok(other);
+    assert.equal(other!.id, "120363999999999@g.us");
+    assert.equal(other!.name, "Test Mock Group");
+    assert.equal(typeof other!.getParticipants, "function");
+    const participants = await other!.getParticipants();
+    assert.equal(participants.length, 3);
+    assert.equal(participants[1].isSuperAdmin, true);
+
+    // Same shape — itself getChat()-able.
+    assert.equal(typeof other!.getChat, "function");
+
+    // Not a group jid at all — getParticipants()/isAdmin() degrade to
+    // empty/false rather than throwing, same as the current-chat facet.
+    const dm = await ctx.chat.getChat("5516777777777@s.whatsapp.net");
+    assert.ok(dm);
+    assert.equal(dm!.isGroup, false);
+    assert.deepEqual(await dm!.getParticipants(), []);
+
+    // Failure — a contract whose raw socket rejects groupMetadata() for
+    // this jid (bot not a member / invalid group). getGroupMetadataCached
+    // reads through the raw socket attached via RAW_SOCK_SYM, not
+    // `contract.groupMetadata` directly, so the mock needs its own.
+    const failingContract: WaContract = { ...mockContract };
+    (failingContract as unknown as Record<symbol, unknown>)[RAW_SOCK_SYM] = {
+      groupMetadata: async () => { throw new Error("not-a-participant"); },
+    };
+    const ctxFailing = buildApi({
+      msg,
+      chat,
+      contract: failingContract,
+      store,
+      pluginRegistry,
+      pluginName: "test_plugin",
+      guardOptions: { cooldown: false, jitter: false },
+    });
+    assert.equal(await ctxFailing.chat.getChat("120363888888888@g.us"), null);
+  });
+
   test("admin demote/setSubject/setDescription/setProfilePic/revokeInvite, send.gif/poll, contacts.get resolves via contract.resolveLid", async () => {
     const msg = makeBotMessage();
     const chat = {
