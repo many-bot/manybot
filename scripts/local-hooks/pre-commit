@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# scripts/local-hooks/pre-commit
+# Detects staged changes to the published @manybot/types definitions
+# (packages/types/{en,pt}/**) and bumps packages/types/package.json's
+# minor version with `npm version minor`, staging it into the same
+# commit. Keeps the working tree the single source of truth for the
+# published version, so nothing needs to sync back from a remote build.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+TYPES_DIR="packages/types"
+TYPES_PKG_JSON="$TYPES_DIR/package.json"
+
+changed_types_files="$(git diff --cached --name-only -- "$TYPES_DIR/en" "$TYPES_DIR/pt")"
+if [ -z "$changed_types_files" ]; then
+  exit 0
+fi
+
+# Already bumped by hand as part of this same commit? Don't double-bump.
+staged_pkg_diff="$(git diff --cached -- "$TYPES_PKG_JSON" || true)"
+if echo "$staged_pkg_diff" | grep -qE '^\+\s*"version":'; then
+  exit 0
+fi
+
+echo "==> @manybot/types definitions changed, bumping minor version"
+(cd "$TYPES_DIR" && npm version minor --no-git-tag-version >/dev/null)
+
+git add "$TYPES_PKG_JSON"
+if [ -f "$TYPES_DIR/package-lock.json" ]; then
+  git add "$TYPES_DIR/package-lock.json"
+fi
+
+new_version="$(node -p "require('./$TYPES_PKG_JSON').version")"
+echo "==> @manybot/types bumped to $new_version (staged into this commit)"

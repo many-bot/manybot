@@ -27,6 +27,7 @@
   "scripts": {
     "build": "tsc && node -e \"fs.mkdirSync('dist/locales', { recursive: true }); fs.cpSync('src/locales', 'dist/locales', { recursive: true });\" && npm run build:types",
     "build:types": "tsc --noEmit -p packages/types/tsconfig.json",
+    "prepare": "bash scripts/install-local-hooks.sh",
     "start": "node dist/main.js",
     "lint": "eslint .",
     "test": "NODE_ENV=test bash -O globstar -c 'tsx --conditions development --test --experimental-test-coverage src/**/*.test.ts'",
