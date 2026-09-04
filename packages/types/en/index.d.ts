@@ -853,6 +853,27 @@ export interface ChatContext {
    * @deprecated Not supported with Baileys — logs a warning and is a no-op.
    */
   clearMessages(): Promise<void>;
+  /**
+   * Look up any other chat (group or DM) by its JID, returning a new
+   * {@link ChatContext} with this exact same shape — it's itself
+   * `getChat()`-able too. Unlike every other method here, which is
+   * bound to the chat this instance is about, this fetches a chat the
+   * plugin isn't currently handling a message from (e.g. one discovered
+   * via {@link ChatsApi.all} or stored earlier).
+   *
+   * `isSenderAdmin()` on the returned chat still refers to the sender of
+   * the message that triggered the current plugin invocation — there is
+   * no other "sender" to ask about.
+   * @param jid - The target chat's JID (e.g. `"123...@g.us"`).
+   * @returns The chat, or `null` if `jid` is an unreachable/invalid
+   *   group (bot not a member, wrong id, etc.). Never throws.
+   * @example
+   * ```js
+   * const other = await ctx.chat.getChat("123456789@g.us");
+   * if (other) console.log(other.name, await other.getParticipants());
+   * ```
+   */
+  getChat(jid: string): Promise<ChatContext | null>;
 }
 
 // ── Admin API (ctx.admin) ───────────────────────────────────────────────────
