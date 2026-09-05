@@ -1,21 +1,36 @@
 # Contributing to ManyBot
 
-Thank you for wanting to help! This doc covers everything you need to know before contributing for the project.
+Thank you for contributing to ManyBot. This guide describes the conventions,
+architecture boundaries, local commands and review expectations that keep the
+framework safe to extend.
 
-## Ways to contribute
+## Table of Contents
 
-- **Bugs & feature requests**: open an issue on [GitHub](https://github.com/many-bot/manybot) or [Codeberg](https://codeberg.org/many-bot/manybot). Issue templates are provided for both [bugs](.github/ISSUE_TEMPLATE/bug_report.yml) and [features](.github/ISSUE_TEMPLATE/feature_request.yml).
-- **Code**: open your pull requests on GitHub or Codeberg. Patches by email (`manybot@pm.me`) are very welcome too.
-- **Plugins**: plugins live in their own repos, not here. [This doc](https://manybot.org/docs/how-to-make-a-plugin/) covers everything you need to know when creating a plugin and publishing it.
-- **Ideas**: email us or open a issue in the repositories.
-- **Everything else**: translations, docs fixes, art.
+- [Requirements](#requirements)
+- [Getting Started](#getting-started)
+- [Project Layout](#project-layout)
+- [Coding Standards](#coding-standards)
+- [Architecture Boundaries](#architecture-boundaries)
+- [Documentation](#documentation)
+- [Testing](#testing)
+- [Security](#security)
+- [Performance and Reliability](#performance-and-reliability)
+- [Git Workflow](#git-workflow)
+- [Changelog](#changelog)
+- [Before You Open a PR](#before-you-open-a-pr)
 
 ## Requirements
 
 - Node.js >= 24
 - npm >= 9
+- Git
+- An interactive terminal for first-time WhatsApp QR or phone-code login
 
-## Setting up
+ManyBot is an open-source WhatsApp automation framework. Use it responsibly
+and in accordance with WhatsApp's terms, local law and the consent of people
+you contact.
+
+## Getting Started
 
 ```bash
 git clone https://github.com/many-bot/manybot.git
@@ -25,112 +40,242 @@ npm run build
 npm start
 ```
 
-`npm run build` compiles TypeScript to `dist/` and copies locale files. `npm start` then runs the compiled output.
+`npm run build` compiles TypeScript to `dist/`, copies framework locale files,
+and verifies the public plugin types. After changing source files, rebuild
+before running the compiled application.
 
-> If you installed ManyBot from npm globally you don't need any of this, the package already ships with a built `dist/`. This section is only for working on the bot itself.
+The first run creates `~/.manybot/manybot.toml`. Use that file, or set
+`MANYBOT_CONFIG_DIR`, for local configuration. Do not commit personal config,
+WhatsApp session data, plugin data or logs.
 
-On first run ManyBot creates `~/.manybot/manybot.toml` -- edit that file for local config instead of committing changes to it.
+## Project Layout
 
-There's no watch/hot-reload dev script yet, so re-run `npm run build && npm start` after changes to see them take effect.
+```text
+src/
+├── client/       # Persistent bot state, cache, store and banner
+├── download/     # Sequential queue for heavy plugin jobs
+├── drivers/      # WhatsApp driver implementations and adapters
+├── i18n/         # Framework and plugin translation helpers
+├── kernel/       # Plugin loading, commands, guards, scheduling and runtime
+├── locales/      # Framework translations (en, es and pt)
+├── logger/       # Application logging
+└── utils/        # Focused shared utilities
 
-## Before you open a PR
+packages/types/   # Published TypeScript surface for plugin authors
+scripts/          # Build checks, probes, hooks and release helpers
+```
+
+Keep a file focused on one responsibility. Use descriptive filenames that
+match the surrounding directory and existing naming style. New files with
+non-obvious logic should begin with a short English header explaining their
+responsibility.
+
+## Coding Standards
+
+### General Principles
+
+1. Prefer readable, simple code over clever abstractions.
+2. Preserve existing public APIs and local patterns unless the change requires
+   an intentional contract update.
+3. Fix behavior at the owning abstraction instead of patching each caller.
+4. Keep changes focused and avoid unrelated formatting or refactors.
+5. Use `const` by default and `let` only when reassignment is required.
+
+### TypeScript and Modules
+
+- Use strict TypeScript types; do not silence a type error without a clear
+  reason.
+- Use the `#...` import aliases defined in `package.json`, such as
+  `#kernel/...`, `#drivers/...` and `#logger`.
+- Include the `.js` extension in relative ESM imports.
+- Prefer named exports and explicit types for public contracts.
+- Avoid one-letter names and unexplained abbreviations.
+- Match the file's existing indentation, quote style and trailing commas.
+
+```ts
+import { logger } from '#logger';
+import type { WaContract } from '#kernel/waContract.js';
+
+export async function refreshContact(contract: WaContract, jid: string) {
+  try {
+    return await contract.getContact(jid);
+  } catch (error) {
+    logger.debug('Contact refresh failed', { jid, error });
+    return null;
+  }
+}
+```
+
+### Errors and Logging
+
+- Handle expected failures at the boundary that can recover or report them.
+- Preserve useful context without exposing credentials, message contents or
+  other sensitive data.
+- Use `logger.debug(...)` for operational telemetry and non-fatal diagnostics.
+  Debug output is silent unless ManyBot runs with `--debug`.
+- Use `info`, `warn` and `error` for messages that should remain visible in
+  normal operation. Do not use raw `console.log` or `console.debug` for
+  diagnostics.
+
+### Comments and TODOs
+
+Explain why a non-obvious decision exists, not what an obvious line does.
+Keep comments current, write them in English, and use TODO/FIXME sparingly;
+open an issue when work needs to be tracked beyond the current change.
+
+## Architecture Boundaries
+
+### The `WaContract` Frontier
+
+`src/kernel/waContract.ts` is the boundary between the kernel and WhatsApp
+drivers. Kernel code, the plugin API, guards and message handling consume the
+driver-neutral contract and must not import Baileys or another raw driver.
+
+Inside `src/drivers/baileys/`, translate driver-specific payloads at the
+adapter boundary. The only current exception for `rawSocketOf(contract)` is
+`getGroupMetadataCached()`, which needs Baileys-shaped metadata. Accessing
+`sock.user`, `sock.ev` or another raw socket surface elsewhere is a regression.
+
+Before changing `src/kernel/` or `src/drivers/`:
+
+1. Read the relevant file header.
+2. Read the `WaContract` interface and nearby tests.
+3. Keep driver-neutral types in the kernel-facing contract.
+4. Add or update focused tests for the changed behavior.
+
+### Plugins and Public Types
+
+The plugin API in `src/kernel/pluginApi.ts` is the source of truth for the
+runtime context. The published declarations in `packages/types/` must remain
+in sync; `npm run check` runs `scripts/check-types-drift.ts` for this purpose.
+When changing plugin-visible behavior, update the API types, implementation,
+tests and documentation together.
+
+### Configuration and Runtime Data
+
+Configuration is loaded by `src/config.ts` and runtime state belongs under the
+configured ManyBot data directory. Do not make tests depend on a developer's
+home directory or on a real WhatsApp session. Use the existing test
+configuration helpers and temporary paths.
+
+## Documentation
+
+Update documentation when a change affects users or plugin authors. This
+includes configuration keys, public APIs, commands, behavior, setup steps and
+runtime requirements. Keep examples executable and consistent with the
+current TypeScript and ESM setup.
+
+Documentation and code comments are English-only. Translation resource files
+under `src/locales/` are the exception.
+
+## Testing
+
+Tests use Node's built-in test runner with `tsx`; they are not Jest tests.
+Place focused tests beside the implementation using the `.test.ts` suffix.
+Use descriptive names that state the behavior being protected and cover both
+success and relevant failure or boundary cases.
+
+```bash
+npm test
+```
+
+`npm test` runs `src/**/*.test.ts` with test coverage enabled. Integration
+tests that require WhatsApp are opt-in:
+
+```bash
+npm run test:integration
+npm run test:integration:local
+```
+
+The local integration command imports `src/main.ts`; use it only when a
+configured test account and suitable local environment are available.
+
+When behavior changes, update the existing expectation if it describes an
+incorrect contract, then add coverage for the intended production behavior.
+Do not preserve an accidental implementation detail just to keep a test green.
+
+## Security
+
+- Never commit credentials, auth state, private phone numbers, tokens, SMTP
+  passwords or generated runtime data.
+- Validate and normalize user-controlled JIDs, phone numbers, command input,
+  file paths and configuration values at their boundaries.
+- Check command permissions before performing privileged actions. Respect
+  owner, admin, scope, allowlist, blacklist and cooldown rules.
+- Do not include message contents or secrets in logs or thrown errors.
+- Treat plugin code and plugin configuration as external input; avoid granting
+  new capabilities without an explicit API and permission boundary.
+- Report security vulnerabilities privately to `manybot@pm.me`. Do not open a
+  public issue with exploit details.
+
+## Performance and Reliability
+
+- Keep WhatsApp calls asynchronous and handle rejected promises.
+- Use the existing cache and sequential download queue for their intended
+  workloads instead of creating competing concurrency controls.
+- Avoid unbounded listeners, timers, retries or in-memory collections.
+- Make reconnect, plugin reload and cleanup paths idempotent. Resources opened
+  by plugins must be released by their cleanup exports.
+- Keep non-critical sinks and diagnostics from blocking message handling.
+- Preserve fallback and cooldown semantics in the existing guards; they are
+  part of the runtime reliability contract.
+
+## Git Workflow
+
+Create a focused branch for each change. Branch names such as
+`feature/short-description`, `fix/short-description` and
+`docs/short-description` are easy to scan.
+
+Write commits with one coherent intent and an imperative subject. A scope is
+useful when it clarifies the area:
+
+```text
+kernel: preserve command cooldown during fallback
+drivers/baileys: normalize contact identifiers
+docs: refresh contributor workflow
+```
+
+Explain the reason and important tradeoffs in the body when the subject is not
+enough. Do not commit generated `dist/` output unless the release workflow
+specifically requires it.
+
+## Changelog
+
+`CHANGELOG.md` is the source of truth for released changes. The first section
+is the in-development release entry. Add a bullet there in the same change for
+anything user-visible or plugin-author-visible, including:
+
+- New or changed configuration keys
+- Public API or command behavior
+- User-facing fixes and features
+- Dependency changes that affect installation or runtime
+
+Internal-only tests, refactors and CI changes may omit a changelog entry.
+
+## Before You Open a PR
+
+Run the full project gate:
 
 ```bash
 npm run check
 ```
 
-This script covers everything: typecheck, eslint, tests and check-types-drift.ts (our script to make sure that the @manybot/types package is syncronized to the plugin API).
+This runs, in order:
 
-Remeber that tests are part of the change: add or update focused coverage whenever behavior is added or changed. Treat a passing test as a check against the intended production contract, not as a reason to preserve an accidental implementation detail. If an existing expectation describes behavior that is correct in the code but wrong in production, fix production when that is the intended outcome; otherwise update the stale test expectation and cover the actual contract.
+1. `npm run typecheck`
+2. `npm run lint`
+3. `npm run test`
+4. `npx tsx scripts/check-types-drift.ts`
 
-## Project layout
+Also confirm that focused tests cover the change, documentation and
+`CHANGELOG.md` are updated when needed, and no runtime data or secrets are in
+the diff. Pull requests should explain what changed, why it changed, how it
+was tested, and any configuration or migration steps reviewers need to know.
 
-A quick map so you know where to look:
+## Questions and Contributions
 
-- `src/client/` - persistent bot state (store, cache) and the banner -- very important.
-- `src/download/` - sequential execution queue for plugins that needs heavy jobs.
-- `src/drivers/` - the WhatsApp backend implementation, behind a shared `WaContract` interface. I organized this way because I can change the backend in the future, like I already did migrating from whatsapp-web.js to Baileys.
-- `src/i18n/`  - internationalization system for the framework and for the plugins (pluginT, createPluginT).
-- `src/kernel/` - core bot logic: plugin loading, driver management, scheduling, guards.
-- `src/locales/` - all the translations from the framework. If you want to help with it, here is the way.
-- `src/logger/` - standart style for logs.
-- `src/plugins/` - this only have a test plugin to test if the framework is really working.
-- `src/utils/` - utilities for specific tasks, like number normalization.
-- `src/config.ts` - config loading and path resolution.
-- `scripts/` - some scripts for testing or building.
-
-Before touching `kernel/` or the driver layer, read the relevant file headers (every file in `src/kernel/` opens with a comment explaining its responsibility) and the `WaContract` interface in `src/kernel/waContract.ts`. Those notes capture design decisions (fallback/cooldown semantics, driver-neutral message types) that are easy to re-derive the wrong way.
-
-## Architectural Invariants (read before editing `kernel/` or ``drivers/`)
-
-Things that have broken before or are easy to reimplement incorrectly. See also `AGENTS.md` for a more detailed guide tailored for AI agents:
-
-- **`WaContract` is the frontier between kernel and driver.** The kernel never imports a driver directly, and code outside `src/drivers/` must never touch a raw socket. Inside `src/drivers/baileys/`, the only legitimate use of `rawSocketOf(contract)` today is in `getGroupMetadataCached()` (it needs "Baileys-flavored" metadata that the neutral contract does not carry). Any other `sock.user`/`sock.ev` outside of that is a regression — it has already happened once with `hasBotMention`/`getContact`, which reverted to using `sock.user` directly instead of `contract.me()`.
-- **Debug logs are silent by default.** Use `logger.debug(...)` for operational telemetry/non-fatal failures -- it only prints when the binary is invoked with `--debug` (see `src/logger/logger.ts`). `info`/`warn`/`error` remain enabled. Never use `console.debug` or raw `console.log` for diagnostics. The goal is keeping production logs clean without losing call sites when verbose mode is needed.
-
-## Code style
-
-- Files that hold non-obvious logic start with a header comment explaining what the file is responsible for (see any file in `src/kernel/` for examples). Do this for new files too.
-- Documentation and code comments must always be written in English only (except for localization resource files in `src/locales/` such as `pt.json` / `es.json`).
-- Imports use the `#alias/*` subpath imports defined in `package.json` / `tsconfig.json` (e.g. `#kernel/...`, `#drivers/...`) instead of long relative paths.
-- Prefer explaining *why* in comments over *what*. The code is expected to say what it does.
-- Match the formatting of the file you're editing (indent, quote style, trailing commas). When in doubt, run `npm run check` and let the tooling be the tiebreaker.
-
-## Commit messages
-
-We don't enforce a strict format, but PRs are easier to review when commits are small and self-describing. A loose convention that works well here:
-
-```
-<area>: <one-line summary>
-
-<optional body explaining *why*, not *what*>
-```
-
-`<area>` is usually one of `kernel`, `drivers/<name>`, `i18n`, `build`, `deps`, `docs`. If your change touches multiple areas, pick the dominant one. Squash commits before merging if the history is noisy.
-
-Every commit must be self-contained and fully functional on its own. Never split changes across commits in a way that leaves intermediate commits uncompilable, failing checks, or with unresolved dependencies.
-
-## Submitting your change
-
-1. Fork the repo and create a branch for your change.
-2. Keep the change focused, one change per contribution is much easier to review than several bundled together.
-3. Make sure npm run check passes cleanly.
-4. Fill in the PR template (if you want to send as a PR) it asks for a one-line description, a link to the issue it closes (if any), and a short note for the reviewer. Plugin-specific changes go to manyplug
-, not here.
-5. Submit your change using whichever contribution method works best for you:
-  - Pull request: Open the PR against GitHub or Codeberg with a short description of what changed and why.
-  - Git patch: Create a patch from your branch and send it by email. Include the same information as the PR template: a one-line description, a link to the issue it closes (if any), and a short note for the reviewer.
-8. Be ready for a long review round - especially for anything touching kernel/ or the driver contract.
-
-## Troubleshooting
-
-A few things that have caught people before:
-
-- **`tsc` complains about `#kernel/...` imports**: the `imports` map lives in `package.json`. If you add a new subpath, add it there too.
-
-If something here is wrong or missing, please open an issue - this section grows from real gotchas.
-
-## Reporting security issues
-
-**Do not open a public GitHub/Codeberg issue for security bugs.** Send details to `manybot@pm.me` instead, with enough info to reproduce. You'll get a reply within a few hours or days; if not, follow up. We coordinate disclosure timing case by case.
-
-## About `scripts/git-hooks/`
-
-The scripts in `git-hooks/` (`post-receive`, `release.sh`, `github-release.sh`) run on the maintainer's server to build and publish releases when a `v*` tag is pushed. They're not part of the contributor workflow, you can ignore this folder unless you're helping with release infrastructure.
-
-## Releases and the changelog
-
-`CHANGELOG.md` is the source of truth for what changed between releases. Clean the file before every version, past versions are tracked by Git log only, grouped by *New Features*, *Improvements*, *Refactors*, *Build / CI*, *New Dependencies*, and *New Configuration Options*.
-
-Two expectations for contributors:
-
-- **Anything user-visible that lands on `master` should show up in the next release's changelog entry.** That includes new config keys, new public APIs plugins can call, behavior changes, and dependency bumps that affect installs.
-- **The first section of `CHANGELOG.md` is the *in-development* entry.** When you open a PR that adds a user-visible change, append a bullet to the current `## v… — In-Development` section in the same PR -- don't wait for the maintainer to do it during the release cut. Internal-only changes (test infra, refactors with no behavior delta, CI tweaks) can skip this.
-
-The release itself is run by the maintainer; you don't need to handle versioning.
-
-> Review note: this rule was broken once - the `commands.yaml` system (command registration, permissions, deprecation, menu) reached the code without a corresponding entry in `CHANGELOG.md`. If you are closing a change visible to users or plugin developers, add the entry in the same PR/task, not later.
-
-## License
-
-ManyBot is licensed under [GPL-3.0](LICENSE). By contributing, you agree your contribution is licensed under the same terms.
+For bugs and feature requests, use the issue templates on
+[GitHub](https://github.com/many-bot/manybot) or
+[Codeberg](https://codeberg.org/many-bot/manybot). Plugins belong in their own
+repositories; see the [plugin development documentation](https://manybot.org/docs/how-to-make-a-plugin/).
+Translations, documentation fixes and art contributions are welcome too.
