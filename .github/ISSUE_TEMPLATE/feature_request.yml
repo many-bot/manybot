@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose a technical improvement or new capability for the core bot.
+description: Propose a technical improvement or new capability for the framework.
 labels: ["enhancement"]
 
 body:
@@ -7,12 +7,10 @@ body:
     attributes:
       value: |
         > [!NOTE]
-        > This is the right place for **technical suggestions** — architecture changes, new APIs, core behavior, performance, etc.
+        > This is the right place for **technical suggestions** to the framework (architecture changes, new APIs, core behavior, performance, etc)
         >
-        > Looking to suggest a new command or share general feedback? Those fit better in the community spaces:
-        > - 💬 [WhatsApp group](https://...)
-        > - 🎮 [Discord server](https://...)
-        > - 🌐 [Guestbook on the site](https://...)
+        > Looking to suggest a new command for the official bot or share general feedback? Those fit better in the community spaces:
+        > - [WhatsApp group](https://wa.manybot.org)
 
   - type: textarea
     id: problem

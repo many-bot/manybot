@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a problem with the bot's core behavior.
+description: Report a problem with the ManyBot framework.
 labels: ["bug"]
 
 body:
@@ -7,7 +7,8 @@ body:
     attributes:
       value: |
         > [!WARNING]
-        > **Plugin issues don't belong here.** If the problem is with a plugin, open an issue at [many-bot/manyplug](https://github.com/many-bot/manyplug) instead.
+        > **Plugin issues don't belong here.** If the problem is with a plugin, open an issue at the plugin repository (available on each plugin page at [manybot.org/plugins](https://manybot.org/plugins)).
+        > Or, if it's related to ManyPlug CLI, open at [many-bot/manyplug](https://github.com/many-bot/manyplug).
 
   - type: textarea
     id: description
@@ -43,11 +44,11 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Node.js version, OS, and Many version.
+      description: Node.js version, OS, and ManyBot version.
       placeholder: |
-        Node: v20.x
+        Node: v24.x
         OS: Ubuntu 22.04
-        Many: v4.0.0
+        ManyBot: v5.x.x
     validations:
       required: true
 

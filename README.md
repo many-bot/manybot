@@ -1,27 +1,28 @@
+
 <div align="center">
 
 ![ManyBot Logo](logo.png)
 
-![Node.js 24+](https://img.shields.io/badge/Node.js-24+-339933?logo=node.js&logoColor=white)
-![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white)
-![GPL v3](https://img.shields.io/badge/License-GPL--v3-blue.svg)
-![Linux / Windows](https://img.shields.io/badge/Linux%20%7C%20Windows-lightgrey)
-![Baileys](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=white)
+![Node.js 24+](https://img.shields.io/badge/Node.js-24+-339933?logo=node.js&logoColor=white) ![npm 9+](https://img.shields.io/badge/npm-9+-CB3837?logo=npm&logoColor=white) ![GPL v3](https://img.shields.io/badge/License-GPL--v3-blue.svg)  ![Baileys](https://img.shields.io/badge/WhatsApp-25D366?logo=whatsapp&logoColor=white)
 
 </div>
 
 ---
 
-Open-source framework for message automation, extensible via community plugins.
+Framework for building WhatsApp bots, extensible with plugins.
+
+> [!NOTE]
+> Use ManyBot responsibly and in accordance with WhatsApp's terms, local law and the consent of the people you contact. Automated or high-volume messaging can get an account rate-limited or banned. The maintainers aren't responsible for misuse, data loss or account restrictions.
 
 ## Requirements
 
 - Node.js >= 24
 - npm >= 9
+- An interactive terminal for first-time WhatsApp login
 
 ## Getting started
 
-### Install from npm
+### Install from npm (recommended)
 
 ```bash
 npm install -g @manybot/manybot
@@ -34,23 +35,30 @@ On first run, a configuration file is created at `~/.manybot/manybot.toml`. Edit
 ### Develop from source
 
 ```bash
-git clone <repo-url>
-cd dev
+git clone https://git.stxerr.dev/manybot.git
+cd manybot
 npm install
 npm start
 ```
 
-For detailed setup instructions, see the **[documentation](https://manybot.org/docs/)**.
+For detailed setup instructions, see the **[documentation](https://manybot.org/docs/getting-started/)**.
 
 ## Plugins
 
 ManyBot's functionality comes from plugins. Install them with ManyPlug:
 
 ```bash
+# From manybot.org/plugins
 manyplug install <plugin-name>
+
+# Or locally
+manyplug install --local ./plugin/path
+manyplug link # Without installing, assuming cwd is the plugin directory
 ```
 
 Browse available plugins at **[manybot.org/plugins](https://manybot.org/plugins/)**.
+
+View all ManyPlug's commands: **[manybot.org/docs/manyplug-cli](https://manybot.org/docs/manyplug-cli)**
 
 ## Testing
 
@@ -62,27 +70,37 @@ npm test
 
 # Run all verification gates (typecheck + lint + unit tests)
 npm run check
+```
 
-# Run real WhatsApp integration tests against a live account.
-# Requires: TEST_CHAT, MANYBOT_RUN_WHATSAPP_TESTS=1, and a saved
-# WhatsApp session in your CONFIG_DIR. The bare variant below
-# always skips every test (no live socket). Use `:local` to boot
-# the bot first — it preloads src/main.ts so the driver connects
-# before the test runner kicks in.
-TEST_CHAT="5516999999999" MANYBOT_RUN_WHATSAPP_TESTS=1 npm run test:integration:local
+For integration tests (which require a prior connection to WhatsApp), you can run:
+ 
+```bash
+TEST_CHAT="<group-jid>@g.us" MANYBOT_RUN_WHATSAPP_TESTS=1 npm run test:integration:local
 
-# Manual smoke probe: connects, runs a few marker round-trips, and
-# prints the IContact shape (id / number / numberRaw / numberPretty /
-# country / countryCallingCode) returned by contacts.get(...) — useful
-# for verifying the LID-aware contact API against your real account
-# without the full test runner overhead.
-TEST_CHAT="5516999999999" MANYBOT_RUN_WHATSAPP_TESTS=1 \
+# Manual contacts smoke probe
+# Just to debug or inspect the shape of IContact
+TEST_CHAT="<group-jid>@g.us" MANYBOT_RUN_WHATSAPP_TESTS=1 \
   node --import ./src/main.ts scripts/probe-contacts.mjs
 ```
 
+## Documentation
+
+Deeper info about the framework and use are all in the [official documentation](https://manybot.org/docs).
+
 ## Contributing
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md)
+All kinds of contributions are welcome, like:
+- **Plugin development**. (see [how to make a plugin](https://manybot.org/docs/how-to-make-a-plugin))
+- Arts, logos, ads... **Express yourself!** See [our fanarts page](https://manybot.org/fanarts). 
+- **Code and docs**: please read [CONTRIBUTING.md](CONTRIBUTING.md).
+- **Ideas or suggestions**: [email us](mailto:manybot@pm.me) or open a issue in the repositories.
+
+Want to become part of the team? Please join [our WhatsApp group](https://wa.manybot.org) and you're in!
+
+### Other repositories:
+
+- [many-bot/website](https://github.com/many-bot/website): source code of our website, including the backend.
+- [many-bot/docs](https://github.com/many-bot/docs): official documentation. If you like to write, go there. But read [CONTRIBUTING.md](CONTRIBUTING.md) before.
 
 ## License
 
