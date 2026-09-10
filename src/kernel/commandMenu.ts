@@ -9,6 +9,7 @@ import { getCurrentLang, tFor } from "#i18n";
 import { buildSettingsApi } from "./settingsDb.js";
 import type { CommandRegistry, CommandEntry } from "./commandRegistry.js";
 import type { LocalizedString } from "./commandsConfig.js";
+import { normalizeText } from "#utils/normalizeText.js";
 
 /** Maximum age (ms) of an incoming message for the welcome to fire.
  *  Matches `MAX_MESSAGE_AGE_SECONDS` in `drivers/baileys/index.ts` so the
@@ -379,7 +380,7 @@ export function handleMenuCommand(
     return renderOverview(registry, lang, pageNum, scope);
   }
 
-  const arg1 = trimmed.split(/\s+/)[0].toLowerCase();
+  const arg1 = normalizeText(trimmed.split(/\s+/)[0]);
   const cleanArg = arg1.startsWith(CMD_PREFIX) ? arg1.slice(CMD_PREFIX.length) : arg1;
 
   // 1. Match category

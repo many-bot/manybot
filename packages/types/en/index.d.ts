@@ -1379,7 +1379,7 @@ export interface EventsApi {
    * // later: off();
    * ```
    */
-  on(event: string, handler: (...args: unknown[]) => void): () => void;
+  on(event: string, handler: (...args: unknown[]) => void | Promise<void>): () => void;
 
   /**
    * Wait for an internal event to fire once.

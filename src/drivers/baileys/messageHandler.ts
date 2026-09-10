@@ -39,6 +39,7 @@ import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid } from "#drivers/jid.js";
 import { logger } from "#logger";
 import type { LoadingSpec } from "#kernel/commandsConfig.js";
+import { normalizeText } from "#utils/normalizeText.js";
 
 const INCOMING_DEBOUNCE_MS = 0;
 const lastProcessedAt = new Map<string, number>();
@@ -49,9 +50,16 @@ const lastProcessedAt = new Map<string, number>();
  * (kept local to avoid coupling to internal helpers of api/index.ts).
  * Returns "" when the body does not start with the configured prefix.
  */
-function extractCommand(body: string, prefix: string): string {
-  const first = body.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-  return first.startsWith(prefix) ? first.slice(prefix.length) : "";
+function extractCommand(body: string, prefix: string): { raw: string; normalized: string } {
+  const rawToken = body.trim().split(/\s+/)[0] ?? "";
+  const normalizedToken = normalizeText(rawToken);
+  if (!normalizedToken.startsWith(prefix)) {
+    return { raw: "", normalized: "" };
+  }
+  return {
+    raw: rawToken.slice(prefix.length),
+    normalized: normalizedToken.slice(prefix.length),
+  };
 }
 
 interface LoadingHandles {
@@ -289,8 +297,9 @@ async function runPluginsForMessage(
 ): Promise<void> {
   const chatPrefix = getChatPrefix(msg.chatId);
   const chatLocale = getChatLocale(msg.chatId);
-  const command = extractCommand(msgCtx.body, chatPrefix);
+  const { raw: rawCommand, normalized: normalizedCommand } = extractCommand(msgCtx.body, chatPrefix);
   const registry = getCommandRegistry();
+  const command = rawCommand || normalizedCommand;
 
   // 0. Welcome message (first message within the configured window)
   //
@@ -307,7 +316,7 @@ async function runPluginsForMessage(
   //   - `!chat.isGroup`: skip when the message arrived in a group.
   //     A new member joining a group shouldn't get a per-member
   //     welcome reply inside the group's conversation — it's noise
-  //     and reads weird in front of everyone else. The welcome is
+  //     and reads weird in front of someone else. The welcome is
   //     only meaningful in a 1:1 (DM) chat where the message
   //     originates from the user being greeted, and where the reply
   //     goes back to the same chat (`msgCtx.reply` already targets

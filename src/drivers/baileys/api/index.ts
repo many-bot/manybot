@@ -45,9 +45,8 @@ import * as commandAccess            from "#kernel/commandAccess.js";
 import * as chatSession              from "#kernel/chatSession.js";
 import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult } from "#kernel/runCommand.js";
 import WebP                          from "node-webpmux";
-import {
-  jidNormalizedUser,
-} from "@whiskeysockets/baileys";
+import { jidNormalizedUser }         from "@whiskeysockets/baileys";
+import { normalizeText }             from "#utils/normalizeText.js";
 
 // ── Raw-Baileys escape hatch ─────────────────────────────────────────────────
 //
@@ -1061,7 +1060,8 @@ export function buildMessageContext(
   const body    = getMsgBody(msg);
   const prefix  = getChatPrefix(msg.chatId);
   const rawArgs = body.trim().split(/\s+/);
-  const first   = rawArgs[0]?.toLowerCase() ?? "";
+  // `?? ""` is inside to make sure the function receives a string instead of undefined
+  const first   = normalizeText(rawArgs[0] ?? "");
   const hasPrefix = first.startsWith(prefix);
   const command = hasPrefix ? first.slice(prefix.length) : "";
 
@@ -1193,7 +1193,7 @@ export function buildMessageContext(
     command,
     args: rawArgs.slice(1),
     is(cmd: string) {
-      return hasPrefix && command === cmd.toLowerCase();
+      return hasPrefix && command === normalizeText(cmd);
     },
     hasMedia: msgHasMedia(msg),
     isGif:    msgIsGif(msg, store),
@@ -1867,7 +1867,7 @@ export function cleanupPluginEvents(pluginName: string, _contract: WaContract): 
  */
 function buildEventsApi(contract: WaContract, pluginName: string) {
   return {
-    on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void): () => void {
+    on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void | Promise<void>): () => void {
       assertSupportedEvent(event);
       // Wrap the plugin's handler so neither a synchronous throw nor an
       // async rejection escapes as a bot-wide crash. Previously only sync
@@ -2855,12 +2855,6 @@ export function buildApi({
   pluginName:     string;
   guardOptions?:  Record<string, unknown>;
 }): PluginContext {
-  const prefix  = getChatPrefix(msg.chatId);
-  const body    = getMsgBody(msg);
-  const rawArgs = body.trim().split(/\s+/);
-  const first   = rawArgs[0]?.toLowerCase() ?? "";
-  const hasPrefix = first.startsWith(prefix);
-  const command = hasPrefix ? first.slice(prefix.length) : "";
 
   const rawJid   = msg.chatId;
   const normJid  = normalizeJid(rawJid);

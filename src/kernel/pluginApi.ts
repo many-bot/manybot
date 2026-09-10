@@ -342,7 +342,7 @@ export interface ISettings extends ScopedAccessor {
 // handle; `once()` resolves on the first fire; `cleanup()` removes every
 // registered listener for the plugin.
 export interface IEvents {
-  on(event: string, handler: (...args: unknown[]) => void): () => void;
+  on(event: string, handler: (...args: unknown[]) => void | Promise<void>): () => void;
   once(event: string): Promise<unknown>;
   cleanup(): void;
 }

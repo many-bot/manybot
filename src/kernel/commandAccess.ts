@@ -33,7 +33,7 @@ export interface CommandListItem {
 
 function resolveEntry(registry: CommandRegistry | null, invocation: string): CommandEntry | null {
   if (!registry) return null;
-  const id = registry.byInvocation.get(invocation);
+  const id = registry.byInvocationExact.get(invocation) ?? registry.byInvocation.get(invocation);
   if (!id) return null;
   return registry.byId.get(id) ?? null;
 }

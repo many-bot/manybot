@@ -208,6 +208,8 @@ export interface CategoryConfig {
 
 export interface CommandYamlSpec {
   cmd?: unknown;
+  /** When true, this command cmd/aliases are matched literally, normalizeText is skipped */
+  exact?: unknown;
   aliases?: unknown;
   plugin?: unknown;
   /** Either a single function name (`function: "x"`) or a list (`functions: [a, b]`). */
@@ -233,6 +235,7 @@ export interface CommandYamlSpec {
 export interface CommandSpec {
   id: string;
   cmd: string;
+  exact: boolean;
   aliases: string[];
   plugin: string | null;
   /** Resolved ordered function chain. Empty for text-only entries. */
@@ -1011,6 +1014,8 @@ async function parseEntry(
     return null;
   }
 
+  const exact = asBool(raw.exact) ?? false;
+
   const rawText = parseLocalizedString(raw.text);
   const text = rawText ? await resolveFileRef(rawText) : null;
 
@@ -1059,6 +1064,7 @@ async function parseEntry(
   return {
     id,
     cmd,
+    exact,
     aliases:          asAliasList(raw.aliases),
     plugin,
     functions:        functions ?? [],

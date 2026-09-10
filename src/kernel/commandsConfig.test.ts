@@ -165,6 +165,7 @@ missingCmd:
     assert.deepEqual(config.specs[0], {
       id: "hello",
       cmd: "hello",
+      exact: false,
       aliases: ["hi", "oi"],
       plugin: "sample",
       functions: ["greet"],

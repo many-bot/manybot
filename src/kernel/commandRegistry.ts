@@ -32,6 +32,7 @@ import {
 } from "./pluginLoader.js";
 import { getActiveDeprecation, syncCommandHistory } from "./commandDeprecation.js";
 import { resolveCoreCommandHandler } from "./coreCommands.js";
+import { normalizeText } from "#utils/normalizeText.js";
 
 export type CommandHandler = (ctx: unknown, input?: unknown) => Promise<unknown>;
 
@@ -104,6 +105,7 @@ export interface CommandSubcommand {
 export interface CommandEntry {
   id: string;
   cmd: string;
+  exact: boolean;
   aliases: string[];
   desc: LocalizedString | null;
   category: string | null;
@@ -153,6 +155,7 @@ export interface CommandEntry {
 export interface CommandRegistry {
   byId: Map<string, CommandEntry>;
   byInvocation: Map<string, string>;
+  byInvocationExact: Map<string, string>;
   defaults: CommandDefaults;
   menu: MenuConfig;
   menuAliases: Set<string>;
@@ -480,7 +483,7 @@ function buildSubcommandsFromSpecs(
 ): Record<string, CommandSubcommand> {
   const out: Record<string, CommandSubcommand> = {};
   for (const spec of specs) {
-    const token = spec.cmd.toLowerCase();
+    const token = normalizeText(spec.cmd);
     if (out[token]) {
       logger.warn(
         t("system.commandsConfigDuplicateSubcommand", {
@@ -536,6 +539,7 @@ export function buildCommandRegistry(
 ): CommandRegistry {
   const byId = new Map<string, CommandEntry>();
   const byInvocation = new Map<string, string>();
+  const byInvocationExact = new Map<string, string>();
 
   const defaultsByKey = new Map<string, PluginDefaultEntry>();
 
@@ -604,6 +608,7 @@ export function buildCommandRegistry(
       const entry: CommandEntry = {
         id,
         cmd: norm.cmd,
+        exact:      false,
         aliases:    norm.aliases,
         desc:       norm.desc,
         category,
@@ -666,6 +671,7 @@ export function buildCommandRegistry(
           existing = {
             id: key,
             cmd,
+            exact: spec.exact,
             aliases: [],
             desc: null,
             category: null,
@@ -688,6 +694,7 @@ export function buildCommandRegistry(
           byId.set(key, existing);
         }
 
+        existing.exact = spec.exact;
         if (spec.cmd)        existing.cmd      = spec.cmd;
         if (spec.aliases.length > 0) existing.aliases = [...spec.aliases];
         if (spec.desc)       existing.desc     = spec.desc;
@@ -737,6 +744,7 @@ export function buildCommandRegistry(
         const entry: CommandEntry = {
           id,
           cmd:        spec.cmd,
+          exact:      spec.exact,
           aliases:    [...spec.aliases],
           desc:       spec.desc,
           category:   spec.category ?? null,
@@ -803,6 +811,7 @@ export function buildCommandRegistry(
         const entry: CommandEntry = {
           id,
           cmd:        spec.cmd,
+          exact:      spec.exact,
           aliases:    [...spec.aliases],
           desc:       spec.desc,
           category:   spec.category ?? null,
@@ -846,9 +855,12 @@ export function buildCommandRegistry(
   }
 
   for (const entry of byId.values()) {
-    registerInvocationWithDeprecationGuard(byInvocation, entry.cmd, entry.id, false, defaults.notifyChanges);
+    const targetMap = entry.exact ? byInvocationExact : byInvocation;
+    const registerText = (text: string) => entry.exact ? text: normalizeText(text);
+
+    registerInvocationWithDeprecationGuard(targetMap, registerText(entry.cmd), entry.id, false, defaults.notifyChanges);
     for (const alias of entry.aliases) {
-      registerInvocationWithDeprecationGuard(byInvocation, alias, entry.id, false, defaults.notifyChanges);
+      registerInvocationWithDeprecationGuard(targetMap, registerText(alias), entry.id, false, defaults.notifyChanges);
     }
   }
 
@@ -873,7 +885,7 @@ export function buildCommandRegistry(
     }
   }
 
-  return { byId, byInvocation, defaults, menu, menuAliases, categories, manuals, loadingPresets, categoryLoading, prefix };
+  return { byId, byInvocation, byInvocationExact, defaults, menu, menuAliases, categories, manuals, loadingPresets, categoryLoading, prefix };
 }
 
 let currentRegistry: CommandRegistry | null = null;
@@ -920,7 +932,7 @@ export function __setRegistryForTests(registry: CommandRegistry | null): void {
 
 export function getCommandByInvocation(command: string): CommandEntry | null {
   if (!currentRegistry) return null;
-  const id = currentRegistry.byInvocation.get(command);
+  const id = currentRegistry.byInvocationExact.get(command) ?? currentRegistry.byInvocation.get(command);
   if (id === undefined) return null;
   return currentRegistry.byId.get(id) ?? null;
 }

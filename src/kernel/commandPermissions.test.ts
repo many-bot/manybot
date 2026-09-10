@@ -42,6 +42,7 @@ function createMockEntry(
   return {
     id: "test::command",
     cmd: "test",
+    exact: false,
     aliases: [],
     desc: "Test command",
     category: null,

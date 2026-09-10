@@ -21,6 +21,7 @@ function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
   return {
     id: overrides.id ?? "todo::add",
     cmd: overrides.cmd ?? "todo",
+    exact: overrides.exact ?? false,
     aliases: overrides.aliases ?? [],
     plugin: overrides.plugin ?? "todoPlugin",
     functions: overrides.functions ?? ["addFn"],
@@ -404,25 +405,26 @@ describe("kernel/runCommand", () => {
       pluginRegistry.set("chainPlugin", plugin);
 
       const specs: CommandSpec[] = [
-        {
-          id: "chainPlugin::firstFn",
-          cmd: "chain",
-          aliases: [],
-          plugin: "chainPlugin",
-          functions: ["firstFn", "secondFn", "thirdFn"],
-          loading: null,
-          text: null,
-          desc: null,
-          category: null,
-          group: null,
-          manual: null,
-          deprecatedMessage: null,
-          notifyChanges: null,
-          permissions: null,
-          messages: null,
-          arguments: [],
-          subcommands: [],
-        },
+      {
+        id: "chainPlugin::firstFn",
+        cmd: "chain",
+        exact: false,
+        aliases: [],
+        plugin: "chainPlugin",
+        functions: ["firstFn", "secondFn", "thirdFn"],
+        loading: null,
+        text: null,
+        desc: null,
+        category: null,
+        group: null,
+        manual: null,
+        deprecatedMessage: null,
+        notifyChanges: null,
+        permissions: null,
+        messages: null,
+        arguments: [],
+        subcommands: [],
+      },
       ];
       __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
       const resolution = resolveDispatch("chain", "");
@@ -455,25 +457,26 @@ describe("kernel/runCommand", () => {
       pluginRegistry.set("stopPlugin", plugin);
 
       const specs: CommandSpec[] = [
-        {
-          id: "stopPlugin::firstFn",
-          cmd: "stop",
-          aliases: [],
-          plugin: "stopPlugin",
-          functions: ["firstFn", "secondFn"],
-          loading: null,
-          text: null,
-          desc: null,
-          category: null,
-          group: null,
-          manual: null,
-          deprecatedMessage: null,
-          notifyChanges: null,
-          permissions: null,
-          messages: null,
-          arguments: [],
-          subcommands: [],
-        },
+      {
+        id: "stopPlugin::firstFn",
+        cmd: "stop",
+        exact: false,
+        aliases: [],
+        plugin: "stopPlugin",
+        functions: ["firstFn", "secondFn"],
+        loading: null,
+        text: null,
+        desc: null,
+        category: null,
+        group: null,
+        manual: null,
+        deprecatedMessage: null,
+        notifyChanges: null,
+        permissions: null,
+        messages: null,
+        arguments: [],
+        subcommands: [],
+      },
       ];
       __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
       const resolution = resolveDispatch("stop", "");
@@ -506,25 +509,26 @@ describe("kernel/runCommand", () => {
       pluginRegistry.set("throwPlugin", plugin);
 
       const specs: CommandSpec[] = [
-        {
-          id: "throwPlugin::firstFn",
-          cmd: "throw",
-          aliases: [],
-          plugin: "throwPlugin",
-          functions: ["firstFn", "secondFn"],
-          loading: null,
-          text: null,
-          desc: null,
-          category: null,
-          group: null,
-          manual: null,
-          deprecatedMessage: null,
-          notifyChanges: null,
-          permissions: null,
-          messages: null,
-          arguments: [],
-          subcommands: [],
-        },
+      {
+        id: "throwPlugin::firstFn",
+        cmd: "throw",
+        exact: false,
+        aliases: [],
+        plugin: "throwPlugin",
+        functions: ["firstFn", "secondFn"],
+        loading: null,
+        text: null,
+        desc: null,
+        category: null,
+        group: null,
+        manual: null,
+        deprecatedMessage: null,
+        notifyChanges: null,
+        permissions: null,
+        messages: null,
+        arguments: [],
+        subcommands: [],
+      },
       ];
       __setRegistryForTests(buildCommandRegistry(specs, pluginRegistry));
       const resolution = resolveDispatch("throw", "");

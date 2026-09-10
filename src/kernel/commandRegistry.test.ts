@@ -96,6 +96,7 @@ describe("kernel/commandRegistry", () => {
         functions: ["jokeFn"],
         loading: null,
         cmd: "telljoke",
+        exact: true,
         aliases: ["tj"],
         desc: "Overridden desc",
         category: "Fun",
@@ -122,8 +123,8 @@ describe("kernel/commandRegistry", () => {
     assert.equal(entry?.permissions.admin, true);
 
     // Old invocation "joke" should no longer map to entry if overridden by new cmd/aliases
-    assert.equal(registry.byInvocation.get("telljoke"), "funPlugin::jokeFn");
-    assert.equal(registry.byInvocation.get("tj"), "funPlugin::jokeFn");
+    assert.equal(registry.byInvocationExact.get("telljoke"), "funPlugin::jokeFn");
+    assert.equal(registry.byInvocationExact.get("tj"), "funPlugin::jokeFn");
   });
 
   test("registers text-only command specs", () => {
@@ -135,6 +136,7 @@ describe("kernel/commandRegistry", () => {
         functions: [],
         loading: null,
         cmd: "hello",
+        exact: false,
         aliases: ["hi"],
         desc: "Says hello",
         category: "General",

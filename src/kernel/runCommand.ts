@@ -35,6 +35,7 @@ import { STOP_CHAIN, type CommandArgument } from "./commandsConfig.js";
 import type { PluginContext } from "./pluginApi.js";
 import { resolveCoreCommandHandler } from "./coreCommands.js";
 import { getChatLocale, getChatPrefix } from "./chatOverrides.js";
+import { normalizeText } from "#utils/normalizeText.js";
 
 export type DispatchTarget =
   | { kind: "parent"; entry: CommandEntry; args: string[] }
@@ -92,7 +93,7 @@ export function resolveDispatch(command: string, rawArgs: string): DispatchResol
   const registry = getCommandRegistry();
   if (!registry) return { target: { kind: "none" } };
 
-  const parentId = registry.byInvocation.get(command);
+  const parentId = registry.byInvocationExact.get(command) ?? registry.byInvocation.get(command);
   if (!parentId) return { target: { kind: "none" } };
   const entry = registry.byId.get(parentId);
   if (!entry) return { target: { kind: "none" } };
@@ -102,7 +103,7 @@ export function resolveDispatch(command: string, rawArgs: string): DispatchResol
     return { target: { kind: "parent", entry, args: trimmed ? trimmed.split(/\s+/) : [] } };
   }
 
-  const token = trimmed.split(/\s+/)[0].toLowerCase();
+  const token = normalizeText(trimmed.split(/\s+/)[0]);
   const sub = entry.subcommands[token];
   if (!sub) {
     const remaining = trimmed.split(/\s+/).slice(1);

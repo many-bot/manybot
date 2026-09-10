@@ -12,6 +12,7 @@ function createMockEntry(id: string, cmd: string): CommandEntry {
   return {
     id,
     cmd,
+    exact: false,
     aliases: [],
     desc: null,
     category: null,
@@ -109,6 +110,7 @@ describe("kernel/commandDeprecation", () => {
       functions: ["optOut"],
       loading: null,
       cmd: "alpha",
+      exact: false,
       aliases: [],
       desc: null,
       category: null,

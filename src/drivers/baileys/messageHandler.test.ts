@@ -25,6 +25,7 @@ function emptySpec(overrides: Partial<CommandSpec>): CommandSpec {
   return {
     id: overrides.id ?? "task::run",
     cmd: overrides.cmd ?? "task",
+    exact: overrides.exact ?? false,
     aliases: overrides.aliases ?? [],
     plugin: overrides.plugin ?? "taskPlugin",
     functions: overrides.functions ?? ["runFn"],
