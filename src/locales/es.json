@@ -8,6 +8,10 @@
     },
     "signal": {
       "sigterm": "Proceso interrumpida. Apagando..."
+    },
+    "logout": {
+      "success": "Archivo de sesión eliminado correctamente: {{session_dir}}",
+      "notFound": "Archivo de sesión no encontrado para CLIENT_ID \"{{CLIENT_ID}}\""
     }
   },
   "system": {

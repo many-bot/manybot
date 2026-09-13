@@ -21,6 +21,9 @@ import { getDriverManager }           from "#kernel/driverManager.js";
 import { CONFIG, STATUS_ENABLED, STATUS_PORT, LOG_LEVEL } from "#config";
 import { logger, setLogLevel }        from "#logger";
 import { t }                          from "#i18n";
+import { CLIENT_ID, CONFIG_DIR }      from "#config";
+import { rmSync }                     from "node:fs";
+import { access }                     from "node:fs/promises";
 
 setLogLevel(LOG_LEVEL);
 
@@ -102,6 +105,20 @@ if (process.argv.includes("--getid")) {
       logger.error(`--getid mode failed: ${err.message}`);
       process.exit(1);
     });
+
+// --logout
+// Does not enter the normal bot flow, just deletes all saved sessions for the current CLIENT_ID
+} else if (process.argv.includes("--logout")) {
+  const session_dir = path.join(CONFIG_DIR, "sessions", CLIENT_ID);
+  
+  try {
+    await access(session_dir);
+
+    rmSync(session_dir, { recursive: true });
+    logger.success(t("bot.logout.success", { session_dir }));
+  } catch {
+    logger.error(t("bot.logout.notFound", { CLIENT_ID }));
+  }
 } else {
   // Start bot
   logger.info(t("bot.initialized"));

@@ -8,6 +8,10 @@
     },
     "signal": {
       "sigterm": "Process interrupted. Shutting down..."
+    },
+    "logout": {
+      "success": "Session removed successfully: {{session_dir}}",
+      "notFound": "Session file not found for CLIENT_ID \"{{CLIENT_ID}}\""
     }
   },
   "system": {
