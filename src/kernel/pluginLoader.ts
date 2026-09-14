@@ -306,7 +306,7 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
     logger.debug(t(isReload ? "system.pluginReloaded" : "system.pluginLoaded", { name }));
 
     if (isReload) {
-      await initCommandRegistry();
+      await reinitCommandRegistrySafe(`after reloading plugin "${name}"`);
     }
 
     watchPluginDirectory(name);
@@ -328,7 +328,7 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
     });
 
     if (isReload) {
-      await initCommandRegistry();
+      await reinitCommandRegistrySafe(`after failed reload of plugin "${name}"`);
     }
   }
 }
@@ -454,7 +454,7 @@ export async function syncPlugins(): Promise<void> {
     }
   }
 
-  await initCommandRegistry();
+  await reinitCommandRegistrySafe("after syncing plugins");
 }
 
 /**
@@ -505,12 +505,30 @@ export function unwatchPlugin(name: string) {
  * then falls back to the empty defaults).
  */
 export async function reloadCommandRegistry(): Promise<void> {
+  await reinitCommandRegistrySafe("from commands.yaml", "[watcher]");
+}
+
+/**
+ * Rebuild the command registry from disk, catching and logging any
+ * failure instead of propagating it.
+ *
+ * `initCommandRegistry()` now throws `CommandsConfigValidationError`
+ * (see commandsConfig.ts) when commands.yaml has a fatal issue such as
+ * a malformed reaction emoji — intentional at startup, where an
+ * unguarded call is left to crash the process (see pluginLoader's
+ * `loadPlugins()` / drivers/baileys/index.ts). Every other call site
+ * runs on an already-live bot in response to an unrelated file change
+ * (a plugin reload, a manyplug.toml sync), so it must not take the
+ * whole process down over a commands.yaml problem it didn't cause —
+ * this keeps the previous, still-valid registry in place instead.
+ */
+async function reinitCommandRegistrySafe(context: string, logPrefix = "[pluginLoader]"): Promise<void> {
   try {
     await initCommandRegistry();
-    logger.info(`[watcher] Command registry reloaded from commands.yaml.`);
+    logger.info(`${logPrefix} Command registry reloaded ${context}.`);
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
-    logger.error(`[watcher] Failed to reload command registry: ${err.message}`);
+    logger.error(`${logPrefix} Failed to reload command registry ${context}: ${err.message}`);
   }
 }
 
