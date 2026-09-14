@@ -195,7 +195,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       sub: resolution.unmatchedSubToken,
       cmd: target.entry.cmd,
       valid: validSubs.join(", ") || "(none)",
-    }) as string;
+    });
     await reply.text(help);
     return { status: "unknown_sub", sentReply: help, suggestedReply: help };
   }

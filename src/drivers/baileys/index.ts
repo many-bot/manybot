@@ -311,7 +311,7 @@ halted = true;
           sendAlert({
             level:   "critical",
             title:   t("alerts.reconnectHaltedTitle"),
-            message: t("alerts.reconnectHaltedMessage", { attempts: reconnectAttempts }) as string,
+            message: t("alerts.reconnectHaltedMessage", { attempts: reconnectAttempts }),
           }).catch(() => {});
           return;
         }

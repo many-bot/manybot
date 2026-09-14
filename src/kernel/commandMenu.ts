@@ -116,7 +116,7 @@ export function renderOverview(
   parts.push(`*${titleStr}*`);
 
   const rawIntro = resolveLocalizedString(registry.menu.intro, lang) ??
-    tFor(lang, "menu.intro") as string;
+    tFor(lang, "menu.intro");
   const introStr = rawIntro.replace(/\{prefix\}/g, CMD_PREFIX);
   parts.push(introStr);
   parts.push(""); // blank line before categories/commands
@@ -174,7 +174,7 @@ export function renderOverview(
       .sort((a, b) => a.cmd.localeCompare(b.cmd));
 
     if (uncategorized.length > 0) {
-      const otherLabel = tFor(lang, "menu.other") as string;
+      const otherLabel = tFor(lang, "menu.other");
       parts.push(`📁 *${otherLabel}*`);
       for (const entry of uncategorized) {
         const descStr = resolveLocalizedString(entry.desc, lang);
@@ -269,7 +269,7 @@ export function renderCategory(
   if (entries.length === 0) return null;
 
   const parts: string[] = [];
-  parts.push(`📁 *${tFor(lang, "menu.category") as string}: ${matchedLabel}*`);
+  parts.push(`📁 *${tFor(lang, "menu.category")}: ${matchedLabel}*`);
   parts.push("");
 
   for (const entry of entries) {
@@ -287,7 +287,7 @@ export function renderCategory(
 export function renderManual(entry: CommandEntry, registry: CommandRegistry, lang?: string): string {
   const parts: string[] = [];
 
-  parts.push(`📖 *${tFor(lang, "menu.manual") as string}: ${CMD_PREFIX}${entry.cmd}*`);
+  parts.push(`📖 *${tFor(lang, "menu.manual")}: ${CMD_PREFIX}${entry.cmd}*`);
 
   if (entry.aliases.length > 0) {
     parts.push(`*Aliases:* ${entry.aliases.map(a => CMD_PREFIX + a).join(", ")}`);
@@ -295,14 +295,14 @@ export function renderManual(entry: CommandEntry, registry: CommandRegistry, lan
 
   if (entry.category && registry.categories[entry.category]) {
     const catLabel = resolveLocalizedString(registry.categories[entry.category].label, lang) ?? entry.category;
-    parts.push(`*${tFor(lang, "menu.category") as string}:* ${catLabel}`);
+    parts.push(`*${tFor(lang, "menu.category")}:* ${catLabel}`);
   }
 
   parts.push("");
 
   const descStr = resolveLocalizedString(entry.desc, lang);
   if (descStr) {
-    parts.push(`*${tFor(lang, "menu.description") as string}:* ${descStr}`);
+    parts.push(`*${tFor(lang, "menu.description")}:* ${descStr}`);
     parts.push("");
   }
 
@@ -310,7 +310,7 @@ export function renderManual(entry: CommandEntry, registry: CommandRegistry, lan
   if (manualStr) {
     parts.push(manualStr);
   } else {
-    parts.push(tFor(lang, "system.commandManualMissing", { cmd: entry.cmd }) as string);
+    parts.push(tFor(lang, "system.commandManualMissing", { cmd: entry.cmd }));
   }
 
   return parts.join("\n").trim();
@@ -355,10 +355,10 @@ export function renderNotFound(invocation: string, registry: CommandRegistry, la
         suggestion,
         prefix: CMD_PREFIX,
         menuCmd
-      }) as string;
+      });
     }
   }
-  return tFor(lang, "system.commandNotFound", { cmd: invocation, prefix: CMD_PREFIX, menuCmd }) as string;
+  return tFor(lang, "system.commandNotFound", { cmd: invocation, prefix: CMD_PREFIX, menuCmd });
 }
 
 export function handleMenuCommand(

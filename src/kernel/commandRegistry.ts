@@ -171,14 +171,14 @@ export interface CommandRegistry {
 }
 
 export const DEFAULT_PERMISSION_MESSAGES = {
-  botNotAdmin:    () => t("commandPermissions.botNotAdmin") as string,
-  senderNotAdmin: () => t("commandPermissions.senderNotAdmin") as string,
-  ownerOnly:      () => t("commandPermissions.ownerOnly") as string,
-  donoOnly:       () => t("commandPermissions.donoOnly") as string,
-  wrongScope:     () => t("commandPermissions.wrongScope") as string,
-  cooldown:       () => t("commandPermissions.cooldown") as string,
-  blacklist:      () => t("commandPermissions.blacklist") as string,
-  allowedChats:   () => t("commandPermissions.allowedChats") as string,
+  botNotAdmin:    () => t("commandPermissions.botNotAdmin"),
+  senderNotAdmin: () => t("commandPermissions.senderNotAdmin"),
+  ownerOnly:      () => t("commandPermissions.ownerOnly"),
+  donoOnly:       () => t("commandPermissions.donoOnly"),
+  wrongScope:     () => t("commandPermissions.wrongScope"),
+  cooldown:       () => t("commandPermissions.cooldown"),
+  blacklist:      () => t("commandPermissions.blacklist"),
+  allowedChats:   () => t("commandPermissions.allowedChats"),
 };
 
 export function resolvePermissions(

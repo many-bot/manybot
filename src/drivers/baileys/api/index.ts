@@ -1235,7 +1235,7 @@ export function buildMessageContext(
       const regex = emojiRegex();
       const matches = [...emoji.matchAll(regex)];
       if (matches.length !== 1 || matches[0][0] !== emoji) {
-        throw new Error(t("driver.invalidReaction", { emoji }) as string);
+        throw new Error(t("driver.invalidReaction", { emoji }));
       }
       await contract.react(rawJid, {
         id:          msg.id,
@@ -2050,7 +2050,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
         return idDigits.length > 0 && cands.some((c) => c.replace(/\D/g, "") === idDigits);
       }) as unknown as { id: string } | undefined;
       if (!match) {
-        throw new Error(t("driver.groupParticipantNotFound", { id, group: groupJid }) as string);
+        throw new Error(t("driver.groupParticipantNotFound", { id, group: groupJid }));
       }
       out.push(match.id);
     }
@@ -2090,7 +2090,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     );
     if (failed.length > 0) {
       const detail = failed.map((r) => `${r.jid ?? "?"}=${r.status}`).join(", ");
-      throw new Error(t("driver.groupParticipantsUpdateRejected", { action, detail }) as string);
+      throw new Error(t("driver.groupParticipantsUpdateRejected", { action, detail }));
     }
   }
 
@@ -2114,7 +2114,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
         group: jid,
         users: users.join(", "),
         message: (err as Error).message,
-      }) as string);
+      }));
     }
     assertParticipantsUpdateOk(action, results);
     return results;
@@ -2212,7 +2212,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     kick(memberIds: string | string[]) {
       return createTargetableAction(async (jid, users) => {
-        if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf") as string);
+        if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf"));
         return runParticipantsUpdate(jid, users, "remove");
       }, memberIds);
     },

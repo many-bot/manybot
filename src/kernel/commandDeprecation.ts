@@ -224,6 +224,6 @@ export function formatDeprecationMessage(row: DeprecationRow, defaults: CommandD
     ? "system.commandDeprecationFallbackRemoved"
     : "system.commandDeprecationFallbackRenamed";
 
-  return interpolate(t(fallbackKey) as string, vars);
+  return interpolate(t(fallbackKey), vars);
 }
 

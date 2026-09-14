@@ -128,9 +128,7 @@ function interpolate(str: string, context: Record<string, unknown> = {}): string
  * @param {object} context - values to interpolate {{key}}
  * @returns {string}
  */
-export function t(key: string): string;
-export function t(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
-export function t(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
+export function t(key: string, context: Record<string, unknown> = {}): string {
   ensureLoaded();
 
   return translate(currentTranslations, fallbackTranslations, key, context);
@@ -140,7 +138,7 @@ export function t(key: string, context: Record<string, unknown> = {}): string | 
  * Translates a key for an explicit language. This is useful for rendered
  * content that accepts a language override, such as the command menu.
  */
-export function tFor(lang: string | undefined, key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
+export function tFor(lang: string | undefined, key: string, context: Record<string, unknown> = {}): string {
   ensureLoaded();
 
   const targetLang = lang?.trim().toLowerCase() || currentLang || DEFAULT_LANG;
@@ -153,7 +151,7 @@ function translate(
   englishTranslations: Record<string, unknown>,
   key: string,
   context: Record<string, unknown>
-): string | Record<string, unknown> {
+): string {
 
   // Try current language first
   let value = getNestedValue(targetTranslations, key);
@@ -166,12 +164,6 @@ function translate(
   // If still not found, return the key
   if (value === undefined) {
     return key;
-  }
-
-  // Caller explicitly wants the raw nested object (e.g. a map like
-  // messages.mobs), skip stringification/interpolation entirely.
-  if (context.returnObjects && typeof value === "object" && value !== null) {
-    return value as Record<string, unknown>;
   }
 
   // If not string, convert
@@ -262,9 +254,7 @@ export function createPluginT(pluginMetaUrl: string) {
    * @param {object} context
    * @returns {string}
    */
-  function pluginT(key: string): string;
-  function pluginT(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
-  function pluginT(key: string, context: Record<string, unknown> = {}): string | Record<string, unknown> {
+  function pluginT(key: string, context: Record<string, unknown> = {}): string {
     // Try plugin's target language first
     let value = getNestedValue(pluginTranslations, key);
 
@@ -276,10 +266,6 @@ export function createPluginT(pluginMetaUrl: string) {
     // If still not found, return the key
     if (value === undefined) {
       return key;
-    }
-
-    if (context.returnObjects && typeof value === "object" && value !== null) {
-      return value as Record<string, unknown>;
     }
 
     if (typeof value !== "string") {

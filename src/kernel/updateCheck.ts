@@ -90,7 +90,7 @@ export async function checkForUpdate(): Promise<void> {
         installed: pkg.version,
         available: latest,
         url: releaseUrl,
-      }) as string,
+      }),
     });
   } catch (e) {
     logger.debug(`[updateCheck] check failed (non-fatal): ${(e as Error).message}`);
@@ -119,3 +119,4 @@ export function stopUpdateCheckSchedule(): void {
   clearInterval(intervalTimer);
   intervalTimer = null;
 }
+
