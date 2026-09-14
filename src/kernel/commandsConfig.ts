@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import * as yaml from "js-yaml";
+import emojiRegex from "emoji-regex";
 import { logger } from "#logger";
 import { t } from "#i18n";
 import { PATHS } from "#config";
@@ -534,6 +535,47 @@ function parsePermissionMessagesBlock(raw: unknown): CommandMessages | null {
 
 // ── Loading indicator parsing ────────────────────────────────────────────────
 
+/** Thrown by {@link loadCommandsConfig} when commands.yaml contains one or
+ *  more fatal validation errors (currently: malformed `reaction` emojis).
+ *  Left uncaught, this crashes startup — see the class doc for why. */
+export class CommandsConfigValidationError extends Error {
+  constructor(readonly issues: string[]) {
+    super(`commands.yaml is invalid:\n${issues.map(i => `  - ${i}`).join("\n")}`);
+    this.name = "CommandsConfigValidationError";
+  }
+}
+
+const er = emojiRegex();
+
+/** True when `s` is exactly one emoji grapheme — same rule Baileys'
+ *  `react()` needs, enforced here at load time instead of at send time. */
+function isSingleEmoji(s: string): boolean {
+  const matches = s.match(er);
+  return matches !== null && matches.length === 1 && matches[0] === s;
+}
+
+/** Accumulates fatal validation issues across a single `loadCommandsConfig()`
+ *  parse tree (all `parseLoadingSpec` calls it triggers, however nested).
+ *  Reset at the top of `loadCommandsConfig` and drained at the end. Module
+ *  state rather than a threaded parameter — `loadCommandsConfig` runs to
+ *  completion before anything else touches it, and threading an accumulator
+ *  through every parser (`parseEntry`, `parseCategories`, `parseDefaults`, ...)
+ *  would ripple across the file for no real benefit. */
+let loadingConfigIssues: string[] = [];
+
+/** Validates a `reaction` loading field that must resolve to a single emoji
+ *  (`icon`, `onSuccess`, `onError`). Records a fatal issue and drops the
+ *  field on failure — the field-level "drop and keep going" behavior lets
+ *  the rest of commands.yaml keep parsing so all issues surface at once,
+ *  while the accumulated issues still fail the whole load in the end. */
+function validateReactionEmoji(value: string, contextId: string, field: string): string | undefined {
+  if (isSingleEmoji(value)) return value;
+  loadingConfigIssues.push(
+    t("system.commandsConfigLoadingInvalidEmoji", { id: contextId, field, value })
+  );
+  return undefined;
+}
+
 const LOADING_TYPES: Set<LoadingType> = new Set([
   "reaction", "typing", "recording_audio", "spinner", "none",
 ]);
@@ -608,7 +650,21 @@ function parseLoadingSpec(
   }
 
   const spec: LoadingSpec = { type };
-  if (type === "reaction" || type === "spinner") {
+  if (type === "reaction") {
+    if (obj.icon !== undefined) {
+      const icon = asString(obj.icon);
+      if (icon) spec.icon = validateReactionEmoji(icon, contextId, "icon");
+    }
+    if (obj.onSuccess !== undefined || obj.on_success !== undefined) {
+      const s = asString(obj.onSuccess ?? obj.on_success);
+      if (s) spec.onSuccess = validateReactionEmoji(s, contextId, "onSuccess");
+    }
+    if (obj.onError !== undefined || obj.on_error !== undefined) {
+      const s = asString(obj.onError ?? obj.on_error);
+      if (s) spec.onError = validateReactionEmoji(s, contextId, "onError");
+    }
+  }
+  if (type === "spinner") {
     if (obj.icon !== undefined) {
       const icon = asString(obj.icon);
       if (icon) spec.icon = icon;
@@ -1203,6 +1259,8 @@ function unwrapCommandsWrapper(root: Record<string, unknown>): Record<string, un
 export async function loadCommandsConfig(
   validPluginKeys?: ReadonlySet<string>
 ): Promise<CommandsConfig | null> {
+  loadingConfigIssues = [];
+
   let raw: string;
   try {
     raw = await fs.readFile(COMMANDS_FILE, "utf8");
@@ -1310,6 +1368,10 @@ export async function loadCommandsConfig(
     }
     const spec = await parseEntry(id, value as CommandYamlSpec, loadingPresets, validPluginKeys);
     if (spec) out.push(spec);
+  }
+
+  if (loadingConfigIssues.length > 0) {
+    throw new CommandsConfigValidationError(loadingConfigIssues);
   }
 
   return { prefix, defaults, menu, categories, manuals, loadingPresets, categoryLoading, specs: out };

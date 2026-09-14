@@ -47,6 +47,7 @@ import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult }
 import WebP                          from "node-webpmux";
 import { jidNormalizedUser }         from "@whiskeysockets/baileys";
 import { normalizeText }             from "#utils/normalizeText.js";
+import emojiRegex                    from "emoji-regex";
 
 // ── Raw-Baileys escape hatch ─────────────────────────────────────────────────
 //
@@ -1231,6 +1232,11 @@ export function buildMessageContext(
     reply: makeSender(contract, store, rawJid, msg, { cooldown, jitter }),
 
     async react(emoji: string) {
+      const regex = emojiRegex();
+      const matches = [...emoji.matchAll(regex)];
+      if (matches.length !== 1 || matches[0][0] !== emoji) {
+        throw new Error(t("driver.invalidReaction", { emoji }) as string);
+      }
       await contract.react(rawJid, {
         id:          msg.id,
         remoteJid:   msg.chatId,

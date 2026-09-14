@@ -40,7 +40,9 @@ import { normalizeJid } from "#drivers/jid.js";
 import { logger } from "#logger";
 import type { LoadingSpec } from "#kernel/commandsConfig.js";
 import { normalizeText } from "#utils/normalizeText.js";
+import emojiRegex from "emoji-regex";
 
+const er = emojiRegex();
 const INCOMING_DEBOUNCE_MS = 0;
 const lastProcessedAt = new Map<string, number>();
 
@@ -97,6 +99,10 @@ function startLoadingIndicator(
 
   if (spec.type === "reaction") {
     const icon = spec.icon ?? "⏳";
+    const matches = icon.match(er);
+    if (!matches || matches.length !== 1 || matches[0] !== icon) {
+      return { stop: noop };
+    }
     if (msgKey) {
       contract.react(rawJid, msgKey, icon).catch((e: unknown) => {
         const err = e instanceof Error ? e : new Error(String(e));

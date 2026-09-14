@@ -7,7 +7,7 @@ import path from "path";
 const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-commands-config-"));
 process.env.MANYBOT_CONFIG_DIR = configDir;
 
-const { loadCommandsConfig, parseLocalizedString, resolveFileRef } = await import("#kernel/commandsConfig.js");
+const { loadCommandsConfig, parseLocalizedString, resolveFileRef, CommandsConfigValidationError } = await import("#kernel/commandsConfig.js");
 const commandsFile = path.join(configDir, "commands.yaml");
 
 beforeEach(async () => {
@@ -335,16 +335,16 @@ loading: padrao
 loading_presets:
   onlyCamel:
     type: reaction
-    onSuccess: "camel"
+    onSuccess: "✅"
   onlySnake:
     type: reaction
-    on_success: "snake"
+    on_success: "☑️"
 `, "utf8");
 
       const config = await loadCommandsConfig();
       assert.ok(config);
-      assert.equal(config.loadingPresets.onlyCamel.onSuccess, "camel");
-      assert.equal(config.loadingPresets.onlySnake.onSuccess, "snake");
+      assert.equal(config.loadingPresets.onlyCamel.onSuccess, "✅");
+      assert.equal(config.loadingPresets.onlySnake.onSuccess, "☑️");
     });
 
     test("an actually-unknown property for the declared type is still fatal (malformed config)", async () => {
@@ -358,6 +358,64 @@ loading_presets:
       const config = await loadCommandsConfig();
       assert.ok(config);
       assert.equal(config.loadingPresets.bad, undefined, "malformed preset is dropped, not silently accepted");
+    });
+  });
+
+  // ── loading: reaction icon/onSuccess/onError must be a single emoji ──────
+  // Unlike the "unknown property" case above, an invalid reaction emoji
+  // fails the whole load (throws) instead of just dropping that entry —
+  // a bad emoji here would otherwise reach Baileys' react() unvalidated
+  // at runtime, so it's better caught before the bot starts.
+  describe("loading: reaction emoji fields are validated at load time", () => {
+    test("invalid icon rejects the whole config load", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  bad:
+    type: reaction
+    icon: "not an emoji"
+`, "utf8");
+
+      await assert.rejects(loadCommandsConfig(), CommandsConfigValidationError);
+    });
+
+    test("invalid onSuccess (plain text) rejects the whole config load", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  bad:
+    type: reaction
+    icon: "⏳"
+    onSuccess: "done"
+`, "utf8");
+
+      await assert.rejects(loadCommandsConfig(), CommandsConfigValidationError);
+    });
+
+    test("invalid onError (multiple emojis) rejects the whole config load", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  bad:
+    type: reaction
+    icon: "⏳"
+    onError: "👍😊"
+`, "utf8");
+
+      await assert.rejects(loadCommandsConfig(), CommandsConfigValidationError);
+    });
+
+    test("spinner's onSuccess/onError are plain text and are not emoji-validated", async () => {
+      await fs.writeFile(commandsFile, `
+loading_presets:
+  ok:
+    type: spinner
+    frames: ["⠋", "⠙"]
+    onSuccess: "Done!"
+    onError: "Failed: {erro}"
+`, "utf8");
+
+      const config = await loadCommandsConfig();
+      assert.ok(config);
+      assert.equal(config.loadingPresets.ok.onSuccess, "Done!");
+      assert.equal(config.loadingPresets.ok.onError, "Failed: {erro}");
     });
   });
 

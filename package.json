@@ -53,6 +53,7 @@
     "@grpc/proto-loader": "^0.7.15",
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "emoji-regex": "^10.6.0",
     "js-yaml": "^5.2.3",
     "libphonenumber-js": "^1.13.11",
     "node-cron": "^4.6.0",

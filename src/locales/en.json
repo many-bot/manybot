@@ -68,6 +68,7 @@
     "commandsConfigLoadingInvalid": "commands.yaml: \"{{id}}\" loading value is not a preset name or inline object — ignored",
     "commandsConfigLoadingUnknownType": "commands.yaml: \"{{id}}\" loading type \"{{type}}\" is not one of reaction|typing|recording_audio|spinner|none — ignored",
     "commandsConfigLoadingUnknownProp": "commands.yaml: \"{{id}}\" loading type \"{{type}}\" does not accept property \"{{key}}\" — entry is malformed and was dropped",
+    "commandsConfigLoadingInvalidEmoji": "commands.yaml: \"{{id}}\" loading.{{field}} value \"{{value}}\" is not a single emoji",
     "commandRegistryOrphanEntry": "commandRegistry: entry \"{{id}}\" targets {{plugin}}.{{function}} but no active plugin provides it — skipped",
     "commandRegistryInvalidEntry": "commandRegistry: entry \"{{id}}\" has no plugin/function and no text — skipped",
     "commandRegistryInvocationCollision": "commandRegistry: invocation \"{{text}}\" already owned by \"{{winner}}\" — dropping {{loser}} ({{via}})",
@@ -120,7 +121,8 @@
     "cannotKickSelf": "Refusing to remove the bot itself from the group via admin.kick().",
     "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rejected for: {{detail}}",
     "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") failed for group \"{{group}}\" with participants [{{users}}]: {{message}}",
-    "pollDecryptFailed": "Failed to decrypt poll vote: {{error}}"
+    "pollDecryptFailed": "Failed to decrypt poll vote: {{error}}",
+    "invalidReaction": "Invalid reaction: \"{{emoji}}\". Please use a single emoji."
   },
   "onboarding": {
     "intro": "ManyBot — first login",

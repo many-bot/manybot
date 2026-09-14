@@ -350,7 +350,26 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
       assert.equal(reactions[1].emoji, "");
     });
 
+    test("reaction: does not call contract.react when invalid emoji is used as loading icon", async () => {
+      const spec = emptySpec({ loading: { type: "reaction", icon: "invalid" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      assert.equal(reactions.length, 0, "contract.react should not be called for invalid emoji");
+    });
+
+    test("reaction: does not call contract.react when multiple emojis are used as loading icon", async () => {
+      const spec = emptySpec({ loading: { type: "reaction", icon: "👍😊" } });
+      __setRegistryForTests(buildRegistry([spec]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+
+      assert.equal(reactions.length, 0, "contract.react should not be called for multiple emojis");
+    });
+
     test("reaction: replaces with onSuccess emoji on success", async () => {
+
       const spec = emptySpec({ loading: { type: "reaction", icon: "⏳", onSuccess: "✅" } });
       __setRegistryForTests(buildRegistry([spec]));
 
