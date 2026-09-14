@@ -503,6 +503,10 @@ export interface MessageHandle extends PromiseLike<WAMessageContext | undefined>
    * @param emoji - A single emoji character, e.g. `"👍"`. Pass `""` to remove an existing reaction.
    */
   react(emoji: string): Promise<unknown>;
+  /**
+   * Remove the reaction from the sent message.
+   */
+  unreact(): Promise<unknown>;
   then<TResult1 = WAMessageContext | undefined, TResult2 = never>(
     onfulfilled?: ((value: WAMessageContext | undefined) => TResult1 | PromiseLike<TResult1>) | undefined | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
@@ -773,9 +777,13 @@ export interface WAMessageContext {
   reply: WAMessageSender;
   /**
    * React to this message.
-   * @param emoji - A single emoji character, e.g. `"👍"`. Pass `""` to remove an existing reaction.
+   * @param emoji - A single emoji character, e.g. `"👍"`.
    */
   react(emoji: string): Promise<unknown>;
+  /**
+   * Remove a reaction from this message.
+   */
+  unreact(): Promise<unknown>;
   /**
    * Delete this message.
    * @param forEveryone - If true, deletes for all recipients; otherwise only for the bot. Defaults to true.

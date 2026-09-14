@@ -1015,6 +1015,7 @@ export interface WAMessageContext {
   mentionedJid: string[];
   reply: WAMessageSender;
   react(emoji: string): Promise<unknown>;
+  unreact(): Promise<unknown>;
   delete(forEveryone?: boolean | undefined): Promise<unknown>;
   edit(text: string): Promise<unknown>;
   pin(duration?: number): Promise<void>;
@@ -1245,6 +1246,15 @@ export function buildMessageContext(
       }, emoji);
     },
 
+    async unreact() {
+      await contract.react(rawJid, {
+        id:          msg.id,
+        remoteJid:   msg.chatId,
+        fromMe:      msg.fromMe,
+        participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+      }, "");
+    },
+
     async delete(forEveryone: boolean | undefined = true) {
       if (forEveryone) {
         await contract.deleteMessage(rawJid, {
@@ -1396,6 +1406,18 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
       fromMe:      msg.fromMe,
       participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
     }, emoji);
+  }
+
+  /** Remove the reaction from the sent message. */
+  async unreact(): Promise<unknown> {
+    const msg = await this.rawPromise;
+    if (!msg) return;
+    await this._contract.react(msg.chatId, {
+      id:          msg.id,
+      remoteJid:   msg.chatId,
+      fromMe:      msg.fromMe,
+      participant: msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? null,
+    }, "");
   }
 
   /** Edit the sent message's text. Only works on the bot's own messages. */
