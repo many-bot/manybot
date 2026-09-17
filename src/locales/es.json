@@ -5,7 +5,6 @@
     "error": {
       "uncaught": "Error fatal en el núcleo del bot (excepción síncrona)",
       "unhandled": "Error fatal en el núcleo del bot (rechazo de promise)",
-      "pluginCaught": "Error interceptado a nivel global, atribuido al plugin \"{{plugin}}\"",
       "pluginCaught": "Error interceptado a nivel global, atribuido al plugin \"{{plugin}}\""
     },
     "signal": {
@@ -38,7 +37,7 @@
     "downloadJobFailed": "Error en el trabajo de descarga — {{message}}",
     "downloadJobNoErrorFn": "El trabajo de descarga falló y no se pasó errorFn a enqueue()",
     "reconnecting": "Reconectando en {{secs}}s...",
-    "reconnectHalted": "Se dejó de reconectar tras {{attempts}} intentos — llama a connect() manualmente para reintentar. Los bucles de reconexión repetidos pueden prolongar una restricción de WhatsApp.",
+    "reconnectHalted": "Se dejó de reconectar tras {{attempts}} intentos — reinicia el bot manualmente para reintentar. Los bucles de reconexión repetidos pueden prolongar una restricción de WhatsApp.",
     "sessionExpired": "Sesión expirada o cerrada — eliminando sesión local y reiniciando...",
     "cacheLoaded": "{{count}} chat(s) cargado(s) desde la caché.",
     "cacheLoadedStale": "{{count}} chat(s) cargado(s) desde la caché (desactualizada).",
