@@ -5,9 +5,11 @@
  *
  * Protections:
  *   - Hard timeout per plugin run (prevents infinite hangs from locking the queue)
- *   - Catches and logs all errors with structured context
+ *   - Catches and logs all errors with structured context (which plugin, where)
  *   - Marks errored plugins so they are silently skipped from then on
- *   - Never crashes the bot
+ *   - Never crashes the bot — including errors a plugin raises outside its
+ *     own await chain (fire-and-forget promises), attributed via
+ *     pluginContext.ts and handled by main.ts's global error listeners
  *
  * Per-plugin overrides:
  *   Plugins may export a `guardOptions` object to opt out of specific
@@ -22,6 +24,8 @@
 import { logger }         from "#logger";
 import { pluginRegistry, type PluginEntry } from "#kernel/pluginLoader.js";
 import type { CommandHandler } from "#kernel/commandRegistry.js";
+import { runWithPlugin } from "#kernel/pluginContext.js";
+import { fireAlert } from "#kernel/alerts.js";
 
 /** Max ms a single plugin run is allowed to take before it's force-aborted. */
 const PLUGIN_TIMEOUT_MS = 120_000;
@@ -42,6 +46,82 @@ function withTimeout(promise: Promise<unknown>, ms: number, pluginName: string):
   });
 
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Single source of truth for "a plugin threw" bookkeeping: bumps
+ * errorCount, disables the plugin past 3 strikes, logs with the plugin
+ * name attached, and triggers a reload attempt otherwise.
+ *
+ * Called from two places:
+ *   - runPlugin()'s own catch block (the normal, awaited-error path)
+ *   - main.ts's uncaughtException/unhandledRejection listeners, for
+ *     errors a plugin raised without awaiting/catching them itself
+ *
+ * Alerting: this function is also where the WhatsApp/email owner alert
+ * (`fireAlert("plugin_crash", ...)`) gets fired for every path EXCEPT
+ * the command-dispatch one. `runCommand.ts`'s own catch block already
+ * fires a richer alert (it knows the exact command name) once the error
+ * has been rethrown back up to it — so when the caller here is about to
+ * rethrow (`opts.rethrow`), this function stays silent and leaves the
+ * alert to that outer catch, to avoid double-alerting the owner for the
+ * same crash. Every other caller (legacy `run(ctx)` plugins, and
+ * detached/global-context errors caught by main.ts) has no such
+ * downstream catch of its own, so without this the owner would never
+ * be told about those crashes at all — only the local log would know.
+ *
+ * @returns `true` if `pluginName` matched a known registry entry and was
+ *          handled here (bot should keep running); `false` if it did not
+ *          match anything, meaning the error is NOT plugin-attributable
+ *          and the caller must fall back to its own handling.
+ */
+export function recordPluginFailure(
+  pluginName: string,
+  error: Error,
+  opts: { isTimeout?: boolean; rethrow?: boolean } = {}
+): boolean {
+  const plugin = pluginRegistry.get(pluginName);
+  if (!plugin) return false;
+
+  const errorCount = (plugin.errorCount ?? 0) + 1;
+  plugin.errorCount = errorCount;
+  plugin.error = error;
+
+  const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
+  const disabled = errorCount >= 3;
+
+  if (disabled) {
+    plugin.status = "error";
+    pluginRegistry.set(plugin.name, plugin);
+    logger.error(`[pluginGuard] Plugin "${plugin.name}" threw an error and has failed 3 times. Disabling plugin.`);
+    logger.error(`  message : ${error.message}`);
+    if (!opts.isTimeout) logger.error(`  at      : ${frame}`);
+  } else {
+    pluginRegistry.set(plugin.name, plugin);
+    logger.warn(`[pluginGuard] Plugin "${plugin.name}" threw an error (attempt ${errorCount}/3). Reloading...`);
+    logger.warn(`  message : ${error.message}`);
+    if (!opts.isTimeout) logger.warn(`  at      : ${frame}`);
+
+    // Reload the plugin dynamically to avoid circular dependency
+    import("#kernel/pluginLoader.js").then(({ reloadPlugin }) => {
+      reloadPlugin(plugin.name).catch(err => {
+        logger.error(`[pluginGuard] Failed to reload plugin "${plugin.name}": ${err.message}`);
+      });
+    });
+  }
+
+  if (!opts.rethrow) {
+    fireAlert("plugin_crash", {
+      plugin: plugin.name,
+      kind: opts.isTimeout ? "timeout" : "exception",
+      message: error.message,
+      errorCount,
+      disabled,
+      source: "global",
+    });
+  }
+
+  return true;
 }
 
 /**
@@ -75,51 +155,22 @@ export async function runPlugin(
   const useTimeout = plugin.guardOptions?.timeout !== false;
 
   try {
-    if (handler) {
-      const run = handler(context, input);
-      return await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
-    } else {
-      if (!plugin.run) return undefined;
-      const run = plugin.run(context);
-      await (useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run);
-      return undefined;
-    }
+    return await runWithPlugin(plugin.name, () => {
+      if (handler) {
+        const run = handler(context, input);
+        return useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run;
+      } else {
+        if (!plugin.run) return undefined;
+        const run = plugin.run(context);
+        return useTimeout ? withTimeout(run, PLUGIN_TIMEOUT_MS, plugin.name) : run;
+      }
+    });
   } catch (e) {
     const error = e instanceof Error ? e : new Error(String(e));
-    const errorCount = (plugin.errorCount ?? 0) + 1;
-    plugin.errorCount = errorCount;
-    plugin.error = error;
-
     const isTimeout = useTimeout && error.message?.startsWith("timed out");
 
-    if (errorCount >= 3) {
-      plugin.status = "error";
-      pluginRegistry.set(plugin.name, plugin);
-      logger.error(`[pluginGuard] Plugin "${plugin.name}" threw an error and has failed 3 times. Disabling plugin.`);
-      logger.error(`  message : ${error.message}`);
-      if (!isTimeout) {
-        const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
-        logger.error(`  at      : ${frame}`);
-      }
-      if (options?.rethrow) throw error;
-    } else {
-      pluginRegistry.set(plugin.name, plugin);
-      logger.warn(`[pluginGuard] Plugin "${plugin.name}" threw an error (attempt ${errorCount}/3). Reloading...`);
-      logger.warn(`  message : ${error.message}`);
-      if (!isTimeout) {
-        const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";
-        logger.warn(`  at      : ${frame}`);
-      }
-
-      if (options?.rethrow) throw error;
-
-      // Reload the plugin dynamically to avoid circular dependency
-      import("#kernel/pluginLoader.js").then(({ reloadPlugin }) => {
-        reloadPlugin(plugin.name).catch(err => {
-          logger.error(`[pluginGuard] Failed to reload plugin "${plugin.name}": ${err.message}`);
-        });
-      });
-    }
+    recordPluginFailure(plugin.name, error, { isTimeout, rethrow: options?.rethrow });
+    if (options?.rethrow) throw error;
     return undefined;
   }
 }

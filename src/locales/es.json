@@ -3,8 +3,10 @@
     "initialized": "Cliente inicializado. Esperando conexión con WhatsApp...",
     "ready": "¡Bot está listo!",
     "error": {
-      "uncaught": "Excepción no capturada",
-      "unhandled": "Rechazo no manejado"
+      "uncaught": "Error fatal en el núcleo del bot (excepción síncrona)",
+      "unhandled": "Error fatal en el núcleo del bot (rechazo de promise)",
+      "pluginCaught": "Error interceptado a nivel global, atribuido al plugin \"{{plugin}}\"",
+      "pluginCaught": "Error interceptado a nivel global, atribuido al plugin \"{{plugin}}\""
     },
     "signal": {
       "sigterm": "Proceso interrumpida. Apagando..."
@@ -112,9 +114,21 @@
     "noFallbackTitle": "manybot: sin driver de fallback",
     "bothDriversFailedTitle": "manybot: envío fallido en ambos drivers",
     "updateAvailableTitle": "Nueva versión del manybot disponible",
-    "updateAvailableMessage": "Instalado: {{instalado}} → disponible: {{disponible}}. Vea {{url}} para instrucciones de actualización.",
+    "updateAvailableMessage": "Instalado: {{installed}} → disponible: {{available}}. Vea {{url}} para instrucciones de actualización.",
     "reconnectHaltedTitle": "manybot detuvo la reconexión",
-    "reconnectHaltedMessage": "Desistió después de {{intento}} intentos — posible restricción de la cuenta. Ejecute connect() manualmente para intentar nuevamente."
+    "reconnectHaltedMessage": "Desistió después de {{attempts}} intentos, es posible que sea una restricción de la cuenta. Intente reiniciar el bot manualmente para intentar nuevamente.",
+    "botCrashedTitle": "manybot: el proceso del bot se cayó",
+    "pluginCrashTitle": "manybot: el plugin \"{{plugin}}\" falló (intento {{attempt}}/3)",
+    "pluginCrashDisabledTitle": "manybot: plugin \"{{plugin}}\" deshabilitado tras fallos repetidos",
+    "pluginCrashMessage": "Plugin: {{plugin}}\n{{source}}\nTipo de fallo: {{kind}}\nIntento: {{attempt}}/3\nError: {{error}}\n\nEl bot en sí está bien — solo esta llamada al plugin falló, y será recargado.",
+    "pluginCrashDisabledMessage": "Plugin: {{plugin}}\n{{source}}\nTipo de fallo: {{kind}}\nIntento: {{attempt}}/3\nError: {{error}}\n\nEste plugin falló 3 veces y fue DESHABILITADO — no volverá a ejecutarse hasta que se recargue o se reinicie el bot. El bot en sí sigue funcionando normalmente.",
+    "pluginCrashSourceCommand": "Activado por el comando: {{command}}",
+    "pluginCrashSourceGlobal": "Activado por un manejador de segundo plano/evento (sin comando involucrado)",
+    "pluginCrashKindException": "excepción",
+    "pluginCrashKindTimeout": "timeout",
+    "occurredAt": "Ocurrió el: {{time}}",
+    "statusFatal": "🔴 El proceso del bot fue terminado por esto.",
+    "statusRunning": "🟢 El bot sigue funcionando normalmente."
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" no coincide con ningún participante actual del grupo \"{{group}}\" (comprueba si la persona sigue en el grupo o usa una respuesta/mención en lugar de escribir el número).",

@@ -41,6 +41,17 @@ export interface AlertEvent {
   level:   AlertLevel;
   title:   string;
   message: string;
+  /**
+   * True only when this alert accompanies the bot process actually going
+   * down — main.ts's shutdown(reason, true) path. Every other alert kind
+   * (a plugin throwing, a plugin getting disabled after 3 strikes, a send
+   * failure) is non-fatal by definition: manybot itself keeps running.
+   * Defaults to `false` when omitted. Sinks that reach the admin away
+   * from the terminal (WhatsApp/email) render this explicitly, so a loud
+   * "critical" plugin-disabled alert is never mistaken for the bot
+   * itself being down.
+   */
+  fatal?: boolean;
 }
 
 const ALERTS_LOG_FILE = path.join(CONFIG_DIR, "alerts.log");
@@ -62,10 +73,24 @@ export function registerAlertSockProvider(provider: () => SockLike | null): void
 
 // ── Sinks ─────────────────────────────────────────────────────────────────
 
+/**
+ * Appends a footer to the message body with when the event happened and
+ * whether it actually took the bot down — shared by every sink so "when
+ * did this happen" and "is the bot still up" never depend on the reader
+ * cross-referencing the log file's own timestamp.
+ * @param {AlertEvent} event
+ */
+function withOccurredFooter(event: AlertEvent): string {
+  const time   = new Date().toISOString();
+  const status = event.fatal ? t("alerts.statusFatal") : t("alerts.statusRunning");
+  return `${event.message}\n\n${t("alerts.occurredAt", { time })}\n${status}`;
+}
+
 async function logToFile(event: AlertEvent): Promise<void> {
   try {
     await fs.mkdir(CONFIG_DIR, { recursive: true });
-    const line = `[${new Date().toISOString()}] [${event.level.toUpperCase()}] ${event.title} — ${event.message}\n`;
+    const fatalTag = event.fatal ? " [FATAL]" : "";
+    const line = `[${new Date().toISOString()}] [${event.level.toUpperCase()}]${fatalTag} ${event.title} — ${event.message}\n`;
     await fs.appendFile(ALERTS_LOG_FILE, line, "utf8");
   } catch (e) {
     // Last-resort fallback — if even the log write fails, at least surface
@@ -80,12 +105,17 @@ function notifyOS(event: AlertEvent): Promise<void> {
     let cmd: string;
     let args: string[];
 
+    // OS notifications stay short (no footer) — the toast is already
+    // timestamped by the desktop environment itself. The title alone
+    // flags whether the bot is actually down.
+    const title = event.fatal ? `💀 ${event.title}` : event.title;
+
     if (platform === "linux") {
       cmd  = "notify-send";
-      args = [event.title, event.message];
+      args = [title, event.message];
     } else if (platform === "darwin") {
       cmd  = "osascript";
-      args = ["-e", `display notification ${JSON.stringify(event.message)} with title ${JSON.stringify(event.title)}`];
+      args = ["-e", `display notification ${JSON.stringify(event.message)} with title ${JSON.stringify(title)}`];
     } else {
       // Windows toast notifications need extra tooling (BurntToast) that
       // isn't available out of the box — skip rather than half-implement.
@@ -121,7 +151,7 @@ async function notifyWhatsApp(event: AlertEvent): Promise<void> {
   if (!sock) return; // bot not connected — expected during the exact outages this exists for
 
   try {
-    await sock.sendMessage(normalizeAdminJid(ADMIN_JID), { text: `*[${event.level.toUpperCase()}] ${event.title}*\n\n${event.message}` });
+    await sock.sendMessage(normalizeAdminJid(ADMIN_JID), { text: `*[${event.level.toUpperCase()}] ${event.title}*\n\n${withOccurredFooter(event)}` });
   } catch (e) {
     logger.debug(`[alerts] WhatsApp sink failed (non-fatal): ${(e as Error).message}`);
   }
@@ -154,8 +184,8 @@ async function notifyEmail(event: AlertEvent): Promise<void> {
     await transport.sendMail({
       from:    SMTP_FROM || SMTP_USER,
       to:      SMTP_TO,
-      subject: `[manybot] [${event.level.toUpperCase()}] ${event.title}`,
-      text:    event.message,
+      subject: `[manybot] [${event.level.toUpperCase()}]${event.fatal ? " [FATAL]" : ""} ${event.title}`,
+      text:    withOccurredFooter(event),
     });
   } catch (e) {
     logger.debug(`[alerts] email sink failed (non-fatal): ${(e as Error).message}`);
@@ -191,10 +221,16 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
  * Mapped kinds:
  *   send_failed_no_fallback   — primary failed, no secondary available
  *   send_failed_both_drivers  — both primary and secondary failed
+ *   plugin_crash              — a plugin threw/timed out; bot survives.
+ *                               Never fatal by definition — a plugin that
+ *                               brings the process down goes through
+ *                               shutdown()'s own "manybot crashed" alert
+ *                               instead, not this one.
  */
 export type AlertKind =
   | "send_failed_no_fallback"
   | "send_failed_both_drivers"
+  | "plugin_crash"
   | (string & {}); // open for future kinds without breaking the union
 
 export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}): void {
@@ -212,6 +248,27 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
       message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
                (details.error ? ` error=${String(details.error)}` : ""),
     };
+  } else if (kind === "plugin_crash") {
+    const disabled = Boolean(details.disabled);
+    const source = details.source === "global"
+      ? t("alerts.pluginCrashSourceGlobal")
+      : t("alerts.pluginCrashSourceCommand", { command: details.command ? String(details.command) : "?" });
+    const vars = {
+      plugin:  String(details.plugin ?? "?"),
+      source,
+      kind:    details.kind === "timeout" ? t("alerts.pluginCrashKindTimeout") : t("alerts.pluginCrashKindException"),
+      attempt: String(details.errorCount ?? "?"),
+      error:   details.message ? String(details.message) : "",
+    };
+    event = {
+      level:   disabled ? "critical" : "warning",
+      title:   t(disabled ? "alerts.pluginCrashDisabledTitle" : "alerts.pluginCrashTitle", { plugin: vars.plugin }),
+      message: t(disabled ? "alerts.pluginCrashDisabledMessage" : "alerts.pluginCrashMessage", vars),
+      // A plugin crashing — even 3 times over, ending in it being
+      // disabled — never brings the bot process down (see the AlertKind
+      // docs below). Only main.ts's shutdown(reason, true) sets fatal.
+      fatal:   false,
+    };
   } else {
     event = {
       level:   "warning",
@@ -221,3 +278,4 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
   }
   void sendAlert(event);
 }
+

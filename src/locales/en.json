@@ -3,8 +3,10 @@
     "initialized": "Client initialized. Waiting for WhatsApp connection...",
     "ready": "Bot is ready!",
     "error": {
-      "uncaught": "Uncaught exception",
-      "unhandled": "Unhandled rejection"
+      "uncaught": "Fatal core error (synchronous exception)",
+      "unhandled": "Fatal core error (promise rejection)",
+      "pluginCaught": "Error intercepted at the global level, attributed to plugin \"{{plugin}}\"",
+      "pluginCaught": "Error intercepted at the global level, attributed to plugin \"{{plugin}}\""
     },
     "signal": {
       "sigterm": "Process interrupted. Shutting down..."
@@ -114,7 +116,19 @@
     "updateAvailableTitle": "New manybot version available",
     "updateAvailableMessage": "Installed: {{installed}} → available: {{available}}. See {{url}} for update instructions.",
     "reconnectHaltedTitle": "manybot stopped reconnecting",
-    "reconnectHaltedMessage": "Gave up after {{attempts}} attempts — possible account restriction. Run connect() manually to retry."
+    "reconnectHaltedMessage": "Gave up after {{attempts}} attempts, it's possible that it's an account restriction. Try restarting the bot manually to retry.",
+    "botCrashedTitle": "manybot: bot process crashed",
+    "pluginCrashTitle": "manybot: plugin \"{{plugin}}\" crashed (attempt {{attempt}}/3)",
+    "pluginCrashDisabledTitle": "manybot: plugin \"{{plugin}}\" disabled after repeated crashes",
+    "pluginCrashMessage": "Plugin: {{plugin}}\n{{source}}\nFailure type: {{kind}}\nAttempt: {{attempt}}/3\nError: {{error}}\n\nThe bot itself is fine — only this plugin call failed, and it will be reloaded.",
+    "pluginCrashDisabledMessage": "Plugin: {{plugin}}\n{{source}}\nFailure type: {{kind}}\nAttempt: {{attempt}}/3\nError: {{error}}\n\nThis plugin has now failed 3 times and has been DISABLED — it won't run again until it's reloaded or the bot is restarted. The bot itself is still running normally.",
+    "pluginCrashSourceCommand": "Triggered by command: {{command}}",
+    "pluginCrashSourceGlobal": "Triggered by a background/event handler (no command involved)",
+    "pluginCrashKindException": "exception",
+    "pluginCrashKindTimeout": "timeout",
+    "occurredAt": "Occurred at: {{time}}",
+    "statusFatal": "🔴 The bot process was terminated by this.",
+    "statusRunning": "🟢 The bot is still running normally."
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" does not match a current participant in group \"{{group}}\" (check whether the person is still in the group, or use a reply/mention instead of typing the number).",

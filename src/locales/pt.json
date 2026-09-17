@@ -3,8 +3,9 @@
     "initialized": "Cliente inicializado. Aguardando conexão com WhatsApp...",
     "ready": "Bot está pronto!",
     "error": {
-      "uncaught": "Exceção não capturada",
-      "unhandled": "Rejeição não tratada"
+      "uncaught": "Erro fatal no núcleo do bot (exceção síncrona)",
+      "unhandled": "Erro fatal no núcleo do bot (rejeição de promise)",
+      "pluginCaught": "Erro interceptado no nível global, atribuído ao plugin \"{{plugin}}\""
     },
     "signal": {
       "sigterm": "Processo interrompido. Desligando..."
@@ -114,7 +115,19 @@
     "updateAvailableTitle": "Nova versão do manybot disponível",
     "updateAvailableMessage": "Instalado: {{installed}} → disponível: {{available}}. Veja {{url}} para instruções de atualização.",
     "reconnectHaltedTitle": "manybot parou de reconectar",
-    "reconnectHaltedMessage": "Desistiu após {{attempts}} tentativas — possível restrição da conta. Execute connect() manualmente para tentar novamente."
+    "reconnectHaltedMessage": "Desistiu após {{attempts}} tentativas, é possível que seja uma restrição da conta. Tente reiniciar o bot manualmente para tentar novamente.",
+    "botCrashedTitle": "manybot: o processo do bot caiu",
+    "pluginCrashTitle": "manybot: plugin \"{{plugin}}\" travou.",
+    "pluginCrashDisabledTitle": "manybot: plugin \"{{plugin}}\" desabilitado após falhas repetidas",
+    "pluginCrashMessage": "Plugin: {{plugin}}\n{{source}}\nTipo de falha: {{kind}}\nTentativa: {{attempt}}/3\nErro: {{error}}\n\nO bot em si está bem, só essa chamada ao plugin falhou, e ele será recarregado.",
+    "pluginCrashDisabledMessage": "Plugin: {{plugin}}\n{{source}}\nTipo de falha: {{kind}}\nTentativa: {{attempt}}/3\nErro: {{error}}\n\nEsse plugin falhou 3 vezes e foi DESABILITADO — não vai rodar de novo até ser recarregado ou o bot ser reiniciado. O bot em si continua funcionando normalmente.",
+    "pluginCrashSourceCommand": "Disparado pelo comando: {{command}}",
+    "pluginCrashSourceGlobal": "Disparado por um handler de segundo plano/evento (sem comando envolvido)",
+    "pluginCrashKindException": "exceção",
+    "pluginCrashKindTimeout": "timeout",
+    "occurredAt": "Ocorrido em: {{time}}",
+    "statusFatal": "🔴 O processo do bot foi ENCERRADO por isso.",
+    "statusRunning": "🟢 O bot continua rodando normalmente."
   },
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" não corresponde a nenhum participante atual do grupo \"{{group}}\" (confira se a pessoa ainda está no grupo, ou use reply/menção em vez de digitar o número).",

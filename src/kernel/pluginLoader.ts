@@ -296,7 +296,15 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       exports: mod.api ?? null,
       error:   null,
       guardOptions: mod.guardOptions ?? {},
-      errorCount: 0,
+      // Reusing the `errorCount` computed above (existing entry's count,
+      // 0 for a first-time load) instead of hardcoding 0 here — a
+      // successful reload must NOT wipe the 3-strike counter that
+      // pluginGuard's recordPluginFailure() just incremented, or a
+      // plugin that fails-then-reloads-successfully every time (the
+      // common case) never actually reaches 3 and never gets disabled.
+      // errorCount is only reset to 0 on setup success in reloadPlugin()
+      // below, or when the plugin is disabled/removed elsewhere.
+      errorCount,
     });
 
     // Phase 9: a plugin is a library of ready-to-use functions invoked as

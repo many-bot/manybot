@@ -294,12 +294,16 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     return { status: "executed", sentReply: null, suggestedReply: null };
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));
+    const entry = pluginRegistry.get(pluginName ?? "");
 
     fireAlert("plugin_crash", {
       plugin: pluginName,
       command: flat.name,
       kind: err.message?.startsWith("timed out") ? "timeout" : "exception",
       message: err.message,
+      errorCount: entry?.errorCount ?? 1,
+      disabled: entry?.status === "error",
+      source: "command",
     });
     // Re-raise so pluginGuard can keep its 3-strike bookkeeping.
     throw err;

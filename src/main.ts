@@ -21,6 +21,8 @@ import { getDriverManager }           from "#kernel/driverManager.js";
 import { CONFIG, STATUS_ENABLED, STATUS_PORT, LOG_LEVEL } from "#config";
 import { logger, setLogLevel }        from "#logger";
 import { t }                          from "#i18n";
+import { getCurrentPluginName }       from "#kernel/pluginContext.js";
+import { recordPluginFailure }        from "#kernel/pluginGuard.js";
 import { CLIENT_ID, CONFIG_DIR }      from "#config";
 import { rmSync }                     from "node:fs";
 import { access }                     from "node:fs/promises";
@@ -39,12 +41,22 @@ async function shutdown(reason: string, isError = false) {
   shuttingDown = true;
 
   if (isError) {
-    logger.error(`${t("bot.error.uncaught")}: ${reason}`);
+    // `reason` already carries its own descriptive label — handleGlobalError()
+    // and the driver-connect catch below both build a self-describing
+    // message, so no generic prefix is added here.
+    logger.error(reason);
     try {
       await sendAlert({
         level:   "critical",
-        title:   "manybot crashed",
+        title:   t("alerts.botCrashedTitle"),
         message: reason,
+        // The one genuinely fatal alert kind: shutdown(reason, true) only
+        // runs from an error with no plugin owner (main.ts's global error
+        // listeners already hand plugin-attributable errors off to
+        // recordPluginFailure and return early — see handleGlobalError
+        // below) or a failed driver connect at startup. Either way the
+        // process is exiting right after this.
+        fatal:   true,
       });
     } catch {
       // sendAlert already swallows sink failures internally; this is only
@@ -71,16 +83,35 @@ async function shutdown(reason: string, isError = false) {
   process.exit(isError ? 1 : 0);
 }
 
-// Global error listeners
-process.on("uncaughtException", (err) => {
+// Global error listeners.
+//
+// A plugin is allowed to crash — the bot itself is not. Before deciding
+// to shut down, check whether the error happened while a plugin was
+// executing (pluginContext.ts tracks this across the whole async chain,
+// including promises the plugin created but never awaited/caught — the
+// exact case a plain try/catch around the plugin call can't cover). If
+// so, hand it to the same 3-strikes bookkeeping normal plugin errors go
+// through (recordPluginFailure) and keep running. Only errors with no
+// plugin owner (real bugs in kernel/driver code) bring the process down.
+function handleGlobalError(kind: "uncaught" | "unhandled", err: Error) {
+  const pluginName = getCurrentPluginName();
+  if (pluginName && recordPluginFailure(pluginName, err)) {
+    logger.warn(`${t("bot.error.pluginCaught", { plugin: pluginName })}: ${err.message}`);
+    return;
+  }
+
   const stackFrame = err.stack?.split("\n")[1]?.trim() ?? "";
-  shutdown(`${err.message}\n             ${t("errors.stack")}: ${stackFrame}`, true);
+  const label = kind === "uncaught" ? t("bot.error.uncaught") : t("bot.error.unhandled");
+  shutdown(`${label}: ${err.message}\n             ${t("errors.stack")}: ${stackFrame}`, true);
+}
+
+process.on("uncaughtException", (err) => {
+  handleGlobalError("uncaught", err);
 });
 
 process.on("unhandledRejection", (reason) => {
   const err = reason instanceof Error ? reason : new Error(String(reason));
-  const stackFrame = err.stack?.split("\n")[1]?.trim() ?? "";
-  shutdown(`${t("bot.error.unhandled")}: ${err.message}\n             ${t("errors.stack")}: ${stackFrame}`, true);
+  handleGlobalError("unhandled", err);
 });
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
