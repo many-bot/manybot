@@ -11,6 +11,7 @@
 - Added `--logout` command line argument to remove the current session (`~/.manybot/sessions/<CLIENT_ID>`).
 - Native normalization added to commands. Source: [normalizeText.ts](src/utils/normalizeText.ts).
 - Added `AUTO_READ_MESSAGES` config option -- it makes ManyBot mark all the messages it receives "as read".
+- Added config option HISTORY_MAX_PER_CHAT -- allows configure how much messages ctx.chat.history can save per chat (before was fixed on 200).
 
 ### Fixed
 
@@ -25,6 +26,11 @@
 - `i18n`: resolved plugin root directory instead of assuming entry directory.
 - Banner: corrected ASCII art alignment for version string.
 - `i18n`: corrected pairing code path.
+- `ctx.admin.promote()` / `ctx.admin.demote()` now work on Communities: when the target JID is a Community (not a regular group or one of its linked groups), the driver uses the dedicated community operation instead of `groupParticipantsUpdate`. Adds the optional `WaContract.communityParticipantsUpdate()`.
+- Bulk message deletion (e.g. admin `cleanmsg`) no longer applies only partially:
+  - Baileys' default `cachedGroupMetadata` hook always returned `undefined`, so every group send queried WhatsApp for metadata and hit `rate-overlimit` (429). The socket now sets its own hook, backed by a shared cache (`groupMetaCache.ts`) that is also used by the API lookups, invalidated on `group-participants.update` / `groups.update` and cleared on every new socket.
+  - `ctx.msg.react()`, `ctx.msg.unreact()` and `ctx.msg.delete()` (also on `MessageHandle`) now wait for a send slot like every other outbound action. `sendMessage({delete})` resolves once written to the socket, so tight loops had part of the burst silently dropped server-side.
+  - `ctx.chat.history.from()` now matches by sender LID **or** phone number. Entries received before Baileys learned the contact's LID (`sender = null`) were being skipped.
 
 ### Removed
 
