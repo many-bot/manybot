@@ -27,6 +27,7 @@ import { resolveLoginMethod } from "../loginPrompt.js";
 import { logger }           from "#logger";
 import { t }                from "#i18n";
 import { createStore }      from "#client/store.js";
+import { loadGroupMeta, dropGroupMeta, clearGroupMetaCache } from "#drivers/baileys/groupMetaCache.js";
 import pino from "pino";
 
 // ── Driver-local type aliases ────────────────────────────────────────────────
@@ -121,6 +122,8 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
     ? { method: null as null, phone: null as string | null }
     : await resolveLoginMethod();
 
+  clearGroupMetaCache();
+
   const sock = makeWASocket({
     version,
     auth:                           state,
@@ -148,9 +151,21 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
       const stored = store.messages.get(key.remoteJid ?? "")?.get(key.id ?? "");
       return stored?.message ?? undefined;
     },
+    // Without this, every send to a group makes Baileys query the group's
+    // metadata from WhatsApp first (its default hook always returns
+    // undefined). Bulk actions such as deleting 50 messages then fire 50
+    // metadata queries back to back and WhatsApp starts answering
+    // rate-overlimit (429). Misses are fetched here so the result is
+    // stored — Baileys never writes to this cache itself.
+    cachedGroupMetadata: (jid) => loadGroupMeta(jid, (id) => sock.groupMetadata(id)),
   }) as RawSocket;
 
   store.bind(sock.ev);
+
+  sock.ev.on("group-participants.update", ({ id }) => dropGroupMeta(id));
+  sock.ev.on("groups.update", (updates) => {
+    for (const { id } of updates) if (id) dropGroupMeta(id);
+  });
 
   // Each plugin's setup() can attach its own listeners via api.events (see
   // buildEventsApi in api/index.ts), on top of the driver's own and the
@@ -210,3 +225,4 @@ export async function createSocket(authDirName: string = CLIENT_ID): Promise<Soc
 
   return { sock, store };
 }
+

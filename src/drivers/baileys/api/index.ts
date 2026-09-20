@@ -17,6 +17,10 @@ import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
 import { decodeContent } from "#drivers/baileys/adapter.js";
+import {
+  loadGroupMeta, storeGroupMeta, dropGroupMeta, clearGroupMetaCache,
+  type WAGroupMetadata,
+} from "#drivers/baileys/groupMetaCache.js";
 import { logger }                    from "#logger";
 import { t, createPluginT,
          reloadTranslations,
@@ -300,20 +304,13 @@ const groupNameCache = new Map<string, { name: string; at: number }>();
 // instead. Cache full metadata with the same TTL pattern as groupNameCache
 // above, and drop the entry as soon as membership/admin state actually
 // changes so a promote/kick/join is visible well before the TTL expires.
-type WAGroupMetadata = Awaited<ReturnType<import("@whiskeysockets/baileys").WASocket["groupMetadata"]>>;
-const GROUP_META_CACHE_TTL_MS = 5 * 60 * 1000;
-const groupMetaCache = new Map<string, { meta: WAGroupMetadata; at: number }>();
-
+// The cache itself lives in groupMetaCache.ts and is shared with the socket's
+// `cachedGroupMetadata` hook, so sends and these lookups feed each other.
 async function getGroupMetadataCached(contract: WaContract, jid: string): Promise<WAGroupMetadata> {
-  const cached = groupMetaCache.get(jid);
-  if (cached && Date.now() - cached.at < GROUP_META_CACHE_TTL_MS) return cached.meta;
   // Go through the raw sock for the Baileys-flavored metadata (carries
   // pn/phoneNumber which the neutral contract drops). The neutral
   // contract's groupMetadata is used everywhere the kernel asks for it.
-  const sock = rawSocketOf(contract);
-  const meta = await sock.groupMetadata(jid);
-  groupMetaCache.set(jid, { meta, at: Date.now() });
-  return meta;
+  return loadGroupMeta(jid, (id) => rawSocketOf(contract).groupMetadata(id));
 }
 
 /**
@@ -330,9 +327,8 @@ async function getGroupMetadataCached(contract: WaContract, jid: string): Promis
  * reads (`getParticipants()`, chat name) benefit from the fresh fetch too.
  */
 async function getGroupMetadataFresh(contract: WaContract, jid: string): Promise<WAGroupMetadata> {
-  const sock = rawSocketOf(contract);
-  const meta = await sock.groupMetadata(jid);
-  groupMetaCache.set(jid, { meta, at: Date.now() });
+  const meta = await rawSocketOf(contract).groupMetadata(jid);
+  storeGroupMeta(jid, meta);
   return meta;
 }
 
@@ -341,10 +337,10 @@ function bindGroupMetaInvalidation(contract: WaContract) {
   if (groupMetaInvalidationBound) return;
   groupMetaInvalidationBound = true;
   contract.on("group-participants.update", (u) => {
-    groupMetaCache.delete(u.id);
+    dropGroupMeta(u.id);
   });
   contract.on("groups.update", (p) => {
-    for (const u of p.updates) if (u.id) groupMetaCache.delete(u.id);
+    for (const u of p.updates) if (u.id) dropGroupMeta(u.id);
   });
 }
 
@@ -352,7 +348,7 @@ function bindGroupMetaInvalidation(contract: WaContract) {
  *  binding so each test starts isolated (module-level singletons otherwise
  *  persist for the life of the process). Not for production use. */
 export function __resetGroupMetaCacheForTests(): void {
-  groupMetaCache.clear();
+  clearGroupMetaCache();
   groupNameCache.clear();
   groupMetaInvalidationBound = false;
 }
@@ -1040,15 +1036,31 @@ function makeHistoryArray(entries: WAMessageContext[], store: BotStore): WAHisto
   arr.last = (n?: number) =>
     makeHistoryArray(typeof n === "number" ? entries.slice(-n) : entries.slice(), store);
   arr.from = (senderId: string) => {
-    // `e.sender` is LID-canonical (see getMsgSender()) — resolve a
-    // phone-number input to its LID before comparing. If it's already
-    // `@lid`, pass through unchanged. If no LID mapping is known for a
-    // PN input, there's nothing to match against (filters to empty),
-    // same as e.sender being null for that contact.
+    // `e.sender` is LID-canonical (see getMsgSender()) but is `null` on
+    // any entry whose raw envelope didn't carry the LID at receive time
+    // (Baileys hadn't learned that contact's LID yet) — those entries
+    // still carry `e.senderPn` (derived straight from the key's non-alt
+    // participant, always present). Matching by LID alone silently
+    // drops those older entries from `.from()` even though they're
+    // right there in `entries` — this fell out of a "de 40, só 12
+    // apagou" cleanmsg report. Resolve both directions so either form
+    // of stored identity can match, regardless of which one a given
+    // entry happened to carry.
     const normalized = normalizeJid(senderId.trim());
-    const target = normalized.endsWith("@lid") ? normalized : store.resolvePn(normalized);
-    if (!target) return makeHistoryArray([], store);
-    return makeHistoryArray(entries.filter((e) => e.sender === target), store);
+    const isLidInput  = normalized.endsWith("@lid");
+    const targetLid   = isLidInput ? normalized : store.resolvePn(normalized);
+    // resolveJid() returns the input unchanged when no mapping is known —
+    // guard against treating an unresolved `@lid` as a real PN target.
+    const resolvedPn  = isLidInput ? store.resolveJid(normalized) : normalized;
+    const targetPn    = isLidInput && resolvedPn === normalized ? null : resolvedPn;
+    if (!targetLid && !targetPn) return makeHistoryArray([], store);
+    return makeHistoryArray(
+      entries.filter((e) =>
+        (targetLid && e.sender === targetLid) ||
+        (targetPn && e.senderPn === targetPn)
+      ),
+      store
+    );
   };
   return arr;
 }
@@ -1238,6 +1250,7 @@ export function buildMessageContext(
       if (matches.length !== 1 || matches[0][0] !== emoji) {
         throw new Error(t("driver.invalidReaction", { emoji }));
       }
+      await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
       await contract.react(rawJid, {
         id:          msg.id,
         remoteJid:   msg.chatId,
@@ -1247,6 +1260,7 @@ export function buildMessageContext(
     },
 
     async unreact() {
+      await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
       await contract.react(rawJid, {
         id:          msg.id,
         remoteJid:   msg.chatId,
@@ -1257,6 +1271,13 @@ export function buildMessageContext(
 
     async delete(forEveryone: boolean | undefined = true) {
       if (forEveryone) {
+        // Bulk deletes over chat.history loop through this with no gap
+        // between calls — without a send-slot wait, Baileys resolves each
+        // sock.sendMessage({delete}) as soon as it's written to the socket
+        // (not once WA processes it), so a tight burst gets partially
+        // dropped server-side with no error surfacing. Same pacing as
+        // every other outbound action.
+        await waitForSendSlot(normalizeJid(rawJid), { cooldown, jitter });
         await contract.deleteMessage(rawJid, {
           id:          msg.id,
           remoteJid:   msg.chatId,
@@ -1387,6 +1408,8 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
     const msg = await this.rawPromise;
     if (!msg) return;
     if (forEveryone) {
+      const { cooldown = true, jitter = true } = this._guardOptions;
+      await waitForSendSlot(normalizeJid(msg.chatId), { cooldown, jitter });
       await this._contract.deleteMessage(msg.chatId, {
         id:          msg.id,
         remoteJid:   msg.chatId,
@@ -1400,6 +1423,8 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   async react(emoji: string): Promise<unknown> {
     const msg = await this.rawPromise;
     if (!msg) return;
+    const { cooldown = true, jitter = true } = this._guardOptions;
+    await waitForSendSlot(normalizeJid(msg.chatId), { cooldown, jitter });
     await this._contract.react(msg.chatId, {
       id:          msg.id,
       remoteJid:   msg.chatId,
@@ -1412,6 +1437,8 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
   async unreact(): Promise<unknown> {
     const msg = await this.rawPromise;
     if (!msg) return;
+    const { cooldown = true, jitter = true } = this._guardOptions;
+    await waitForSendSlot(normalizeJid(msg.chatId), { cooldown, jitter });
     await this._contract.react(msg.chatId, {
       id:          msg.id,
       remoteJid:   msg.chatId,
