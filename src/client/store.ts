@@ -24,6 +24,7 @@ import type {
   RawEventEmitter,
 } from "#drivers/baileys/sdk/baileysSock.js";
 import { normalizeJid } from "#drivers/jid.js";
+import { CONFIG } from "#config";
 
 // ── Store types ───────────────────────────────────────────────────────────────
 
@@ -207,9 +208,6 @@ export function createStore(): BotStore {
     }
   }
 
-  // Max messages kept per chat (prevents unbounded memory growth)
-  const MAX_MSGS_PER_CHAT = 200;
-
   function upsertChat(chat: RawChat) {
     if (!chat.id) return;
     const name = (chat as unknown as { name?: string }).name ?? chat.id.split("@")[0];
@@ -255,8 +253,10 @@ export function createStore(): BotStore {
     chatMsgs.set(id, msg);
     idIndex.set(id, jid);
 
-    // Evict oldest entries if over limit
-    if (chatMsgs.size > MAX_MSGS_PER_CHAT) {
+    // Evict oldest entries if over limit. Read live off CONFIG (not a
+    // module-load snapshot) so HISTORY_MAX_PER_CHAT picks up reloadConfig()
+    // without a restart — same pattern as sendGuard's SECURITY_LEVEL.
+    if (chatMsgs.size > CONFIG.HISTORY_MAX_PER_CHAT) {
       const oldest = chatMsgs.keys().next().value;
       if (typeof oldest === "string") {
         chatMsgs.delete(oldest);

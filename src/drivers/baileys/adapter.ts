@@ -158,7 +158,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
    *
    * We resolve the full envelope from the in-memory store, indexed by the
    * (remoteJid, id) pair carried in the neutral `BotQuotedRef`. If the
-   * envelope is no longer present (evicted past MAX_MSGS_PER_CHAT, lost on
+   * envelope is no longer present (evicted past HISTORY_MAX_PER_CHAT, lost on
    * restart, etc.) we return `undefined` rather than emit a half-formed
    * `quoted` — degrading to a plain unquoted reply is safer than crashing
    * the calling plugin.

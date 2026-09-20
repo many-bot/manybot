@@ -272,6 +272,11 @@ LOGIN_METHOD = ""
 # actually handled.
 AUTO_READ_MESSAGES = false
 
+# How many recent messages to keep per chat in memory (ctx.chat.history).
+# Higher values use more RAM but let history/cleanup commands look further
+# back. 200 is enough for most moderation use cases.
+HISTORY_MAX_PER_CHAT = 200
+
 # ── Status page ────────────────────────────────────────────────────────────
 # Local HTTP page showing whether the bot is online or offline.
 STATUS_ENABLED = true
@@ -340,6 +345,11 @@ LOGIN_METHOD = ""
 # ficarem não lidas até serem realmente tratadas.
 AUTO_READ_MESSAGES = false
 
+# Quantas mensagens recentes manter por chat em memória (ctx.chat.history).
+# Valores maiores usam mais RAM, mas deixam comandos de histórico/limpeza
+# olharem mais pra trás. 200 é suficiente pra maioria dos casos de moderação.
+HISTORY_MAX_PER_CHAT = 200
+
 # ── Página de status ────────────────────────────────────────────────────────
 # Página HTTP local mostrando se o bot está online ou offline.
 STATUS_ENABLED = true
@@ -407,6 +417,7 @@ export interface Config {
   OWNER_NUMBER:  string | null;
   LOGIN_METHOD:  "phone" | "qr" | null;
   AUTO_READ_MESSAGES: boolean;
+  HISTORY_MAX_PER_CHAT: number;
 
   ADMIN_JID: string;
   SMTP_HOST: string;
@@ -457,6 +468,7 @@ const DEFAULTS: Config = {
   OWNER_NUMBER:  null,
   LOGIN_METHOD:  null,
   AUTO_READ_MESSAGES: false,
+  HISTORY_MAX_PER_CHAT: 200,
   ADMIN_JID: "",
   SMTP_HOST: "",
   SMTP_PORT: 587,
@@ -518,6 +530,7 @@ function normalize(cfg: Config): Config {
   cfg.SMTP_INSECURE = rawSmtpInsecure === true || rawSmtpInsecure === "true";
   const rawAutoRead = cfg.AUTO_READ_MESSAGES as unknown;
   cfg.AUTO_READ_MESSAGES = rawAutoRead === true || rawAutoRead === "true";
+  cfg.HISTORY_MAX_PER_CHAT = Number(cfg.HISTORY_MAX_PER_CHAT) || 200;
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
 
   const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;
@@ -625,6 +638,7 @@ export const SMTP_FROM                   = CONFIG.SMTP_FROM;
 export const SMTP_TO                     = CONFIG.SMTP_TO;
 export const SMTP_INSECURE               = CONFIG.SMTP_INSECURE;
 export const AUTO_READ_MESSAGES          = CONFIG.AUTO_READ_MESSAGES;
+export const HISTORY_MAX_PER_CHAT        = CONFIG.HISTORY_MAX_PER_CHAT;
 export const UPDATE_CHECK_ENABLED        = CONFIG.UPDATE_CHECK_ENABLED;
 export const UPDATE_CHECK_INTERVAL_HOURS = CONFIG.UPDATE_CHECK_INTERVAL_HOURS;
 export const STATUS_ENABLED              = CONFIG.STATUS_ENABLED;
