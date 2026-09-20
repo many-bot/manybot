@@ -321,9 +321,9 @@ export interface PollVoteAggregate {
  * Todos os nomes de evento listados em {@link WaEventName} são
  * compromissos firmes — o adaptador implementa cada listener
  * `bindSockEventsExternal` para cada um deles. Os métodos opcionais
- * (`resolveLid`, `getHistory`, `decryptPollVote`, `aggregatePollVotes`)
- * são extensões específicas do driver; os chamadores DEVEM lidar com a
- * ausência deles.
+ * (`resolveLid`, `getHistory`, `decryptPollVote`, `aggregatePollVotes`,
+ * `communityParticipantsUpdate`) são extensões específicas do driver; os
+ * chamadores DEVEM lidar com a ausência deles.
  */
 export interface WaContract {
   readonly name: "baileys" | "whatsmeow";
@@ -378,6 +378,12 @@ export interface WaContract {
   // ── grupos ──────────────────────────────────────────────────────────
   groupMetadata(jid: string): Promise<BotGroupMetadata>;
   groupParticipantsUpdate(jid: string, users: string[], action: "add" | "remove" | "promote" | "demote"): Promise<Array<{ status: string; jid?: string }>>;
+  /**
+   * Igual a `groupParticipantsUpdate()`, mas para a própria Comunidade
+   * (o grupo-pai) — o WhatsApp usa uma operação de protocolo distinta
+   * nesse caso. Opcional — drivers sem suporte a Comunidades a omitem.
+   */
+  communityParticipantsUpdate?(jid: string, users: string[], action: "promote" | "demote"): Promise<Array<{ status: string; jid?: string }>>;
   groupUpdateSubject(jid: string, subject: string): Promise<void>;
   groupUpdateDescription(jid: string, description: string): Promise<void>;
   groupInviteCode(jid: string): Promise<string>;

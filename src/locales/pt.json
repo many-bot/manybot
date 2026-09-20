@@ -132,8 +132,9 @@
   "driver": {
     "groupParticipantNotFound": "\"{{id}}\" não corresponde a nenhum participante atual do grupo \"{{group}}\" (confira se a pessoa ainda está no grupo, ou use reply/menção em vez de digitar o número).",
     "cannotKickSelf": "Removendo o próprio bot do grupo via admin.kick() recusado.",
-    "groupParticipantsUpdateRejected": "groupParticipantsUpdate(\"{{action}}\") rejeitado para: {{detail}}",
-    "groupParticipantsUpdateFailed": "groupParticipantsUpdate(\"{{action}}\") falhou para o grupo \"{{group}}\" com participantes [{{users}}]: {{message}}",
+    "groupParticipantsUpdateRejected": "{{method}}(\"{{action}}\") rejeitado para: {{detail}}",
+    "groupParticipantsUpdateFailed": "{{method}}(\"{{action}}\") falhou para o grupo \"{{group}}\" com participantes [{{users}}]: {{message}}",
+    "communityParticipantsUnsupported": "O driver ativo não suporta alterar cargos em uma Comunidade (\"{{group}}\").",
     "pollDecryptFailed": "Erro ao decriptar voto da enquete: {{error}}",
     "invalidReaction": "Reação inválida: \"{{emoji}}\". Por favor, use apenas um emoji."
   },

@@ -11,5 +11,6 @@ manybot-*.tgz
 dist/
 whatsmeow-service/bin/
 whatsmeow-session.db*
+src/test/fixtures/config/*.db
 
 hooks/.env

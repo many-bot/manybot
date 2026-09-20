@@ -20,6 +20,7 @@ const testTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-pluginapi-te
 process.env.MANYBOT_CONFIG_DIR = testTmpDir;
 
 const RAW_SOCK_SYM = Symbol.for("manybot.baileys.rawSocket");
+const COMMUNITY_JID = "120363111111111@g.us";
 
 interface MockCallHistory {
   sentTexts: Array<{ jid: string; text: string; opts?: unknown }>;
@@ -34,6 +35,7 @@ interface MockCallHistory {
   deletes: Array<{ jid: string; target: BotQuotedRef; forEveryone: boolean }>;
   blockUpdates: Array<{ jid: string; action: "block" | "unblock" }>;
   groupParticipantUpdates: Array<{ jid: string; users: string[]; action: string }>;
+  communityParticipantUpdates: Array<{ jid: string; users: string[]; action: string }>;
   subjectUpdates: Array<{ jid: string; subject: string }>;
   descriptionUpdates: Array<{ jid: string; description: string }>;
   profilePicUpdates: Array<{ jid: string }>;
@@ -56,6 +58,7 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
     deletes: [],
     blockUpdates: [],
     groupParticipantUpdates: [],
+    communityParticipantUpdates: [],
     subjectUpdates: [],
     descriptionUpdates: [],
     profilePicUpdates: [],
@@ -71,6 +74,7 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
     groupMetadata: async (jid: string) => ({
       id: jid,
       subject: "Test Mock Group",
+      isCommunity: jid === COMMUNITY_JID,
       participants: [
         { id: "5516999999999@s.whatsapp.net", admin: "admin", phoneNumber: "5516999999999@s.whatsapp.net" },
         { id: "5516888888888@s.whatsapp.net", admin: "superadmin", phoneNumber: "5516888888888@s.whatsapp.net" },
@@ -230,6 +234,10 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
     }),
     groupParticipantsUpdate: async (jid, users, action) => {
       calls.groupParticipantUpdates.push({ jid, users, action });
+      return users.map((u) => ({ status: "200", jid: u }));
+    },
+    communityParticipantsUpdate: async (jid, users, action) => {
+      calls.communityParticipantUpdates.push({ jid, users, action });
       return users.map((u) => ({ status: "200", jid: u }));
     },
     groupUpdateSubject: async (jid, subject) => {
@@ -395,6 +403,54 @@ describe("kernel/pluginApi — buildSetupApi with Mock WaContract", () => {
 
     // self-kick guard still applies when targeting an explicit group
     await assert.rejects(async () => { await ctx.admin.kick("5516999999999@s.whatsapp.net").to(groupJid); });
+  });
+
+  test("admin.promote/demote use the community operation when the target is a community", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+    const member = "5516777777777@s.whatsapp.net";
+
+    await ctx.admin.promote(member).to(COMMUNITY_JID);
+    await ctx.admin.demote(member).to(COMMUNITY_JID);
+
+    assert.deepEqual(
+      calls.communityParticipantUpdates.map(({ jid, action }) => ({ jid, action })),
+      [
+        { jid: COMMUNITY_JID, action: "promote" },
+        { jid: COMMUNITY_JID, action: "demote" },
+      ],
+    );
+    assert.equal(calls.groupParticipantUpdates.length, 0);
+  });
+
+  test("admin.kick on a community still goes through groupParticipantsUpdate", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+
+    await ctx.admin.kick("5516777777777@s.whatsapp.net").to(COMMUNITY_JID);
+
+    assert.equal(calls.communityParticipantUpdates.length, 0);
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.action, "remove");
+  });
+
+  test("admin.promote on a community surfaces per-participant rejections", async () => {
+    mockContract.communityParticipantsUpdate = async (_jid, users) =>
+      users.map((u) => ({ status: "403", jid: u }));
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+
+    await assert.rejects(
+      async () => { await ctx.admin.promote("5516777777777@s.whatsapp.net").to(COMMUNITY_JID); },
+      /communityParticipantsUpdate\("promote"\) rejected/,
+    );
+  });
+
+  test("admin.promote on a community throws when the driver has no community support", async () => {
+    mockContract.communityParticipantsUpdate = undefined;
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+
+    await assert.rejects(
+      async () => { await ctx.admin.promote("5516777777777@s.whatsapp.net").to(COMMUNITY_JID); },
+      /does not support changing roles in a Community/,
+    );
+    assert.equal(calls.groupParticipantUpdates.length, 0);
   });
 
   test("setup admin.setSubject/setDescription/setProfilePic/revokeInvite().to() target the explicit group", async () => {

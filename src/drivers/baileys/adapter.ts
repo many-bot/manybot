@@ -598,6 +598,11 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       return res as Array<{ status: string; jid?: string }>;
     },
 
+    async communityParticipantsUpdate(jid, users, action) {
+      const res = await sock.communityParticipantsUpdate(jid, users, action);
+      return res.map(({ status, jid }) => ({ status, jid }));
+    },
+
     async groupUpdateSubject(jid, subject) {
       await (sock as unknown as { groupUpdateSubject(j: string, s: string): Promise<void> }).groupUpdateSubject(jid, subject);
     },

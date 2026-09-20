@@ -448,7 +448,10 @@ export function buildStorageApi(pluginName: string) {
     throw new Error("[storage] buildStorageApi: pluginName must be a non-empty string");
   }
 
-  const dir = path.join(CONFIG_DIR, "data", pluginName);
+  // Always absolute — CONFIG_DIR can itself be relative (e.g. set via
+  // MANYBOT_CONFIG_DIR), and resolve() below relies on `dir` being an
+  // absolute anchor to correctly detect sandbox escapes.
+  const dir = path.resolve(CONFIG_DIR, "data", pluginName);
   mkdirSync(dir, { recursive: true });
 
   return {
@@ -470,8 +473,14 @@ export function buildStorageApi(pluginName: string) {
       if (relativePath.includes("\\"))
         throw new Error(`[storage] Windows-style paths are not allowed: "${relativePath}"`);
 
-      const resolved = path.join(dir, relativePath);
-      if (!resolved.startsWith(path.resolve(dir) + path.sep))
+      // Resolve both sides to absolute paths before comparing — `dir` can
+      // itself be relative (e.g. CONFIG_DIR set via MANYBOT_CONFIG_DIR to a
+      // relative path), and comparing a relative `resolved` against an
+      // absolute `path.resolve(dir)` would never match, making every
+      // legitimate call look like an escape.
+      const absDir = path.resolve(dir);
+      const resolved = path.resolve(dir, relativePath);
+      if (!resolved.startsWith(absDir + path.sep))
         throw new Error(`[storage] resolved path escapes plugin data dir: "${resolved}"`);
 
       mkdirSync(path.dirname(resolved), { recursive: true });
@@ -2130,6 +2139,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
    * real rejection callers can catch, instead of a false positive.
    */
   function assertParticipantsUpdateOk(
+    method: string,
     action: "add" | "remove" | "promote" | "demote",
     results: unknown
   ): void {
@@ -2139,34 +2149,68 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     );
     if (failed.length > 0) {
       const detail = failed.map((r) => `${r.jid ?? "?"}=${r.status}`).join(", ");
-      throw new Error(t("driver.groupParticipantsUpdateRejected", { action, detail }));
+      throw new Error(t("driver.groupParticipantsUpdateRejected", { method, action, detail }));
     }
   }
 
   /**
-   * Thin wrapper around `contract.groupParticipantsUpdate()` that turns
-   * an opaque rejection (e.g. the whole IQ query bounced with
-   * "bad-request") into an error that names the group/action/participants
-   * involved, then still runs the per-participant status check above.
+   * Wraps a participants-update call so an opaque rejection (e.g. the
+   * whole IQ query bounced with "bad-request") becomes an error that
+   * names the method/group/action/participants involved, then still runs
+   * the per-participant status check above.
    */
-  async function runParticipantsUpdate(
+  async function guardedParticipantsUpdate(
+    method: string,
     jid: string,
     users: string[],
-    action: "add" | "remove" | "promote" | "demote"
+    action: "add" | "remove" | "promote" | "demote",
+    apply: () => Promise<unknown>
   ) {
     let results: unknown;
     try {
-      results = await contract.groupParticipantsUpdate(jid, users, action);
+      results = await apply();
     } catch (err) {
       throw new Error(t("driver.groupParticipantsUpdateFailed", {
+        method,
         action,
         group: jid,
         users: users.join(", "),
         message: (err as Error).message,
       }));
     }
-    assertParticipantsUpdateOk(action, results);
+    assertParticipantsUpdateOk(method, action, results);
     return results;
+  }
+
+  function runParticipantsUpdate(
+    jid: string,
+    users: string[],
+    action: "add" | "remove" | "promote" | "demote"
+  ) {
+    return guardedParticipantsUpdate("groupParticipantsUpdate", jid, users, action, () =>
+      contract.groupParticipantsUpdate(jid, users, action)
+    );
+  }
+
+  /**
+   * WhatsApp exposes a separate protocol operation for changing roles in
+   * the Community itself (as opposed to one of its linked groups), so
+   * promote/demote must branch on what the target jid is. Uses the cached
+   * metadata — `resolveTargets()` has already fetched it by this point.
+   */
+  async function runRoleUpdate(
+    jid: string,
+    users: string[],
+    action: "promote" | "demote"
+  ) {
+    const meta = await getGroupMetadataCached(contract, jid);
+    if (!meta.isCommunity) return runParticipantsUpdate(jid, users, action);
+
+    const update = contract.communityParticipantsUpdate?.bind(contract);
+    if (!update) throw new Error(t("driver.communityParticipantsUnsupported", { group: jid }));
+    return guardedParticipantsUpdate("communityParticipantsUpdate", jid, users, action, () =>
+      update(jid, users, action)
+    );
   }
 
   function createTargetableAction(
@@ -2268,14 +2312,14 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     promote(memberIds: string | string[]) {
       return createTargetableAction(
-        (jid, users) => runParticipantsUpdate(jid, users, "promote"),
+        (jid, users) => runRoleUpdate(jid, users, "promote"),
         memberIds
       );
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     demote(memberIds: string | string[]) {
       return createTargetableAction(
-        (jid, users) => runParticipantsUpdate(jid, users, "demote"),
+        (jid, users) => runRoleUpdate(jid, users, "demote"),
         memberIds
       );
     },

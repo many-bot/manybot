@@ -261,6 +261,25 @@ test("Baileys adapter groupParticipantsUpdate calls the underlying method", asyn
   assert.ok(true, "groupParticipantsUpdate remove did not throw");
 });
 
+test("Baileys adapter communityParticipantsUpdate forwards to the community socket method and drops the raw node", async () => {
+  const store = createStore();
+  const calls: unknown[][] = [];
+  const sock = {
+    ev: new EventEmitter(),
+    user: { id: "bot@s.whatsapp.net" },
+    communityParticipantsUpdate: async (...args: unknown[]) => {
+      calls.push(args);
+      return [{ status: "200", jid: "user1@s.whatsapp.net", content: { tag: "participant", attrs: {} } }];
+    },
+  } as unknown as RawSocket;
+  const { contract } = createBaileysAdapter({ sock, store });
+
+  const result = await contract.communityParticipantsUpdate!("community@g.us", ["user1@s.whatsapp.net"], "promote");
+
+  assert.deepStrictEqual(calls, [["community@g.us", ["user1@s.whatsapp.net"], "promote"]]);
+  assert.deepStrictEqual(result, [{ status: "200", jid: "user1@s.whatsapp.net" }]);
+});
+
 test("Baileys adapter groupUpdateSubject and groupUpdateDescription call underlying methods", async () => {
   const store = createStore();
   const jid = "group@g.us";

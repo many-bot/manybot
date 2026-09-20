@@ -1,0 +1,8 @@
+# Config used only by the test suite (MANYBOT_CONFIG_DIR points here in
+# package.json's test scripts). Keeps tests hermetic: they never touch the
+# developer's real ~/.manybot, and LANGUAGE is pinned to "en" so assertions
+# against English error messages don't break on a non-English host locale
+# (see src/config.ts's detectSystemLang(), which only picks the bootstrap
+# language and would otherwise make this depend on the machine running it).
+LANGUAGE = "en"
+
