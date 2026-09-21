@@ -24,5 +24,11 @@ describe("config", () => {
     assert.ok(CONFIG.drivers.primary === "baileys");
     assert.ok(typeof CONFIG.drivers.baileys.enabled === "boolean");
   });
+
+  test("crash notice options are always normalized to usable values", () => {
+    assert.equal(typeof CONFIG.CRASH_NOTICE_ENABLED, "boolean");
+    assert.equal(typeof CONFIG.CRASH_NOTICE_MESSAGE, "string");
+    assert.ok(CONFIG.CRASH_NOTICE_MAX_AGE_SECONDS > 0);
+  });
 });
 

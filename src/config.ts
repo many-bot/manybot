@@ -277,6 +277,18 @@ AUTO_READ_MESSAGES = false
 # back. 200 is enough for most moderation use cases.
 HISTORY_MAX_PER_CHAT = 200
 
+# When a plugin crashes (or the bot itself goes down) while answering a
+# command, tell that chat something went wrong so the user can try again.
+CRASH_NOTICE_ENABLED = true
+
+# Text sent to the chat. Leave blank for the built-in translated message.
+# Placeholders: {{command}} and {{plugin}}.
+CRASH_NOTICE_MESSAGE = ""
+
+# After a restart, only notify about commands that were interrupted within
+# this many seconds — older ones are dropped silently.
+CRASH_NOTICE_MAX_AGE_SECONDS = 600
+
 # ── Status page ────────────────────────────────────────────────────────────
 # Local HTTP page showing whether the bot is online or offline.
 STATUS_ENABLED = true
@@ -350,6 +362,18 @@ AUTO_READ_MESSAGES = false
 # olharem mais pra trás. 200 é suficiente pra maioria dos casos de moderação.
 HISTORY_MAX_PER_CHAT = 200
 
+# Quando um plugin quebra (ou o próprio bot cai) enquanto respondia um
+# comando, avisa o chat que algo deu errado pra pessoa tentar de novo.
+CRASH_NOTICE_ENABLED = true
+
+# Texto enviado ao chat. Deixe em branco pra usar a mensagem traduzida
+# padrão. Placeholders: {{command}} e {{plugin}}.
+CRASH_NOTICE_MESSAGE = ""
+
+# Depois de uma reinicialização, só avisa sobre comandos interrompidos nos
+# últimos N segundos — os mais antigos são descartados em silêncio.
+CRASH_NOTICE_MAX_AGE_SECONDS = 600
+
 # ── Página de status ────────────────────────────────────────────────────────
 # Página HTTP local mostrando se o bot está online ou offline.
 STATUS_ENABLED = true
@@ -418,6 +442,9 @@ export interface Config {
   LOGIN_METHOD:  "phone" | "qr" | null;
   AUTO_READ_MESSAGES: boolean;
   HISTORY_MAX_PER_CHAT: number;
+  CRASH_NOTICE_ENABLED: boolean;
+  CRASH_NOTICE_MESSAGE: string;
+  CRASH_NOTICE_MAX_AGE_SECONDS: number;
 
   ADMIN_JID: string;
   SMTP_HOST: string;
@@ -469,6 +496,9 @@ const DEFAULTS: Config = {
   LOGIN_METHOD:  null,
   AUTO_READ_MESSAGES: false,
   HISTORY_MAX_PER_CHAT: 200,
+  CRASH_NOTICE_ENABLED: true,
+  CRASH_NOTICE_MESSAGE: "",
+  CRASH_NOTICE_MAX_AGE_SECONDS: 600,
   ADMIN_JID: "",
   SMTP_HOST: "",
   SMTP_PORT: 587,
@@ -531,6 +561,11 @@ function normalize(cfg: Config): Config {
   const rawAutoRead = cfg.AUTO_READ_MESSAGES as unknown;
   cfg.AUTO_READ_MESSAGES = rawAutoRead === true || rawAutoRead === "true";
   cfg.HISTORY_MAX_PER_CHAT = Number(cfg.HISTORY_MAX_PER_CHAT) || 200;
+  const rawCrashNotice = cfg.CRASH_NOTICE_ENABLED as unknown;
+  cfg.CRASH_NOTICE_ENABLED = rawCrashNotice !== false && rawCrashNotice !== "false";
+  cfg.CRASH_NOTICE_MESSAGE = typeof cfg.CRASH_NOTICE_MESSAGE === "string" ? cfg.CRASH_NOTICE_MESSAGE : "";
+  const rawCrashMaxAge = Number(cfg.CRASH_NOTICE_MAX_AGE_SECONDS);
+  cfg.CRASH_NOTICE_MAX_AGE_SECONDS = rawCrashMaxAge > 0 ? rawCrashMaxAge : 600;
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
 
   const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;

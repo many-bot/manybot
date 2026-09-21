@@ -109,6 +109,9 @@
     "missingRequiredArg": "Faltam argumentos obrigatórios.",
     "unknownSubcommand": "Subcomando \"{{sub}}\" desconhecido para !{{cmd}}. Válidos: {{valid}}."
   },
+  "crashNotice": {
+    "message": "⚠️ Algo deu errado ao executar {{command}}. Tente novamente."
+  },
 "alerts": {
     "noFallbackTitle": "manybot: sem driver de fallback",
     "bothDriversFailedTitle": "manybot: envio falhou nos dois drivers",
