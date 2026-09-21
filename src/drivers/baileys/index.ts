@@ -25,6 +25,7 @@ import { createBaileysAdapter } from "./adapter.js";
 import { handleMessage } from "./messageHandler.js";
 import { normalizeJid, denormalizeJid, splitLidPn } from "#drivers/jid.js";
 import { loadPlugins, setupPlugins, loadIntegrationPlugin } from "#kernel/pluginLoader.js";
+import { recoverInterruptedRuns } from "#kernel/crashNotice.js";
 import { isIntegrationOptIn }        from "#kernel/integrationMode.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
@@ -235,6 +236,9 @@ async function startBot() {
         pluginsReady = true;
         await loadPlugins(PLUGINS);
         await setupPlugins(contract, store);
+        recoverInterruptedRuns().catch((e) => {
+          logger.warn(`[baileys] could not report interrupted commands: ${(e as Error).message}`);
+        });
         // Opt-in: when the operator is running the integration test
         // suite (`MANYBOT_RUN_WHATSAPP_TESTS=1`), also load the
         // reserved integration plugin so its public API

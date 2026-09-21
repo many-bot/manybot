@@ -12,6 +12,10 @@
 - Native normalization added to commands. Source: [normalizeText.ts](src/utils/normalizeText.ts).
 - Added `AUTO_READ_MESSAGES` config option -- it makes ManyBot mark all the messages it receives "as read".
 - Added config option HISTORY_MAX_PER_CHAT -- allows configure how much messages ctx.chat.history can save per chat (before was fixed on 200).
+- Crash notices: when a plugin fails, or the whole bot goes down, while answering a command, the chat now gets a message asking the user to try again instead of silence. Source: [crashNotice.ts](src/kernel/crashNotice.ts).
+  - Each run has a `running`/`idle` state ([runState.ts](src/kernel/runState.ts)). Runs answering a command are journaled in `settings.db` until they finish, so anything still there after a restart was interrupted.
+  - It is a notice, not an automatic retry, because plugins have side effects. To avoid false positives, only commands routed through the command registry, or legacy `run(ctx)` plugins that worked for over a second on a prefixed message the registry doesn't know, are reported. Background/event-handler errors are not.
+  - Each message is reported at most once, even across restarts.
 
 ### Fixed
 
@@ -32,6 +36,12 @@
   - Baileys' default `cachedGroupMetadata` hook always returned `undefined`, so every group send queried WhatsApp for metadata and hit `rate-overlimit` (429). The socket now sets its own hook, backed by a shared cache (`groupMetaCache.ts`) that is also used by the API lookups, invalidated on `group-participants.update` / `groups.update` and cleared on every new socket.
   - `ctx.msg.react()`, `ctx.msg.unreact()` and `ctx.msg.delete()` (also on `MessageHandle`) now wait for a send slot like every other outbound action. `sendMessage({delete})` resolves once written to the socket, so tight loops had part of the burst silently dropped server-side.
   - `ctx.chat.history.from()` now matches by sender LID **or** phone number. Entries received before Baileys learned the contact's LID (`sender = null`) were being skipped.
+
+### New Configuration Options
+
+- `CRASH_NOTICE_ENABLED` (default `true`): turns crash notices on/off.
+- `CRASH_NOTICE_MESSAGE` (default empty = built-in message in the chat's language): custom notice text, accepts `{{command}}` and `{{plugin}}`.
+- `CRASH_NOTICE_MAX_AGE_SECONDS` (default `600`): after a restart, interrupted commands older than this are dropped silently.
 
 ### Removed
 

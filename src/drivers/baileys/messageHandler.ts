@@ -34,6 +34,7 @@ import { getActiveDeprecation, formatDeprecationMessage } from "#kernel/commandD
 import { checkPermission } from "#kernel/commandPermissions.js";
 import { handleMenuCommand, renderNotFound, resolveLocalizedString, checkAndTriggerWelcomeMessage } from "#kernel/commandMenu.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
+import type { RunOrigin }     from "#kernel/runState.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid } from "#drivers/jid.js";
@@ -473,6 +474,13 @@ async function runPluginsForMessage(
     }
   }
 
+  // A legacy run(ctx) can only be tied to this command when the registry
+  // doesn't know it: a registered command has a known owner, and every
+  // other plugin's run(ctx) on the same message is just passive traffic.
+  const legacyOrigin: RunOrigin | undefined = command && !matched
+    ? { chatId: rawJid, key: rawKey, command: `${chatPrefix}${command}`, kind: "legacy" }
+    : undefined;
+
   for (const plugin of pluginRegistry.values()) {
     const ctx = buildApi({
       msg,
@@ -519,7 +527,7 @@ async function runPluginsForMessage(
           // Swallow here too, at the boundary: this loop must never crash the bot,
           // same guarantee the legacy runPlugin(plugin, ctx) branch below already has.
           try {
-            await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply, chatId: msg.chatId });
+            await runCommand({ pluginName: plugin.name, ctx, resolution, reply: msgCtx.reply, chatId: msg.chatId, key: rawKey });
           } catch (e) {
             outcome = "error";
             const err = e instanceof Error ? e : new Error(String(e));
@@ -529,7 +537,7 @@ async function runPluginsForMessage(
           await loading.stop(outcome);
         }
       } else {
-        await runPlugin(plugin, ctx);
+        await runPlugin(plugin, ctx, undefined, undefined, { origin: legacyOrigin });
       }
     } finally {
       if (useTyping) {

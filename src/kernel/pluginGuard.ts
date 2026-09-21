@@ -10,6 +10,8 @@
  *   - Never crashes the bot — including errors a plugin raises outside its
  *     own await chain (fire-and-forget promises), attributed via
  *     pluginContext.ts and handled by main.ts's global error listeners
+ *   - Tracks each run's state (runState.ts) and, when the run answers a
+ *     user's command, tells that chat it failed (crashNotice.ts)
  *
  * Per-plugin overrides:
  *   Plugins may export a `guardOptions` object to opt out of specific
@@ -26,6 +28,8 @@ import { pluginRegistry, type PluginEntry } from "#kernel/pluginLoader.js";
 import type { CommandHandler } from "#kernel/commandRegistry.js";
 import { runWithPlugin } from "#kernel/pluginContext.js";
 import { fireAlert } from "#kernel/alerts.js";
+import { beginRun, type RunOrigin } from "#kernel/runState.js";
+import { noticeRunFailure } from "#kernel/crashNotice.js";
 
 /** Max ms a single plugin run is allowed to take before it's force-aborted. */
 const PLUGIN_TIMEOUT_MS = 120_000;
@@ -149,6 +153,12 @@ export interface RunPluginOptions {
    * Phase-8 crash-alert hook) opt in explicitly.
    */
   rethrow?: boolean;
+  /**
+   * Set when this run answers a user's command. A failure is then reported
+   * back to that chat (see crashNotice.ts) and the run is journaled so a
+   * process death mid-run can be reported after the restart (runState.ts).
+   */
+  origin?: RunOrigin;
 }
 
 export async function runPlugin(
@@ -161,6 +171,7 @@ export async function runPlugin(
   if (plugin.status !== "active") return undefined;
 
   const useTimeout = plugin.guardOptions?.timeout !== false;
+  const run = beginRun(plugin.name, options?.origin ?? null);
 
   try {
     return await runWithPlugin(plugin.name, () => {
@@ -178,8 +189,11 @@ export async function runPlugin(
     const isTimeout = useTimeout && error.message?.startsWith("timed out");
 
     recordPluginFailure(plugin.name, error, { isTimeout, rethrow: options?.rethrow });
+    void noticeRunFailure(run);
     if (options?.rethrow) throw error;
     return undefined;
+  } finally {
+    run.finish();
   }
 }
 

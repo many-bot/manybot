@@ -28,6 +28,8 @@ import { tFor } from "#i18n";
 import { CMD_PREFIX } from "#config";
 import { fireAlert } from "./alerts.js";
 import { runPlugin } from "./pluginGuard.js";
+import type { RunOrigin } from "./runState.js";
+import type { BotQuotedRef } from "#kernel/waContract.js";
 import { checkPermission } from "./commandPermissions.js";
 import { getCommandRegistry, type CommandEntry, type CommandSubcommand } from "./commandRegistry.js";
 import { pluginRegistry, resolvePluginCommandHandler, type PluginEntry } from "./pluginLoader.js";
@@ -137,6 +139,12 @@ export interface RunCommandOptions {
    */
   chatId?: string;
   /**
+   * Key of the triggering message, so a crash notice can quote it. Only
+   * meaningful together with `chatId`: without a chat there is nowhere to
+   * send the notice, so the run is not reported at all.
+   */
+  key?: BotQuotedRef;
+  /**
    * The fully-built PluginContext for the current message. The
    * dispatcher does not construct ctx itself — it consumes one built
    * by the message handler so we don't duplicate ctx construction.
@@ -172,7 +180,7 @@ export interface RunCommandResult {
  * through to the legacy run loop.
  */
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
-  const { resolution, pluginName, ctx, reply, chatId } = opts;
+  const { resolution, pluginName, ctx, reply, chatId, key } = opts;
   const { target } = resolution;
 
   // Resolved once per dispatch: this chat's `!config` overrides (or the
@@ -253,6 +261,9 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
 
     const subId = target.kind === "sub" ? target.sub.cmd : undefined;
     const input = { args: flat.args, subcommand: subId };
+    const origin: RunOrigin | undefined = chatId
+      ? { chatId, key, command: `${prefix}${flat.name}`, kind: "command" }
+      : undefined;
 
     if (pluginName === "core") {
       for (const fnName of fnNames) {
@@ -286,7 +297,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
         ctx as never,
         handler,
         input,
-        { rethrow: true }
+        { rethrow: true, origin }
       );
       if (result === STOP_CHAIN) break;
     }

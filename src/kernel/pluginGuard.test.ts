@@ -13,6 +13,8 @@ process.env.MANYBOT_CONFIG_DIR = configDir;
 
 const { pluginRegistry, loadPlugin, reloadPlugin, cleanupPlugins } = await import("#kernel/pluginLoader.js");
 const { recordPluginFailure, runPlugin } = await import("#kernel/pluginGuard.js");
+const { pluginState } = await import("#kernel/runState.js");
+const { getDriverManager, _resetDriverManagerForTests } = await import("#kernel/driverManager.js");
 
 const pluginsDir = path.join(configDir, "plugins");
 const alertsLogFile = path.join(configDir, "alerts.log");
@@ -192,3 +194,86 @@ describe("kernel/pluginGuard — plugin_crash alerting reaches the owner outside
   });
 });
 
+
+describe("kernel/pluginGuard — run state and crash notices", () => {
+  let sent: Array<{ jid: string; text: string }>;
+
+  beforeEach(() => {
+    sent = [];
+    _resetDriverManagerForTests();
+    getDriverManager().register({
+      name: "baileys",
+      isReady: () => true,
+      sendText: async (jid: string, text: string) => {
+        sent.push({ jid, text });
+        return { id: "sent", chatId: jid, timestamp: Date.now() };
+      },
+    } as never, { isPrimary: true });
+  });
+
+  after(() => _resetDriverManagerForTests());
+
+  const origin = (id: string) => ({
+    chatId: "chat@g.us",
+    key: { id, remoteJid: "chat@g.us", fromMe: false },
+    command: "!boom",
+    kind: "command" as const,
+  });
+
+  test("a plugin is running while its handler is in flight and idle once it settles", async () => {
+    await writePlugin("state-plugin", "export default async function () {}\n");
+    await loadPlugin("state-plugin");
+    const plugin = pluginRegistry.get("state-plugin")!;
+
+    assert.equal(pluginState("state-plugin"), "idle");
+    let during: string | undefined;
+    await runPlugin(plugin, {}, async () => { during = pluginState("state-plugin"); });
+
+    assert.equal(during, "running");
+    assert.equal(pluginState("state-plugin"), "idle");
+  });
+
+  test("a plugin goes back to idle even when its run throws", async () => {
+    await writePlugin("state-thrower", "export default async function () { throw new Error('x'); }\n");
+    await loadPlugin("state-thrower");
+
+    await runPlugin(pluginRegistry.get("state-thrower")!, {});
+    assert.equal(pluginState("state-thrower"), "idle");
+  });
+
+  test("a failing run that answers a command tells that chat, and the error still propagates when asked to", async () => {
+    await writePlugin("notice-thrower", "export default async function () {}\n");
+    await loadPlugin("notice-thrower");
+    const plugin = pluginRegistry.get("notice-thrower")!;
+
+    await assert.rejects(
+      () => runPlugin(plugin, {}, async () => { throw new Error("boom"); }, undefined, { rethrow: true, origin: origin("G-1") }),
+      /boom/,
+    );
+    await new Promise((r) => setTimeout(r, 400));
+
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].jid, "chat@g.us");
+    assert.match(sent[0].text, /!boom/);
+  });
+
+  test("a failing run with no origin stays silent", async () => {
+    await writePlugin("silent-thrower", "export default async function () { throw new Error('x'); }\n");
+    await loadPlugin("silent-thrower");
+
+    await runPlugin(pluginRegistry.get("silent-thrower")!, {});
+    await new Promise((r) => setTimeout(r, 400));
+
+    assert.equal(sent.length, 0);
+  });
+
+  test("a successful run never notifies", async () => {
+    await writePlugin("happy-plugin", "export default async function () {}\n");
+    await loadPlugin("happy-plugin");
+
+    await runPlugin(pluginRegistry.get("happy-plugin")!, {}, async () => {}, undefined, { origin: origin("G-2") });
+    await new Promise((r) => setTimeout(r, 400));
+
+    assert.equal(sent.length, 0);
+  });
+});

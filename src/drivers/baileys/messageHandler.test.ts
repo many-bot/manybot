@@ -167,6 +167,14 @@ function makeBotMessage(overrides: Partial<BotMessage> = {}): BotMessage {
   };
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("waitFor: condition not met in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function buildRegistry(specs: CommandSpec[], menu?: Partial<MenuConfig>): CommandRegistry {
   if (!menu) return buildCommandRegistry(specs, pluginRegistry);
   return buildCommandRegistry(
@@ -318,13 +326,29 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
     // per-message plugin loop — and handleMessage() itself — must never
     // propagate the error to the caller.
     await assert.doesNotReject(() => handleMessage(msg, contract, store));
-    assert.equal(sentTexts.length, 0, "no reply is sent for a crashed handler");
+  });
+
+  test("a crash inside the matched command's handler tells the chat, once, without a handler reply", async () => {
+    __setRegistryForTests(buildRegistry([emptySpec({ id: "task::crash", cmd: "crashcmd", functions: ["crashFn"] })]));
+
+    await handleMessage(makeBotMessage({ body: "!crashcmd" }), contract, store);
+    await waitFor(() => sentTexts.length > 0);
+
+    assert.equal(sentTexts.length, 1);
+    assert.match(sentTexts[0].text, /!crashcmd/);
   });
 
   test("the message loop keeps working for the next message after a handler crash", async () => {
     const crashSpec = emptySpec({ id: "task::crash", cmd: "crashcmd", functions: ["crashFn"] });
     __setRegistryForTests(buildRegistry([crashSpec]));
+    const healthyPlugin = pluginRegistry.get("taskPlugin")!;
     await handleMessage(makeBotMessage({ body: "!crashcmd" }), contract, store);
+    await waitFor(() => sentTexts.length === 1);
+    sentTexts.length = 0;
+
+    // The fake plugin has no file on disk, so the guard's automatic reload
+    // replaces it with a disabled stub; put the healthy instance back.
+    pluginRegistry.set("taskPlugin", healthyPlugin);
 
     // Swap in a healthy command and confirm a later message still dispatches
     // normally — the crash must not have left the plugin loop, the driver
@@ -576,5 +600,63 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
       assert.match(sentTexts[0].text, /Unknown subcommand "wat"/);
     });
   });
-});
+  describe("legacy run(ctx) crash notices", () => {
+    const legacy = (name: string, run: () => Promise<void>): PluginEntry => ({
+      name, status: "active", run, setup: null, commands: null,
+      exports: null, error: null, guardOptions: {}, errorCount: 0,
+    });
+    const slowThrow = async () => {
+      await new Promise((r) => setTimeout(r, 1100));
+      throw new Error("legacy exploded");
+    };
 
+    afterEach(() => {
+      pluginRegistry.delete("legacyPlugin");
+      pluginRegistry.delete("otherPlugin");
+    });
+
+    test("a legacy plugin that fails after doing real work on an unregistered command tells the chat", async () => {
+      pluginRegistry.delete("taskPlugin");
+      pluginRegistry.set("legacyPlugin", legacy("legacyPlugin", slowThrow));
+      __setRegistryForTests(buildRegistry([]));
+
+      await handleMessage(makeBotMessage({ body: "!legacycmd" }), contract, store);
+      await waitFor(() => sentTexts.length > 0);
+
+      assert.equal(sentTexts.length, 1);
+      assert.match(sentTexts[0].text, /!legacycmd/);
+    });
+
+    test("a legacy plugin that fails instantly is not reported: it was likely ignoring the message", async () => {
+      pluginRegistry.delete("taskPlugin");
+      pluginRegistry.set("legacyPlugin", legacy("legacyPlugin", async () => { throw new Error("legacy exploded"); }));
+      __setRegistryForTests(buildRegistry([]));
+
+      await handleMessage(makeBotMessage({ body: "!legacycmd" }), contract, store);
+      await new Promise((r) => setTimeout(r, 500));
+
+      assert.equal(sentTexts.length, 0);
+    });
+
+    test("a legacy failure on a message without a command prefix is never reported", async () => {
+      pluginRegistry.delete("taskPlugin");
+      pluginRegistry.set("legacyPlugin", legacy("legacyPlugin", slowThrow));
+      __setRegistryForTests(buildRegistry([]));
+
+      await handleMessage(makeBotMessage({ body: "just chatting" }), contract, store);
+      await new Promise((r) => setTimeout(r, 300));
+
+      assert.equal(sentTexts.length, 0);
+    });
+
+    test("another plugin's slow legacy failure is not blamed on a command the registry already routed", async () => {
+      pluginRegistry.set("otherPlugin", legacy("otherPlugin", slowThrow));
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+
+      await handleMessage(makeBotMessage({ body: "!task" }), contract, store);
+      await new Promise((r) => setTimeout(r, 300));
+
+      assert.deepEqual(sentTexts.map(m => m.text), ["done"]);
+    });
+  });
+});

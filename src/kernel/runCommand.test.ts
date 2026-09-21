@@ -9,6 +9,8 @@ import type { PluginContext } from "#kernel/pluginApi.js";
 import { STOP_CHAIN } from "#kernel/commandsConfig.js";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
 import { CONFIG } from "#config";
+import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
+import type { WaContract } from "#kernel/waContract.js";
 
 // Pin the "no override" global language independently of whatever
 // ~/.manybot/manybot.toml happens to say on the machine running the
@@ -251,6 +253,53 @@ describe("kernel/runCommand", () => {
         }),
       /boom/
     );
+  });
+
+  describe("crash notice to the chat", () => {
+    let sent: Array<{ jid: string; text: string; quotedId?: string | null }>;
+
+    beforeEach(() => {
+      sent = [];
+      _resetDriverManagerForTests();
+      getDriverManager().register({
+        name: "baileys",
+        isReady: () => true,
+        sendText: async (jid: string, text: string, opts?: { quoted?: { id?: string | null } }) => {
+          sent.push({ jid, text, quotedId: opts?.quoted?.id });
+          return { id: "sent", chatId: jid, timestamp: Date.now() };
+        },
+      } as unknown as WaContract, { isPrimary: true });
+    });
+
+    afterEach(() => _resetDriverManagerForTests());
+
+    const crash = (extra: { chatId?: string; key?: { id: string } }) => {
+      __setRegistryForTests(buildRegistry([emptySpec({ id: "todo::crash", cmd: "crashcmd", functions: ["crashFn"] })]));
+      return runCommand({
+        pluginName: "todoPlugin",
+        ctx: fakeCtx(),
+        resolution: resolveDispatch("crashcmd", ""),
+        reply: { text: () => {} },
+        ...extra,
+      });
+    };
+
+    test("a crashing handler tells the chat which command failed, quoting the message", async () => {
+      await assert.rejects(() => crash({ chatId: "chat@g.us", key: { id: "MSG-RC-1" } }), /boom/);
+      await new Promise((r) => setTimeout(r, 400));
+
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].jid, "chat@g.us");
+      assert.match(sent[0].text, /!crashcmd/);
+      assert.equal(sent[0].quotedId, "MSG-RC-1");
+    });
+
+    test("without a chat id there is nowhere to send a notice", async () => {
+      await assert.rejects(() => crash({}), /boom/);
+      await new Promise((r) => setTimeout(r, 400));
+
+      assert.equal(sent.length, 0);
+    });
   });
 
   test("resolveDispatch: kind none for an unknown invocation", () => {
