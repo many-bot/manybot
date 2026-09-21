@@ -221,6 +221,13 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
  * Mapped kinds:
  *   send_failed_no_fallback   — primary failed, no secondary available
  *   send_failed_both_drivers  — both primary and secondary failed
+ *   send_unconfirmed          — primary sendText() succeeded but history
+ *                               verification couldn't confirm it; not
+ *                               treated as a failure (unmapped, falls
+ *                               through as a warning)
+ *   download_media_failed     — downloadMedia() exhausted its retries
+ *                               (or hit a non-transient error) for an
+ *                               incoming message's media
  *   plugin_crash              — a plugin threw/timed out; bot survives.
  *                               Never fatal by definition — a plugin that
  *                               brings the process down goes through
@@ -230,6 +237,7 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
 export type AlertKind =
   | "send_failed_no_fallback"
   | "send_failed_both_drivers"
+  | "download_media_failed"
   | "plugin_crash"
   | (string & {}); // open for future kinds without breaking the union
 
@@ -247,6 +255,18 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
       title:   t("alerts.bothDriversFailedTitle"),
       message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
                (details.error ? ` error=${String(details.error)}` : ""),
+    };
+  } else if (kind === "download_media_failed") {
+    event = {
+      level:   "warning",
+      title:   t("alerts.downloadMediaFailedTitle"),
+      message: t("alerts.downloadMediaFailedMessage", {
+        chat:     String(details.chat ?? "?"),
+        messageId:  String(details.messageId ?? "?"),
+        attempts: String(details.attempts ?? "?"),
+        error:    details.error ? String(details.error) : "",
+      }),
+      fatal: false,
     };
   } else if (kind === "plugin_crash") {
     const disabled = Boolean(details.disabled);

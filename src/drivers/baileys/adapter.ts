@@ -48,6 +48,8 @@ import { createHash } from "node:crypto";
 
 import { logger } from "#logger";
 import { splitLidPn } from "#drivers/jid.js";
+import { describeError, isTransientNetworkError } from "#utils/errorDetail.js";
+import { fireAlert } from "#kernel/alerts.js";
 
 // ── Baileys event-emitter shape ─────────────────────────────────────────────
 //
@@ -692,23 +694,48 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
           } as RawMessage)
         : store.messages.get(msg.chatId)?.get(msg.id) as RawMessage | undefined;
       if (!raw) return null;
-      try {
-        const buffer = await downloadMediaMessage(raw, "buffer", {}, {
-          logger: silentBaileysLogger,
-          reuploadRequest: sock.updateMediaMessage,
-        });
-        if (!buffer || !Buffer.isBuffer(buffer)) return null;
-        // Animated sticker → mp4 is handled by the caller (api/index.ts
-        // wa.downloadMedia) — kept at the api layer for now.
-        if (opts?.asMp4) {
-          // No animated-sticker conversion here for now (would couple to
-          // ffmpeg + node-webpmux). Caller does it.
+
+      // Downloads to WhatsApp's media CDN see intermittent per-edge
+      // ETIMEDOUTs (anycast, no signal it'll happen again on the same
+      // JID) — retrying a couple of times with backoff turns most of
+      // these into a transparent success instead of forcing the user
+      // to resend the command themselves. Only network-shaped errors
+      // are retried (isTransientNetworkError); anything else (e.g. a
+      // genuinely malformed/expired media key) fails fast instead of
+      // burning 3 attempts on something a retry can't fix.
+      let lastErr: unknown;
+      let attempts = 0;
+      while (true) {
+        attempts++;
+        try {
+          const buffer = await downloadMediaMessage(raw, "buffer", {}, {
+            logger: silentBaileysLogger,
+            reuploadRequest: sock.updateMediaMessage,
+          });
+          if (!buffer || !Buffer.isBuffer(buffer)) return null;
+          // Animated sticker → mp4 is handled by the caller (api/index.ts
+          // wa.downloadMedia) — kept at the api layer for now.
+          if (opts?.asMp4) {
+            // No animated-sticker conversion here for now (would couple to
+            // ffmpeg + node-webpmux). Caller does it.
+          }
+          return { mimetype: msg.mimetype ?? "application/octet-stream", data: buffer };
+        } catch (err) {
+          lastErr = err;
+          const delayMs = isTransientNetworkError(err) ? DOWNLOAD_MEDIA_RETRY_DELAYS_MS[attempts - 1] : undefined;
+          if (delayMs === undefined) break;
+          logger.warn(`[waContract] downloadMedia attempt ${attempts}/${DOWNLOAD_MEDIA_RETRY_DELAYS_MS.length + 1} failed for msg=${msg.id} chat=${msg.chatId} mimetype=${msg.mimetype ?? "?"}, retrying in ${delayMs}ms: ${describeError(err)}`);
+          await new Promise(r => setTimeout(r, delayMs));
         }
-        return { mimetype: msg.mimetype ?? "application/octet-stream", data: buffer };
-      } catch (err) {
-        logger.warn(`[waContract] downloadMedia failed: ${(err as Error).message}`);
-        return null;
       }
+      logger.warn(`[waContract] downloadMedia gave up after ${attempts} attempt(s) for msg=${msg.id} chat=${msg.chatId} mimetype=${msg.mimetype ?? "?"}: ${describeError(lastErr)}`);
+      fireAlert("download_media_failed", {
+        chat:      msg.chatId,
+        messageId: msg.id,
+        attempts,
+        error:     describeError(lastErr),
+      });
+      return null;
     },
 
     // ── poll decryption (Baileys-only) ───────────────────────────────────
@@ -992,6 +1019,13 @@ function toSentRef(raw: unknown, fallbackChatId: string): SentMessageRef {
     timestamp: Date.now(),
   };
 }
+
+/**
+ * Backoff schedule (ms) for downloadMedia() retries on a failed download —
+ * see the call site in downloadMedia() for why. Length = retry count
+ * (2 retries → 3 attempts total).
+ */
+const DOWNLOAD_MEDIA_RETRY_DELAYS_MS = [500, 1500];
 
 /**
  * pino-shape shim for Baileys' downloadMediaMessage — see the in-source

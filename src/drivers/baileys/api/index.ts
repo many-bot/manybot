@@ -51,6 +51,7 @@ import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult }
 import WebP                          from "node-webpmux";
 import { jidNormalizedUser }         from "@whiskeysockets/baileys";
 import { normalizeText }             from "#utils/normalizeText.js";
+import { describeError }             from "#utils/errorDetail.js";
 import emojiRegex                    from "emoji-regex";
 
 // ── Raw-Baileys escape hatch ─────────────────────────────────────────────────
@@ -1236,7 +1237,7 @@ export function buildMessageContext(
         }
         return { mimetype: result.mimetype, data: result.data.toString("base64") };
       } catch (err) {
-        logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
+        logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4}: ${describeError(err)}`);
         return null;
       }
     },
@@ -3025,7 +3026,7 @@ export function buildApi({
           if (!result) return null;
           return { mimetype: result.mimetype, data: result.data.toString("base64") };
         } catch (err) {
-          logger.warn(`[whatsapp] downloadMedia failed: ${(err as Error).message}`);
+          logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4}: ${describeError(err)}`);
           return null;
         }
       }

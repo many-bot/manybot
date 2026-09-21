@@ -112,6 +112,8 @@
 "alerts": {
     "noFallbackTitle": "manybot: sin driver de fallback",
     "bothDriversFailedTitle": "manybot: envío fallido en ambos drivers",
+    "downloadMediaFailedTitle": "manybot: falló la descarga de medios",
+    "downloadMediaFailedMessage": "Chat: {{chat}}\nMensaje: {{messageId}}\nSe rindió después de {{attempts}} intento(s).\nError: {{error}}",
     "updateAvailableTitle": "Nueva versión del manybot disponible",
     "updateAvailableMessage": "Instalado: {{installed}} → disponible: {{available}}. Vea {{url}} para instrucciones de actualización.",
     "reconnectHaltedTitle": "manybot detuvo la reconexión",
