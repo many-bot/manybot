@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, test, beforeEach, after } from "node:test";
+import { describe, test, beforeEach, after, mock } from "node:test";
 
 // Same pattern as pluginLoader.test.ts: MANYBOT_CONFIG_DIR must be set
 // BEFORE the first import of #config / anything that reads it (alerts.ts
@@ -64,6 +64,41 @@ describe("kernel/pluginGuard — recordPluginFailure bookkeeping", () => {
 
   test("returns false for a plugin name not in the registry", () => {
     assert.equal(recordPluginFailure("does-not-exist", new Error("x")), false);
+  });
+
+  test("resets errorCount when the last failure is older than the 5min window", async () => {
+    await writePlugin("recovers", "export default async function () {}\n");
+    await loadPlugin("recovers");
+
+    mock.timers.enable({ apis: ["Date"] });
+    try {
+      recordPluginFailure("recovers", new Error("boom 1"));
+      recordPluginFailure("recovers", new Error("boom 2"));
+      assert.equal(pluginRegistry.get("recovers")?.errorCount, 2);
+
+      mock.timers.tick(5 * 60_000 + 1);
+
+      recordPluginFailure("recovers", new Error("boom after quiet period"));
+      assert.equal(pluginRegistry.get("recovers")?.errorCount, 1);
+      assert.equal(pluginRegistry.get("recovers")?.status, "active");
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  test("keeps accumulating errorCount when failures happen within the 5min window", async () => {
+    await writePlugin("still-flaky", "export default async function () {}\n");
+    await loadPlugin("still-flaky");
+
+    mock.timers.enable({ apis: ["Date"] });
+    try {
+      recordPluginFailure("still-flaky", new Error("boom 1"));
+      mock.timers.tick(60_000);
+      recordPluginFailure("still-flaky", new Error("boom 2"));
+      assert.equal(pluginRegistry.get("still-flaky")?.errorCount, 2, "failures inside the window must still accumulate");
+    } finally {
+      mock.timers.reset();
+    }
   });
 });
 

@@ -30,6 +30,9 @@ import { fireAlert } from "#kernel/alerts.js";
 /** Max ms a single plugin run is allowed to take before it's force-aborted. */
 const PLUGIN_TIMEOUT_MS = 120_000;
 
+/** If a plugin runs this long without a new failure, its strike count resets. */
+const FAILURE_RESET_MS = 5 * 60_000;
+
 /**
  * Races `promise` against a timeout rejection.
  * @param {Promise}  promise
@@ -83,8 +86,13 @@ export function recordPluginFailure(
   const plugin = pluginRegistry.get(pluginName);
   if (!plugin) return false;
 
-  const errorCount = (plugin.errorCount ?? 0) + 1;
+  const now = Date.now();
+  const staleFailure = plugin.lastFailureAt !== undefined && (now - plugin.lastFailureAt) > FAILURE_RESET_MS;
+  const baseCount = staleFailure ? 0 : (plugin.errorCount ?? 0);
+
+  const errorCount = baseCount + 1;
   plugin.errorCount = errorCount;
+  plugin.lastFailureAt = now;
   plugin.error = error;
 
   const frame = error.stack?.split("\n")[1]?.trim() ?? "(no stack)";

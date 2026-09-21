@@ -71,6 +71,7 @@ export interface PluginEntry {
   error: Error | null;
   guardOptions: Record<string, unknown>;
   errorCount?: number;
+  lastFailureAt?: number;
 }
 
 const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");
