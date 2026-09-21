@@ -2194,10 +2194,35 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
   }
 
   /**
+   * Runs promote/demote through the Community-level protocol operation
+   * (as opposed to the plain group one).
+   */
+  function runCommunityRoleUpdate(
+    communityJid: string,
+    users: string[],
+    action: "promote" | "demote"
+  ) {
+    const update = contract.communityParticipantsUpdate?.bind(contract);
+    if (!update) throw new Error(t("driver.communityParticipantsUnsupported", { group: communityJid }));
+    return guardedParticipantsUpdate("communityParticipantsUpdate", communityJid, users, action, () =>
+      update(communityJid, users, action)
+    );
+  }
+
+  /**
    * WhatsApp exposes a separate protocol operation for changing roles in
    * the Community itself (as opposed to one of its linked groups), so
    * promote/demote must branch on what the target jid is. Uses the cached
    * metadata — `resolveTargets()` has already fetched it by this point.
+   *
+   * The Community's announcements group is not the Community itself
+   * (`isCommunity` is false there — only the parent has that flag; the
+   * announcements group has `isCommunityAnnounce` and a `linkedParent`),
+   * but its admins are the Community's admins: a plain
+   * `groupParticipantsUpdate` on it is rejected with "bad-request".
+   * Redirect to the parent instead. `users` were resolved against the
+   * announcements group's participant list, so they're resolved again
+   * against the parent, which may use a different jid form (LID vs PN).
    */
   async function runRoleUpdate(
     jid: string,
@@ -2205,13 +2230,12 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     action: "promote" | "demote"
   ) {
     const meta = await getGroupMetadataCached(contract, jid);
+    if (meta.isCommunityAnnounce && meta.linkedParent) {
+      const parentUsers = await resolveTargets(meta.linkedParent, users);
+      return runCommunityRoleUpdate(meta.linkedParent, parentUsers, action);
+    }
     if (!meta.isCommunity) return runParticipantsUpdate(jid, users, action);
-
-    const update = contract.communityParticipantsUpdate?.bind(contract);
-    if (!update) throw new Error(t("driver.communityParticipantsUnsupported", { group: jid }));
-    return guardedParticipantsUpdate("communityParticipantsUpdate", jid, users, action, () =>
-      update(jid, users, action)
-    );
+    return runCommunityRoleUpdate(jid, users, action);
   }
 
   function createTargetableAction(
