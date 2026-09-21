@@ -87,12 +87,15 @@ export async function sendWithFallback(
     if (await verifyDelivery(primary, jid, primaryRef!, drivers.verifyWindowMs)) {
       // Successful send - clear any degradation state
       dm.clearDegraded(primaryKey);
-      return primaryRef!;
+    } else {
+      // sendText() itself resolved fine; the history check just couldn't
+      // confirm it in time (common in groups). With no secondary driver
+      // to escalate to, treating this as a hard failure only kills the
+      // plugin over noise — log/alert, but trust the driver's own result.
+      logger.warn({ driver: primaryKey, jid, messageId: primaryRef!.id }, "send not confirmed by primary (treated as sent, no fallback driver)");
+      fireAlert("send_unconfirmed", { jid, primary: primaryKey });
     }
-    logger.warn({ driver: primaryKey, jid, messageId: primaryRef!.id }, "send not confirmed by primary");
-    dm.markDegraded(primaryKey, drivers.fallbackCooldownMs);
-    fireAlert("send_failed_no_fallback", { jid, primary: primaryKey });
-    throw new SendFailedError(jid, primaryKey, "no_fallback");
+    return primaryRef!;
   }
 
   // Should not reach here

@@ -82,15 +82,13 @@ describe("kernel/sendFallbackGuard", () => {
     );
   });
 
-  test("throws SendFailedError with no_fallback when verification fails", async () => {
+  test("resolves with primary's ref when verification can't confirm it (no fallback driver)", async () => {
     const dm = getDriverManager();
-    const primaryFailing = createMockDriver("baileys", true, false, true);
+    const primaryUnconfirmed = createMockDriver("baileys", true, false, true);
 
-    dm.register(primaryFailing, { isPrimary: true });
+    dm.register(primaryUnconfirmed, { isPrimary: true });
 
-    await assert.rejects(
-      async () => sendWithFallback("5511999999999@c.us", "verify fail"),
-      (err: any) => err instanceof SendFailedError && err.reason === "no_fallback"
-    );
+    const ref = await sendWithFallback("5511999999999@c.us", "verify fail");
+    assert.equal(ref.id, "msg_baileys", "sendText succeeded, so the send must be treated as delivered");
   });
 });
