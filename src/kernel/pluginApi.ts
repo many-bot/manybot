@@ -153,13 +153,10 @@ export interface IConfig {
 // Sub-facet: i18n. `t` itself is the bare function; `createT` returns a
 // scoped translator; `reload` forces a re-read of locale files (synchronous
 // cache invalidate); `getCurrentLang` returns the active language code.
-// Signatures mirror `I18nApi` in @manybot/types — kept loose so plugin code
-// doesn't have to care about the runtime overloads of `t`.
+// Signatures mirror `I18nApi` in @manybot/types (checked by
+// scripts/check-types-drift.ts). `t` always returns a string.
 export interface II18n {
-  t: {
-    (key: string): string;
-    (key: string, context: Record<string, unknown>): string | Record<string, unknown>;
-  };
+  t: (key: string, context?: Record<string, unknown>) => string;
   createT: (pluginMetaUrl: string) => { t: II18n["t"]; lang: string | null };
   reload: () => void;
   getCurrentLang: () => string;

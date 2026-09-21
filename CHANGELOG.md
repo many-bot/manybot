@@ -24,6 +24,7 @@
 - `pluginLoader`: safely reinitialize command registry.
 - Event handlers: async rejections in plugin event handlers are now captured.
 - `i18n`: resolved plugin root directory instead of assuming entry directory.
+- `i18n`: `II18n["t"]` in `pluginApi.ts` is now a single `(key, context?) => string` signature. It still declared the old `string | Record` overload left over from the removed `returnObjects` option, which had drifted from the runtime and from `@manybot/types`.
 - Banner: corrected ASCII art alignment for version string.
 - `i18n`: corrected pairing code path.
 - `ctx.admin.promote()` / `ctx.admin.demote()` now work on Communities: when the target JID is a Community (not a regular group or one of its linked groups), the driver uses the dedicated community operation instead of `groupParticipantsUpdate`. Adds the optional `WaContract.communityParticipantsUpdate()`.

@@ -1166,8 +1166,7 @@ export interface I18nApi {
    * @param args - Translation key followed by any interpolation values, forwarded to the underlying i18n engine.
    * @returns The translated string.
    */
-  t(key: string): string;
-  t(key: string, context: Record<string, unknown>): string | Record<string, unknown>;
+  t(key: string, context?: Record<string, unknown>): string;
   /**
    * Create a scoped `t()` bound to a plugin's own locale files.
    * @param pluginMetaUrl - Pass `import.meta.url` from the plugin file.
