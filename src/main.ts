@@ -8,9 +8,17 @@
 
 import Module      from "module";
 import path        from "path";
+import dns         from "node:dns";
 
 process.env.NODE_PATH = path.resolve(process.cwd(), "node_modules");
 (Module as unknown as { _initPaths: () => void })._initPaths();
+
+// This host has no working IPv6 route (only link-local addresses on the
+// Docker bridges) — every outbound fetch/download otherwise wastes an
+// attempt on IPv6 that fails immediately (ENETUNREACH) before falling
+// back to IPv4. Forcing IPv4-first here avoids that noise for every
+// downstream fetch() call (downloadMedia, updateCheck, etc.) in one place.
+dns.setDefaultResultOrder("ipv4first");
 
 import { baileysContract }            from "#drivers/baileys/index.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
