@@ -1,8 +1,8 @@
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { buildCommandRegistry } from "#kernel/commandRegistry.js";
+import { buildCommandRegistry, DEFAULT_MENU_CONFIG } from "#kernel/commandRegistry.js";
 import type { PluginEntry } from "#kernel/pluginLoader.js";
-import type { CommandSpec } from "#kernel/commandsConfig.js";
+import type { CommandSpec, MenuConfig } from "#kernel/commandsConfig.js";
 
 function createMockPluginRegistry(plugins: Array<{ name: string; status?: "active" | "inactive"; commands?: Record<string, any> }>): Map<string, PluginEntry> {
   const map = new Map<string, PluginEntry>();
@@ -177,6 +177,36 @@ describe("kernel/commandRegistry", () => {
     const registry = buildCommandRegistry(null, plugins);
     assert.equal(registry.byId.size, 0);
     assert.equal(registry.byInvocation.has("disabledCmd"), false);
+  });
+
+  test("menu.enabled has no effect when zero commands are declared", () => {
+    const plugins = createMockPluginRegistry([]);
+    const menu: MenuConfig = { ...DEFAULT_MENU_CONFIG, enabled: true };
+
+    const registry = buildCommandRegistry(null, plugins, undefined, menu);
+
+    assert.equal(registry.byId.size, 0);
+    assert.equal(registry.menuAliases.size, 0);
+    assert.equal(registry.menuAliases.has("menu"), false);
+    assert.equal(registry.menuAliases.has("help"), false);
+  });
+
+  test("menu.enabled activates the menu once a command exists", () => {
+    const plugins = createMockPluginRegistry([
+      {
+        name: "pingPlugin",
+        commands: {
+          pingFn: { cmd: "ping", handler: async () => "pong" },
+        },
+      },
+    ]);
+    const menu: MenuConfig = { ...DEFAULT_MENU_CONFIG, enabled: true };
+
+    const registry = buildCommandRegistry(null, plugins, undefined, menu);
+
+    assert.equal(registry.byId.size, 1);
+    assert.equal(registry.menuAliases.has("menu"), true);
+    assert.equal(registry.menuAliases.has("help"), true);
   });
 });
 

@@ -867,8 +867,11 @@ export function buildCommandRegistry(
   // Validate menu cmd + aliases against command invocations. Fully opt-in:
   // when menu.enabled is false (default), the native menu claims nothing —
   // "menu"/"help" stay free for a plugin (legacy or commands.yaml) to use.
+  // Also requires at least one declared command: a bare/empty commands.yaml
+  // (or one with only a `menu:` block) still defaults `menu.enabled` to
+  // true, which used to activate an empty, useless menu.
   const menuAliases = new Set<string>();
-  if (menu.enabled) {
+  if (menu.enabled && byId.size > 0) {
     const menuInvocations = [menu.cmd, ...menu.aliases.filter(a => a !== menu.cmd)];
     for (const alias of menuInvocations) {
       const existing = byInvocation.get(alias);
