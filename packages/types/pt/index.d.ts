@@ -269,6 +269,22 @@ export interface BotGroupMetadata {
   participants: BotGroupParticipant[];
 }
 
+/** Um frame decodificado de um WebP animado, em base64 para transporte pela API de plugins. */
+export interface WebpFrameOut {
+  data:    string; // base64
+  delayMs: number;
+}
+
+/**
+ * Formato retornado por `ctx.msg.downloadMedia()` / `ctx.wa.downloadMedia()`.
+ * `isAnimated` está sempre presente. `frames` só aparece (e `data` fica
+ * ausente) quando `{ asFrames: true }` foi pedido numa mídia animada —
+ * caso contrário `data` traz o payload em base64 normalmente.
+ */
+export type DownloadedMedia =
+  | { mimetype: string; data: string; isAnimated: boolean; frames?: undefined }
+  | { mimetype: string; data?: undefined; isAnimated: true; frames: WebpFrameOut[] };
+
 /** Informações sobre a própria conta do bot. */
 export interface BotMe {
   id: string;
@@ -402,7 +418,7 @@ export interface WaContract {
    * Baixa um payload de mídia. Retorna null em qualquer falha (mídia já
    * baixada, blob expirado, erro de protocolo etc).
    */
-  downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer } | null>;
+  downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer; isAnimated: boolean } | null>;
 
   // ── primitiva de verificação ─────────────────────────────────────────
   /**
@@ -763,11 +779,13 @@ export interface WAMessageContext {
   isGif: boolean;
   /**
    * Baixa a mídia desta mensagem, se houver.
-   * @param opts - Quando `asMp4` é true, figurinhas animadas são convertidas para mp4.
-   * @returns A mídia como `data` em base64 com seu `mimetype`, ou `null` se não houver mídia
-   * ou o download tiver falhado.
+   * @param opts - `asMp4`: converte figurinhas animadas para mp4. `asFrames`: retorna
+   * figurinhas animadas como frames individuais decodificados (com delay de cada um)
+   * em vez do webp bruto.
+   * @returns A mídia (`data` em base64, ou `frames` quando `asFrames` foi usado) com seu
+   * `mimetype` e a flag `isAnimated`, ou `null` se não houver mídia ou o download falhar.
    */
-  downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
+  downloadMedia(opts?: { asMp4?: boolean; asFrames?: boolean }): Promise<DownloadedMedia | null>;
   hasReply: boolean;
   /**
    * Busca a mensagem que esta está citando/respondendo. Retorna o mesmo
@@ -1206,6 +1224,13 @@ export interface UtilsApi {
    * @param dirPath - Caminho do diretório a esvaziar.
    */
   emptyFolder(folderPath: string): void;
+  /** Auxiliares de WebP animado, para plugins não precisarem depender de `node-webpmux` diretamente. */
+  webp: {
+    /** Se um buffer/caminho WebP é animado (múltiplos frames). */
+    isAnimated(input: Buffer | string): Promise<boolean>;
+    /** Separa um WebP animado em seus frames individuais, cada um com seu delay de exibição. */
+    demuxFrames(input: Buffer | string): Promise<{ data: Buffer; delayMs: number }[]>;
+  };
 }
 
 /** Fila de downloads em segundo plano, disponível como `ctx.download`. Apenas um job roda por vez. */
@@ -1577,8 +1602,8 @@ export interface PluginContext extends BaseApi {
     store: WAStore;
     /** Envelope de mensagem neutro em relação ao driver (substitui o antigo campo `WAProtoMsg`). */
     msg: BotMessage;
-    /** Baixa a mídia da mensagem atual; `asMp4` converte figurinhas animadas para mp4. */
-    downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
+    /** Baixa a mídia da mensagem atual; `asMp4` converte figurinhas animadas para mp4, `asFrames` retorna frames decodificados + delays. */
+    downloadMedia(opts?: { asMp4?: boolean; asFrames?: boolean }): Promise<DownloadedMedia | null>;
   } | null;
   /** Reservado para um futuro driver de Telegram — sempre `null` no WhatsApp. */
   tg: null;

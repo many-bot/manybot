@@ -18,6 +18,22 @@ import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
 
 export type { BotMessage, BotQuotedRef };
 
+/** One decoded frame of an animated WebP, base64-encoded for transport across the plugin API. */
+export interface WebpFrameOut {
+  data:    string; // base64
+  delayMs: number;
+}
+
+/**
+ * Shape returned by `ctx.msg.downloadMedia()` / `ctx.wa.downloadMedia()`.
+ * `isAnimated` is always present. `frames` is only present (and `data`
+ * omitted) when `{ asFrames: true }` was requested on animated media —
+ * otherwise `data` carries the base64 payload as usual.
+ */
+export type DownloadedMedia =
+  | { mimetype: string; data: string; isAnimated: boolean; frames?: undefined }
+  | { mimetype: string; data?: undefined; isAnimated: true; frames: WebpFrameOut[] };
+
 // ── Event payloads ──────────────────────────────────────────────────────────
 
 /** Payload of `messages.upsert`. */
@@ -325,9 +341,12 @@ export interface WaContract {
    * Download a media payload. `msg` is the (neutral) BotMessage that was
    * received — adapters fetch the underlying buffer from whichever transport
    * they implement. Returns null on any failure (already-downloaded media,
-   * expired blob, protocol error, etc).
+   * expired blob, protocol error, etc). `isAnimated` is resolved by the
+   * adapter itself (byte-level check, since WhatsApp reports every sticker
+   * as "image/webp" whether animated or not) so callers never need to
+   * inspect media bytes themselves.
    */
-  downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer } | null>;
+  downloadMedia(msg: BotMessage, opts: { asMp4?: boolean }): Promise<{ mimetype: string; data: Buffer; isAnimated: boolean } | null>;
 
   // ── verification primitive ──────────────────────────────────────────────────
   /**

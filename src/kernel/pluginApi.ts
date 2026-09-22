@@ -22,7 +22,7 @@
  *     the implementation, never plugins.
  */
 
-import type { WaContract } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { BotMessage } from "#drivers/types.js";
 import type { ScopedAccessor } from "#kernel/settingsDb.js";
@@ -261,9 +261,15 @@ export interface ILog {
   success(...args: unknown[]): void;
 }
 
-// Sub-facet: utilities (right now: `emptyFolder` from utils/file).
+// Sub-facet: utilities (emptyFolder from utils/file, webp helpers for any
+// plugin that needs to detect/demux animated stickers without depending on
+// node-webpmux directly — see src/utils/webp.ts).
 export interface IUtils {
   emptyFolder(folderPath: string): void;
+  webp: {
+    isAnimated(input: Buffer | string): Promise<boolean>;
+    demuxFrames(input: Buffer | string): Promise<{ data: Buffer; delayMs: number }[]>;
+  };
 }
 
 // `add()` returns a thenable targetable — `await ctx.admin.add(...)`
@@ -392,7 +398,7 @@ export interface IMsg extends WAMessageContext {}
  * driver-neutral `WaContract`, the in-memory `BotStore`, and the current
  * `BotMessage` to plugins that genuinely need them — e.g.
  * `ctx.wa.downloadMedia({ asMp4: true })` for animated-sticker → mp4
- * conversion. `.tg` and `.dc` are intentionally `null` until a Telegram
+ * conversion, or `{ asFrames: true }` for frame-by-frame processing. `.tg` and `.dc` are intentionally `null` until a Telegram
  * or Discord adapter ships; the field exists today so plugins can write
  * `ctx.wa?.downloadMedia(...)` without future changes.
  */
@@ -404,7 +410,7 @@ export interface IPlatformContexts {
     store: BotStore;
     /** Driver-neutral message envelope (replace the old `WAProtoMsg` field). */
     msg: BotMessage;
-    downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
+    downloadMedia(opts?: { asMp4?: boolean; asFrames?: boolean }): Promise<DownloadedMedia | null>;
   } | null;
   tg: null;
   dc: null;

@@ -12,7 +12,7 @@
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
-import type { WaContract } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
@@ -31,6 +31,7 @@ import { enqueue }                   from "#download";
 import { waitForEditSlot }           from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
 import { emptyFolder }               from "#utils/file.js";
+import { isAnimatedWebp, demuxWebpFrames } from "#utils/webp.js";
 import { parsePhone }                from "#utils/phoneNumber.js";
 import { normalizeJid, denormalizeJid, toWireJid } from "#drivers/jid.js";
 
@@ -48,7 +49,6 @@ import { buildSettingsApi }          from "#settingsdb";
 import * as commandAccess            from "#kernel/commandAccess.js";
 import * as chatSession              from "#kernel/chatSession.js";
 import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult } from "#kernel/runCommand.js";
-import WebP                          from "node-webpmux";
 import { jidNormalizedUser }         from "@whiskeysockets/baileys";
 import { normalizeText }             from "#utils/normalizeText.js";
 import { describeError }             from "#utils/errorDetail.js";
@@ -525,7 +525,10 @@ function buildI18nApi() {
 // ── Utils API ─────────────────────────────────────────────────────────────────
 
 function buildUtilsApi() {
-  return { emptyFolder };
+  return {
+    emptyFolder,
+    webp: { isAnimated: isAnimatedWebp, demuxFrames: demuxWebpFrames },
+  };
 }
 
 // ── Download API ──────────────────────────────────────────────────────────────
@@ -1012,7 +1015,7 @@ export interface WAMessageContext {
   is(cmd: string): boolean;
   hasMedia: boolean;
   isGif:    boolean;
-  downloadMedia(opts?: { asMp4?: boolean }): Promise<{ mimetype: string; data: string } | null>;
+  downloadMedia(opts?: { asMp4?: boolean; asFrames?: boolean }): Promise<DownloadedMedia | null>;
   hasReply: boolean;
   getReply(): Promise<WAMessageContext | null>;
   hasMention: boolean;
@@ -1223,21 +1226,15 @@ export function buildMessageContext(
     isGif:    msgIsGif(msg, store),
     mentionedJid: msg.mentionedJid ?? [],
 
-    async downloadMedia(opts: { asMp4?: boolean } = {}): Promise<{ mimetype: string; data: string } | null> {
+    async downloadMedia(opts: { asMp4?: boolean; asFrames?: boolean } = {}): Promise<DownloadedMedia | null> {
       try {
         // contract.downloadMedia handles reupload internally via the
-        // driver's own protocol knowledge (Baileys: sock.updateMediaMessage).
-        const result = await contract.downloadMedia(msg, {});
-        if (!result) return null;
-        const raw = rawMsgOf(msg, store);
-        const isAnimatedSticker = !!((raw?.message as { stickerMessage?: { isAnimated?: boolean } } | undefined)?.stickerMessage?.isAnimated);
-        if (opts.asMp4 && isAnimatedSticker) {
-          const mp4 = await stickerToMp4(result.data);
-          return { mimetype: "video/mp4", data: mp4.toString("base64") };
-        }
-        return { mimetype: result.mimetype, data: result.data.toString("base64") };
+        // driver's own protocol knowledge (Baileys: sock.updateMediaMessage),
+        // and already resolves `isAnimated` for us — no more per-plugin
+        // byte-sniffing needed.
+        return await resolveDownloadedMedia(contract, msg, opts);
       } catch (err) {
-        logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4}: ${describeError(err)}`);
+        logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4} asFrames=${!!opts.asFrames}: ${describeError(err)}`);
         return null;
       }
     },
@@ -1541,13 +1538,34 @@ async function gifToMp4(gifSource: string | Buffer): Promise<Buffer> {
  * won't composite correctly here — that would need full RGBA canvas
  * compositing via getFrameData() per frame, which isn't implemented.
  */
+async function resolveDownloadedMedia(
+  contract: WaContract,
+  msg: BotMessage,
+  opts: { asMp4?: boolean; asFrames?: boolean },
+): Promise<DownloadedMedia | null> {
+  const result = await contract.downloadMedia(msg, {});
+  if (!result) return null;
+
+  if (opts.asFrames && result.isAnimated) {
+    const frames = await demuxWebpFrames(result.data);
+    return {
+      mimetype:   result.mimetype,
+      isAnimated: true,
+      frames:     frames.map(f => ({ data: f.data.toString("base64"), delayMs: f.delayMs })),
+    };
+  }
+  if (opts.asMp4 && result.isAnimated) {
+    const mp4 = await stickerToMp4(result.data);
+    return { mimetype: "video/mp4", data: mp4.toString("base64"), isAnimated: true };
+  }
+  return { mimetype: result.mimetype, data: result.data.toString("base64"), isAnimated: result.isAnimated };
+}
+
 async function stickerToMp4(webpBuffer: Buffer): Promise<Buffer> {
-  const img = new WebP.Image();
-  await img.load(webpBuffer);
   const outPath = path.join(os.tmpdir(), `${randomUUID()}.mp4`);
   const scaleFilter = "scale=trunc(iw/2)*2:trunc(ih/2)*2";
 
-  if (!img.hasAnim) {
+  if (!(await isAnimatedWebp(webpBuffer))) {
     // Not actually animated — a plain static webp decodes fine on its own.
     const inPath = path.join(os.tmpdir(), `${randomUUID()}.webp`);
     try {
@@ -1569,19 +1587,18 @@ async function stickerToMp4(webpBuffer: Buffer): Promise<Buffer> {
 
   const dir = await mkdtemp(path.join(os.tmpdir(), "sticker-"));
   try {
-    const frameBuffers = await img.demux({ buffers: true });
-    const delays = (img.frames ?? []).map(f => (f.delay > 0 ? f.delay : 100)); // ms; WebP spec treats 0 as implementation-defined
+    const frames = await demuxWebpFrames(webpBuffer);
 
     const listLines: string[] = [];
-    for (let i = 0; i < frameBuffers.length; i++) {
+    for (let i = 0; i < frames.length; i++) {
       const framePath = path.join(dir, `frame_${i}.webp`);
-      await writeFile(framePath, frameBuffers[i]);
+      await writeFile(framePath, frames[i].data);
       listLines.push(`file '${framePath}'`);
-      listLines.push(`duration ${((delays[i] ?? 100) / 1000).toFixed(3)}`);
+      listLines.push(`duration ${(frames[i].delayMs / 1000).toFixed(3)}`);
     }
     // The concat demuxer ignores the final `duration` line unless the last
     // file is listed once more after it.
-    listLines.push(`file '${path.join(dir, `frame_${frameBuffers.length - 1}.webp`)}'`);
+    listLines.push(`file '${path.join(dir, `frame_${frames.length - 1}.webp`)}'`);
     const listPath = path.join(dir, "list.txt");
     await writeFile(listPath, listLines.join("\n"));
 
@@ -3044,13 +3061,11 @@ export function buildApi({
       contract,
       store,
       msg,
-      downloadMedia: async (opts: { asMp4?: boolean } = {}) => {
+      downloadMedia: async (opts: { asMp4?: boolean; asFrames?: boolean } = {}) => {
         try {
-          const result = await contract.downloadMedia(msg, opts);
-          if (!result) return null;
-          return { mimetype: result.mimetype, data: result.data.toString("base64") };
+          return await resolveDownloadedMedia(contract, msg, opts);
         } catch (err) {
-          logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4}: ${describeError(err)}`);
+          logger.warn(`[whatsapp] downloadMedia failed for msg=${msg.id} chat=${msg.chatId} asMp4=${!!opts.asMp4} asFrames=${!!opts.asFrames}: ${describeError(err)}`);
           return null;
         }
       }

@@ -49,6 +49,7 @@ import { createHash } from "node:crypto";
 import { logger } from "#logger";
 import { splitLidPn } from "#drivers/jid.js";
 import { describeError, isTransientNetworkError } from "#utils/errorDetail.js";
+import { isAnimatedWebp } from "#utils/webp.js";
 import { fireAlert } from "#kernel/alerts.js";
 
 // ── Baileys event-emitter shape ─────────────────────────────────────────────
@@ -713,13 +714,12 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
             reuploadRequest: sock.updateMediaMessage,
           });
           if (!buffer || !Buffer.isBuffer(buffer)) return null;
-          // Animated sticker → mp4 is handled by the caller (api/index.ts
-          // wa.downloadMedia) — kept at the api layer for now.
-          if (opts?.asMp4) {
-            // No animated-sticker conversion here for now (would couple to
-            // ffmpeg + node-webpmux). Caller does it.
-          }
-          return { mimetype: msg.mimetype ?? "application/octet-stream", data: buffer };
+          // WhatsApp reports every sticker as "image/webp" whether animated
+          // or not, so this is the only reliable way to know — checked here
+          // once so every caller (asMp4, asFrames, or plain download) gets
+          // it for free instead of re-inspecting the bytes themselves.
+          const isAnimated = msg.mimetype === "image/webp" && await isAnimatedWebp(buffer);
+          return { mimetype: msg.mimetype ?? "application/octet-stream", data: buffer, isAnimated };
         } catch (err) {
           lastErr = err;
           const delayMs = isTransientNetworkError(err) ? DOWNLOAD_MEDIA_RETRY_DELAYS_MS[attempts - 1] : undefined;

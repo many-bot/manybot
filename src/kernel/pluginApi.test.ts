@@ -264,7 +264,7 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
 
     me: () => ({ id: "5516999999999@s.whatsapp.net", lid: "99999@lid" }),
 
-    downloadMedia: async () => ({ mimetype: "image/jpeg", data: Buffer.from("fake-image-bytes") }),
+    downloadMedia: async () => ({ mimetype: "image/jpeg", data: Buffer.from("fake-image-bytes"), isAnimated: false }),
 
     getHistory: async (jid) => sentHistory.filter((m) => m.chatId === jid),
   };
