@@ -12,7 +12,7 @@
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
-import type { WaContract, DownloadedMedia } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
@@ -2945,6 +2945,17 @@ function buildChatFacet(
       const meta = await resolveChatMeta(jid, contract, store);
       if (!meta) return null;
       return buildChatFacet(jid, meta.name, meta.isGroup, contract, store, msg, sender, matchesParticipant);
+    },
+
+    /**
+     * Join a group via invite link or bare code. Delegates to the
+     * driver contract's `groupAcceptInvite()` — see its doc for the
+     * "requested" (admin-approval) vs thrown `GroupInviteError` split.
+     * @param {string} urlOrCode
+     * @returns {Promise<GroupAcceptInviteResult>}
+     */
+    async acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult> {
+      return contract.groupAcceptInvite(urlOrCode);
     },
 
     /**

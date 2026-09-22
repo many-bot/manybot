@@ -22,7 +22,7 @@
  *     the implementation, never plugins.
  */
 
-import type { WaContract, DownloadedMedia } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { BotMessage } from "#drivers/types.js";
 import type { ScopedAccessor } from "#kernel/settingsDb.js";
@@ -377,6 +377,18 @@ export interface IChat {
    *   group (bot not a member, wrong id, etc.) — never throws.
    */
   getChat(jid: string): Promise<IChat | null>;
+  /**
+   * Join a group via invite link or bare code — not scoped to this
+   * `IChat` instance's own chat, same escape-hatch spirit as
+   * `getChat()`. Resolves `{ status: "joined", groupId }` on success,
+   * or `{ status: "requested" }` when the group needs admin approval
+   * (the join request was sent — this is not an error). Throws
+   * `GroupInviteError` (from `#kernel/waContract.js`) for real
+   * failures — invite not found/expired, malformed code, already a
+   * member — see its `.reason` field.
+   * @param urlOrCode - Full `https://chat.whatsapp.com/<code>` URL or bare `<code>`.
+   */
+  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
   /**
    * Native lookup of any message by its ID alone — the kernel resolves
    * the owning chat's JID automatically (no need to store it

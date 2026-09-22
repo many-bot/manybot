@@ -29,8 +29,9 @@ import type {
 import type {
   WaContract, WaEventName, WaEventPayload,
   BotContactSummary, BotChatSummary,
-  SentMessageRef,
+  SentMessageRef, GroupAcceptInviteResult,
 } from "#kernel/waContract.js";
+import { GroupInviteError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type {
   RawSocket, RawMessage, RawStoreContact,
@@ -622,6 +623,39 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       return await (sock as unknown as { groupRevokeInvite(j: string): Promise<string> }).groupRevokeInvite(jid);
     },
 
+    async groupAcceptInvite(urlOrCode): Promise<GroupAcceptInviteResult> {
+      const code = extractInviteCode(urlOrCode);
+      try {
+        const groupId = await (sock as unknown as { groupAcceptInvite(c: string): Promise<string> }).groupAcceptInvite(code);
+        // Baileys doesn't throw for admin-approval groups — it resolves with
+        // no `group` node in the response, so `groupId` comes back empty.
+        // That's a join REQUEST, not a join.
+        if (!groupId) return { status: "requested" };
+        return { status: "joined", groupId: jidNormalizedUser(groupId) };
+      } catch (err) {
+        if (err instanceof Boom) {
+          const statusCode = err.output?.statusCode;
+          const text       = err.message?.toLowerCase() ?? "";
+          // 409 covers two distinct outcomes from Baileys: a group that
+          // requires admin approval (the join REQUEST was sent — not a
+          // failure) and "already a participant". Only the message text
+          // tells them apart.
+          if (statusCode === 409 && text.includes("already")) {
+            throw new GroupInviteError("already_member", "Already a member of the group behind this invite", { cause: err });
+          }
+          if (statusCode === 409) return { status: "requested" };
+          if (statusCode === 404 || statusCode === 410) {
+            throw new GroupInviteError("not_found", `Invite "${code}" doesn't exist or has expired`, { cause: err });
+          }
+          if (statusCode === 400 || statusCode === 401) {
+            throw new GroupInviteError("invalid_code", `Invalid invite code/URL: "${urlOrCode}"`, { cause: err });
+          }
+        }
+        logger.warn(`[groupAcceptInvite] unhandled failure for "${code}" — ${describeError(err)}`);
+        throw new GroupInviteError("unknown", describeError(err), { cause: err });
+      }
+    },
+
     // ── profile ────────────────────────────────────────────────────────────
     async updateProfilePicture(jid, buffer) {
       await (sock as unknown as { updateProfilePicture(j: string, b: Buffer): Promise<void> }).updateProfilePicture(jid, buffer);
@@ -1010,6 +1044,16 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
 // `buildQuotedOpts` and `toFlatKey` are defined inside the
 // `createBaileysAdapter` closure (so they can see the `store`) — only
 // `toSentRef` and `silentBaileysLogger` remain module-scoped helpers.
+
+/**
+ * Pull the bare invite code out of a `https://chat.whatsapp.com/<code>`
+ * (or `/invite/<code>`) URL. Falls through unchanged for a bare code —
+ * Baileys' `groupAcceptInvite()` only ever wants the code, never the URL.
+ */
+function extractInviteCode(urlOrCode: string): string {
+  const match = urlOrCode.match(/chat\.whatsapp\.com\/(?:invite\/)?([A-Za-z0-9]+)/i);
+  return match ? match[1] : urlOrCode.trim();
+}
 
 function toSentRef(raw: unknown, fallbackChatId: string): SentMessageRef {
   const r = raw as { key?: { id?: string; remoteJid?: string } } | undefined;

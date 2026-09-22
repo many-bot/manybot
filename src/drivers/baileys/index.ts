@@ -443,6 +443,7 @@ export const baileysContract: WaContract & { getId?(): Promise<void> } = {
   groupUpdateDescription: (...args) => requireReady().groupUpdateDescription(...args),
   groupInviteCode:         (...args) => requireReady().groupInviteCode(...args),
   groupRevokeInvite:       (...args) => requireReady().groupRevokeInvite(...args),
+  groupAcceptInvite:       (...args) => requireReady().groupAcceptInvite(...args),
 
   // ── profile ────────────────────────────────────────────────────────────
   updateProfilePicture: (...args) => requireReady().updateProfilePicture(...args),

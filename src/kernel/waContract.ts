@@ -255,6 +255,27 @@ export interface BotGroupMetadata {
   participants: BotGroupParticipant[];
 }
 
+/** Result of {@link WaContract.groupAcceptInvite}. */
+export interface GroupAcceptInviteResult {
+  status:   "joined" | "requested";
+  /** Normalized JID of the group. Present only when `status === "joined"`. */
+  groupId?: string;
+}
+
+/** Reason code carried by {@link GroupInviteError}. */
+export type GroupInviteErrorReason = "not_found" | "invalid_code" | "already_member" | "unknown";
+
+/** Thrown by {@link WaContract.groupAcceptInvite} on a real failure (never for the "requires approval" case — see its doc). */
+export class GroupInviteError extends Error {
+  readonly reason: GroupInviteErrorReason;
+
+  constructor(reason: GroupInviteErrorReason, message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "GroupInviteError";
+    this.reason = reason;
+  }
+}
+
 // ── Profile ─────────────────────────────────────────────────────────────────
 
 export interface BotMe {
@@ -327,6 +348,17 @@ export interface WaContract {
   groupUpdateDescription(jid: string, description: string): Promise<void>;
   groupInviteCode(jid: string): Promise<string>;
   groupRevokeInvite(jid: string): Promise<string>;
+  /**
+   * Join a group via its invite link or bare invite code. Accepts either
+   * the full `https://chat.whatsapp.com/<code>` URL or just `<code>`.
+   * Resolves to `{ status: "joined" }` on success. When the group
+   * requires admin approval, this is NOT an error — WhatsApp accepted
+   * the join request and resolves to `{ status: "requested" }` with no
+   * `groupId` (the bot isn't a member yet). Throws `GroupInviteError`
+   * for actual failures (invite doesn't exist/expired, malformed code,
+   * bot already a member, etc.) — see its `reason` field.
+   */
+  groupAcceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
 
   // ── profile (bot + group) ───────────────────────────────────────────────────
   updateProfilePicture(jid: string, buffer: Buffer): Promise<void>;

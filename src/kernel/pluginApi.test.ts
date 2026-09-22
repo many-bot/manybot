@@ -251,6 +251,7 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
       calls.revokeInvites.push(jid);
       return "mock-new-invite-code-456";
     },
+    groupAcceptInvite: async () => ({ status: "joined", groupId: COMMUNITY_JID }),
 
     updateProfilePicture: async (jid) => {
       calls.profilePicUpdates.push({ jid });
