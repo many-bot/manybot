@@ -43,30 +43,75 @@ interface TaskEntry {
 const tasks = new Map<string, TaskEntry>();
 
 // ── Persistence (metadata only — fn can't be serialized) ────────────────────
+//
+// Opened lazily — only the first real `ctx.scheduler.schedule()` call (or
+// `getPersisted()`) touches disk. Importing this module used to open the
+// WAL-mode DB unconditionally at boot, even on bots with no scheduled
+// plugin, leaving an idle connection that never got checkpointed and let
+// scheduler.db-wal grow unbounded.
 
-mkdirSync(CONFIG_DIR, { recursive: true });
-const db = new DatabaseSync(path.join(CONFIG_DIR, "scheduler.db"));
-db.exec("PRAGMA journal_mode = WAL");
-db.exec(`
-  CREATE TABLE IF NOT EXISTS scheduled_tasks (
-    plugin_name  TEXT NOT NULL,
-    expression   TEXT NOT NULL,
-    updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY  (plugin_name, expression)
-  );
-`);
+type SchedulerStmts = {
+  upsert: ReturnType<DatabaseSync["prepare"]>;
+  deleteOne: ReturnType<DatabaseSync["prepare"]>;
+  deletePlugin: ReturnType<DatabaseSync["prepare"]>;
+  all: ReturnType<DatabaseSync["prepare"]>;
+};
 
-const stmtUpsert = db.prepare(
-  `INSERT INTO scheduled_tasks (plugin_name, expression) VALUES (?, ?)
-   ON CONFLICT(plugin_name, expression) DO UPDATE SET updated_at = unixepoch()`
-);
-const stmtDeleteOne  = db.prepare(`DELETE FROM scheduled_tasks WHERE plugin_name = ? AND expression = ?`);
-const stmtDeletePlugin = db.prepare(`DELETE FROM scheduled_tasks WHERE plugin_name = ?`);
-const stmtAll = db.prepare(`SELECT plugin_name, expression FROM scheduled_tasks`);
+// SQLite only auto-checkpoints (PASSIVE) once the WAL crosses ~1000 pages
+// (~4MB), and can silently keep missing that mark under steady small
+// writes. So once the DB is actually opened, also force a TRUNCATE
+// checkpoint on a timer and on shutdown (via stopAll), instead of relying
+// on autocheckpoint alone.
+const CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000;
+
+let dbInstance: DatabaseSync | null = null;
+let stmts: SchedulerStmts | null = null;
+let checkpointTimer: NodeJS.Timeout | null = null;
+
+function checkpoint(): void {
+  if (!dbInstance) return;
+  try {
+    dbInstance.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    logger.warn(`[scheduler] wal checkpoint failed: ${(err as Error).message}`);
+  }
+}
+
+function getStmts(): SchedulerStmts {
+  if (stmts) return stmts;
+
+  mkdirSync(CONFIG_DIR, { recursive: true });
+  const db = new DatabaseSync(path.join(CONFIG_DIR, "scheduler.db"));
+  dbInstance = db;
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+      plugin_name  TEXT NOT NULL,
+      expression   TEXT NOT NULL,
+      updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY  (plugin_name, expression)
+    );
+  `);
+
+  stmts = {
+    upsert: db.prepare(
+      `INSERT INTO scheduled_tasks (plugin_name, expression) VALUES (?, ?)
+       ON CONFLICT(plugin_name, expression) DO UPDATE SET updated_at = unixepoch()`
+    ),
+    deleteOne: db.prepare(`DELETE FROM scheduled_tasks WHERE plugin_name = ? AND expression = ?`),
+    deletePlugin: db.prepare(`DELETE FROM scheduled_tasks WHERE plugin_name = ?`),
+    all: db.prepare(`SELECT plugin_name, expression FROM scheduled_tasks`),
+  };
+
+  checkpointTimer = setInterval(checkpoint, CHECKPOINT_INTERVAL_MS);
+  checkpointTimer.unref();
+
+  return stmts;
+}
 
 /** Rows persisted from previous runs — for diagnostics/logging on boot. */
 export function getPersisted(): Array<{ pluginName: string; expression: string }> {
-  return (stmtAll.all() as Array<{ plugin_name: string; expression: string }>).map(r => ({
+  return (getStmts().all.all() as Array<{ plugin_name: string; expression: string }>).map(r => ({
     pluginName: r.plugin_name,
     expression: r.expression,
   }));
@@ -102,7 +147,7 @@ export function schedule(expression: string, fn: () => Promise<void>, pluginName
   });
 
   tasks.set(key, { pluginName, expression, task });
-  stmtUpsert.run(pluginName, expression);
+  getStmts().upsert.run(pluginName, expression);
   logger.info(t("system.schedulerRegistered", { name: pluginName, expression }));
 
   return {
@@ -110,7 +155,7 @@ export function schedule(expression: string, fn: () => Promise<void>, pluginName
       if (tasks.get(key)?.task !== task) return; // already replaced/stopped
       task.stop();
       tasks.delete(key);
-      stmtDeleteOne.run(pluginName, expression);
+      getStmts().deleteOne.run(pluginName, expression);
     },
   };
 }
@@ -122,11 +167,17 @@ export function cancelPlugin(pluginName: string): void {
     entry.task.stop();
     tasks.delete(key);
   }
-  stmtDeletePlugin.run(pluginName);
+  getStmts().deletePlugin.run(pluginName);
 }
 
 /** Stop all schedules in memory (process shutdown) — keeps persisted rows. */
 export function stopAll(): void {
   for (const { task } of tasks.values()) task.stop();
   tasks.clear();
+
+  if (checkpointTimer) {
+    clearInterval(checkpointTimer);
+    checkpointTimer = null;
+  }
+  checkpoint();
 }

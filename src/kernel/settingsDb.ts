@@ -14,6 +14,7 @@
 import { DatabaseSync } from "node:sqlite";
 import path      from "path";
 import { mkdirSync } from "fs";
+import { logger }    from "#logger";
 import { CONFIG_DIR } from "#config";
 
 export interface ScopedAccessor {
@@ -34,91 +35,148 @@ export interface SettingsApi extends ScopedAccessor {
 }
 
 const DB_PATH = process.env.NODE_ENV === "test" ? ":memory:" : path.join(CONFIG_DIR, "settings.db");
-if (DB_PATH !== ":memory:") {
-  mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+type Stmts = {
+  get: ReturnType<DatabaseSync["prepare"]>;
+  getAll: ReturnType<DatabaseSync["prepare"]>;
+  set: ReturnType<DatabaseSync["prepare"]>;
+  delete: ReturnType<DatabaseSync["prepare"]>;
+  deleteAll: ReturnType<DatabaseSync["prepare"]>;
+  getCommunityId: ReturnType<DatabaseSync["prepare"]>;
+  getCommunityChats: ReturnType<DatabaseSync["prepare"]>;
+  link: ReturnType<DatabaseSync["prepare"]>;
+  unlink: ReturnType<DatabaseSync["prepare"]>;
+};
+
+// Opened lazily — only the first real read/write (via `ctx.settings`, or
+// `getPluginSetting()`) touches disk. Importing this module used to open
+// the WAL-mode DB unconditionally at boot, even on bots that never use
+// settings, leaving an idle connection that never got checkpointed and
+// let settings.db-wal grow unbounded.
+//
+// SQLite only auto-checkpoints (PASSIVE) once the WAL crosses ~1000 pages
+// (~4MB), and can silently keep missing that mark under steady small
+// writes. So once the DB is actually opened, also force a TRUNCATE
+// checkpoint on a timer and on shutdown, instead of relying on autocheckpoint alone.
+const CHECKPOINT_INTERVAL_MS = 10 * 60 * 1000;
+
+let dbInstance: DatabaseSync | null = null;
+let stmts: Stmts | null = null;
+let checkpointTimer: NodeJS.Timeout | null = null;
+
+function checkpoint(): void {
+  if (!dbInstance) return;
+  try {
+    dbInstance.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch (err) {
+    logger.warn(`[settingsDb] wal checkpoint failed: ${(err as Error).message}`);
+  }
 }
 
-const db = new DatabaseSync(DB_PATH);
+/** Flush and stop the checkpoint timer (process shutdown). Safe if the DB was never opened. */
+export function stopSettingsDb(): void {
+  if (checkpointTimer) {
+    clearInterval(checkpointTimer);
+    checkpointTimer = null;
+  }
+  checkpoint();
+}
 
-db.exec("PRAGMA journal_mode = WAL");
-db.exec("PRAGMA foreign_keys = ON");
+function getStmts(): Stmts {
+  if (stmts) return stmts;
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS plugin_settings (
-    plugin_name  TEXT NOT NULL,
-    chat_id      TEXT NOT NULL,
-    key          TEXT NOT NULL,
-    value        TEXT NOT NULL,
-    updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY  (plugin_name, chat_id, key)
-  );
+  if (DB_PATH !== ":memory:") {
+    mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  }
 
-  CREATE TABLE IF NOT EXISTS community_links (
-    chat_id      TEXT PRIMARY KEY,
-    community_id TEXT NOT NULL,
-    linked_at    INTEGER NOT NULL DEFAULT (unixepoch())
-  );
+  const db = new DatabaseSync(DB_PATH);
+  dbInstance = db;
 
-  CREATE INDEX IF NOT EXISTS idx_community
-    ON community_links (community_id);
-`);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
 
-// ── Prepared statements ───────────────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS plugin_settings (
+      plugin_name  TEXT NOT NULL,
+      chat_id      TEXT NOT NULL,
+      key          TEXT NOT NULL,
+      value        TEXT NOT NULL,
+      updated_at   INTEGER NOT NULL DEFAULT (unixepoch()),
+      PRIMARY KEY  (plugin_name, chat_id, key)
+    );
 
-const stmts = {
-  get: db.prepare(
-    "SELECT value FROM plugin_settings WHERE plugin_name = ? AND chat_id = ? AND key = ?"
-  ),
+    CREATE TABLE IF NOT EXISTS community_links (
+      chat_id      TEXT PRIMARY KEY,
+      community_id TEXT NOT NULL,
+      linked_at    INTEGER NOT NULL DEFAULT (unixepoch())
+    );
 
-  getAll: db.prepare(
-    "SELECT key, value FROM plugin_settings WHERE plugin_name = ? AND chat_id = ?"
-  ),
+    CREATE INDEX IF NOT EXISTS idx_community
+      ON community_links (community_id);
+  `);
 
-  set: db.prepare(`
-    INSERT INTO plugin_settings (plugin_name, chat_id, key, value, updated_at)
-    VALUES (?, ?, ?, ?, unixepoch())
-    ON CONFLICT (plugin_name, chat_id, key)
-    DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-  `),
+  stmts = {
+    get: db.prepare(
+      "SELECT value FROM plugin_settings WHERE plugin_name = ? AND chat_id = ? AND key = ?"
+    ),
 
-  delete: db.prepare(
-    "DELETE FROM plugin_settings WHERE plugin_name = ? AND chat_id = ? AND key = ?"
-  ),
+    getAll: db.prepare(
+      "SELECT key, value FROM plugin_settings WHERE plugin_name = ? AND chat_id = ?"
+    ),
 
-  deleteAll: db.prepare(
-    "DELETE FROM plugin_settings WHERE plugin_name = ? AND chat_id = ?"
-  ),
+    set: db.prepare(`
+      INSERT INTO plugin_settings (plugin_name, chat_id, key, value, updated_at)
+      VALUES (?, ?, ?, ?, unixepoch())
+      ON CONFLICT (plugin_name, chat_id, key)
+      DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `),
 
-  getCommunityId: db.prepare(
-    "SELECT community_id FROM community_links WHERE chat_id = ?"
-  ),
+    delete: db.prepare(
+      "DELETE FROM plugin_settings WHERE plugin_name = ? AND chat_id = ? AND key = ?"
+    ),
 
-  getCommunityChats: db.prepare(
-    "SELECT chat_id FROM community_links WHERE community_id = ?"
-  ),
+    deleteAll: db.prepare(
+      "DELETE FROM plugin_settings WHERE plugin_name = ? AND chat_id = ?"
+    ),
 
-  link: db.prepare(`
-    INSERT INTO community_links (chat_id, community_id, linked_at)
-    VALUES (?, ?, unixepoch())
-    ON CONFLICT (chat_id)
-    DO UPDATE SET community_id = excluded.community_id, linked_at = excluded.linked_at
-  `),
+    getCommunityId: db.prepare(
+      "SELECT community_id FROM community_links WHERE chat_id = ?"
+    ),
 
-  unlink: db.prepare(
-    "DELETE FROM community_links WHERE chat_id = ?"
-  ),
-};
+    getCommunityChats: db.prepare(
+      "SELECT chat_id FROM community_links WHERE community_id = ?"
+    ),
+
+    link: db.prepare(`
+      INSERT INTO community_links (chat_id, community_id, linked_at)
+      VALUES (?, ?, unixepoch())
+      ON CONFLICT (chat_id)
+      DO UPDATE SET community_id = excluded.community_id, linked_at = excluded.linked_at
+    `),
+
+    unlink: db.prepare(
+      "DELETE FROM community_links WHERE chat_id = ?"
+    ),
+  };
+
+  if (DB_PATH !== ":memory:") {
+    checkpointTimer = setInterval(checkpoint, CHECKPOINT_INTERVAL_MS);
+    checkpointTimer.unref();
+  }
+
+  return stmts;
+}
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
 
 function dbGet(pluginName: string, chatId: string, key: string): unknown {
-  const row = stmts.get.get(pluginName, chatId, key) as { value: string } | undefined;
+  const row = getStmts().get.get(pluginName, chatId, key) as { value: string } | undefined;
   if (!row) return undefined;
   try { return JSON.parse(row.value); } catch { return row.value; }
 }
 
 function dbGetAll(pluginName: string, chatId: string): Record<string, unknown> {
-  const rows = stmts.getAll.all(pluginName, chatId) as { key: string; value: string }[];
+  const rows = getStmts().getAll.all(pluginName, chatId) as { key: string; value: string }[];
   return Object.fromEntries(
     rows.map(({ key, value }: { key: string; value: string }) => {
       try { return [key, JSON.parse(value)]; } catch { return [key, value]; }
@@ -127,15 +185,15 @@ function dbGetAll(pluginName: string, chatId: string): Record<string, unknown> {
 }
 
 function dbSet(pluginName: string, chatId: string, key: string, value: unknown): void {
-  stmts.set.run(pluginName, chatId, key, JSON.stringify(value));
+  getStmts().set.run(pluginName, chatId, key, JSON.stringify(value));
 }
 
 function dbDelete(pluginName: string, chatId: string, key: string): void {
-  stmts.delete.run(pluginName, chatId, key);
+  getStmts().delete.run(pluginName, chatId, key);
 }
 
 function dbDeleteAll(pluginName: string, chatId: string): void {
-  stmts.deleteAll.run(pluginName, chatId);
+  getStmts().deleteAll.run(pluginName, chatId);
 }
 
 /**
@@ -245,14 +303,14 @@ export function buildSettingsApi(pluginName: string, chatId: string): SettingsAp
      * @param {string} communityId
      */
     link(communityId) {
-      stmts.link.run(chatId, communityId);
+      getStmts().link.run(chatId, communityId);
     },
 
     /**
      * Unlink the current chat from its community.
      */
     unlink() {
-      stmts.unlink.run(chatId);
+      getStmts().unlink.run(chatId);
     },
 
     /**
@@ -260,7 +318,7 @@ export function buildSettingsApi(pluginName: string, chatId: string): SettingsAp
      * @returns {string | null}
      */
     getCommunityId() {
-      return (stmts.getCommunityId.get(chatId) as { community_id: string } | undefined)?.community_id ?? null;
+      return (getStmts().getCommunityId.get(chatId) as { community_id: string } | undefined)?.community_id ?? null;
     },
 
     /**
@@ -269,9 +327,9 @@ export function buildSettingsApi(pluginName: string, chatId: string): SettingsAp
      * @returns {string[]}
      */
     getCommunityChats() {
-      const row = stmts.getCommunityId.get(chatId) as { community_id: string } | undefined;
+      const row = getStmts().getCommunityId.get(chatId) as { community_id: string } | undefined;
       if (!row) return [];
-      return stmts.getCommunityChats.all(row.community_id).map((r) => (r as { chat_id: string }).chat_id);
+      return getStmts().getCommunityChats.all(row.community_id).map((r) => (r as { chat_id: string }).chat_id);
     },
   };
 }

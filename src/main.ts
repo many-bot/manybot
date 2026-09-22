@@ -23,6 +23,7 @@ dns.setDefaultResultOrder("ipv4first");
 import { baileysContract }            from "#drivers/baileys/index.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
+import { stopSettingsDb } from "#settingsdb";
 import { sendAlert }                  from "#kernel/alerts.js";
 import { startStatusServer }          from "#kernel/statusServer.js";
 import { getDriverManager }           from "#kernel/driverManager.js";
@@ -81,6 +82,7 @@ async function shutdown(reason: string, isError = false) {
   }
 
   stopScheduler();
+  stopSettingsDb();
 
   try {
     await driverManager.shutdown();
