@@ -52,6 +52,13 @@ export interface AlertEvent {
    * itself being down.
    */
   fatal?: boolean;
+  /**
+   * Which sinks this event goes through. Defaults to all four
+   * (log, OS, WhatsApp, email) when omitted — existing callers are
+   * unaffected. Use this to keep a high-frequency, expected event out of
+   * the noisy/interruptive sinks while still logging it.
+   */
+  sinks?: Array<"log" | "os" | "whatsapp" | "email">;
 }
 
 const ALERTS_LOG_FILE = path.join(CONFIG_DIR, "alerts.log");
@@ -201,12 +208,14 @@ async function notifyEmail(event: AlertEvent): Promise<void> {
  * @param {AlertEvent} event
  */
 export async function sendAlert(event: AlertEvent): Promise<void> {
-  await logToFile(event);
-  await Promise.allSettled([
-    notifyOS(event),
-    notifyWhatsApp(event),
-    notifyEmail(event),
-  ]);
+  const sinks = event.sinks ?? ["log", "os", "whatsapp", "email"];
+  if (sinks.includes("log")) await logToFile(event);
+
+  const jobs: Promise<void>[] = [];
+  if (sinks.includes("os"))       jobs.push(notifyOS(event));
+  if (sinks.includes("whatsapp")) jobs.push(notifyWhatsApp(event));
+  if (sinks.includes("email"))    jobs.push(notifyEmail(event));
+  await Promise.allSettled(jobs);
 }
 
 /**
@@ -219,12 +228,7 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
  * silently disappearing.
  *
  * Mapped kinds:
- *   send_failed_no_fallback   — primary failed, no secondary available
- *   send_failed_both_drivers  — both primary and secondary failed
- *   send_unconfirmed          — primary sendText() succeeded but history
- *                               verification couldn't confirm it; not
- *                               treated as a failure (unmapped, falls
- *                               through as a warning)
+ *   send_failed               — driver's sendText() threw
  *   download_media_failed     — downloadMedia() exhausted its retries
  *                               (or hit a non-transient error) for an
  *                               incoming message's media
@@ -235,25 +239,18 @@ export async function sendAlert(event: AlertEvent): Promise<void> {
  *                               instead, not this one.
  */
 export type AlertKind =
-  | "send_failed_no_fallback"
-  | "send_failed_both_drivers"
+  | "send_failed"
   | "download_media_failed"
   | "plugin_crash"
   | (string & {}); // open for future kinds without breaking the union
 
 export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}): void {
   let event: AlertEvent;
-  if (kind === "send_failed_no_fallback") {
+  if (kind === "send_failed") {
     event = {
       level:   "critical",
-      title:   t("alerts.noFallbackTitle"),
-      message: `jid=${details.jid} primary=${details.primary}`,
-    };
-  } else if (kind === "send_failed_both_drivers") {
-    event = {
-      level:   "critical",
-      title:   t("alerts.bothDriversFailedTitle"),
-      message: `jid=${details.jid} ${details.primary}->${details.secondary}` +
+      title:   t("alerts.sendFailedTitle"),
+      message: `jid=${details.jid} driver=${details.driver}` +
                (details.error ? ` error=${String(details.error)}` : ""),
     };
   } else if (kind === "download_media_failed") {

@@ -113,8 +113,7 @@
     "message": "⚠️ Something went wrong while running {{command}}. Please try again."
   },
   "alerts": {
-    "noFallbackTitle": "manybot: no fallback driver",
-    "bothDriversFailedTitle": "manybot: sending failed on both drivers",
+    "sendFailedTitle": "manybot: send failed",
     "downloadMediaFailedTitle": "manybot: media download failed",
     "downloadMediaFailedMessage": "Chat: {{chat}}\nMessage: {{messageId}}\nGave up after {{attempts}} attempt(s).\nError: {{error}}",
     "updateAvailableTitle": "New manybot version available",

@@ -469,14 +469,12 @@ export interface Config {
   // socket is opened, the bot simply runs on whatever remains.
   //
   // The TOML surface is flat lowercase keys (driver_primary,
-  // driver_baileys_enabled, driver_whatsmeow_*, …) — same style as the
+  // driver_baileys_enabled, …) — same style as the
   // rest of this file. `normalize()` rebuilds the nested object below
   // from those flat keys so callers use `CONFIG.drivers.*`.
   drivers: {
-    primary:             "baileys";
-    fallbackCooldownMs:  number;
-    verifyWindowMs:      number[];
-    baileys:             { enabled: boolean };
+    primary: "baileys";
+    baileys: { enabled: boolean };
   };
 
   [key: string]: unknown;
@@ -514,10 +512,8 @@ const DEFAULTS: Config = {
   STATUS_PORT:    8080,
 
   drivers: {
-    primary:            "baileys",
-    fallbackCooldownMs: 60000,
-    verifyWindowMs:     [500, 1000, 1500, 2500, 5000],
-    baileys:            { enabled: true },
+    primary: "baileys",
+    baileys: { enabled: true },
   },
 };
 
@@ -572,16 +568,14 @@ function normalize(cfg: Config): Config {
   cfg.STATUS_ENABLED = rawStatusEnabled !== false && rawStatusEnabled !== "false";
   cfg.STATUS_PORT = Number(cfg.STATUS_PORT) || 8080;
 
-// drivers.* — the fallback guard and DriverManager read these at every
-   // send. The TOML surface is flat lowercase keys (driver_primary,
-   // driver_baileys_enabled, …) — same style as the
-   // rest of this file. `normalize()` rebuilds the nested object below
-   // from those flat keys so callers (main.ts, sendFallbackGuard.ts,
+// drivers.* — DriverManager reads this at boot. The TOML surface is
+   // flat lowercase keys (driver_primary, driver_baileys_enabled, …) —
+   // same style as the rest of this file. `normalize()` rebuilds the
+   // nested object below from those flat keys so callers (main.ts,
    // supervisor.ts, client.ts) keep using `CONFIG.drivers.*`.
    // Coerce strings (legacy .conf arrives as strings) and reject anything
    // that isn't a recognized driver name, so a typo in TOML falls back
    // to the safe default rather than crashing at boot.
-  const isTruthy = (v: unknown) => v === true || v === "true";
   const coerceEnabled = (v: unknown, fallback: boolean): boolean => {
     if (v === true || v === false) return v;
     if (v === "true") return true;
@@ -591,15 +585,9 @@ function normalize(cfg: Config): Config {
   // Allow either the new flat keys or (for backward compatibility) the
   // old nested `[drivers]` block. Flat keys take precedence.
   const nestedDrv = (cfg.drivers ?? {}) as Partial<Config["drivers"]> & Record<string, unknown>;
-  const flatCooldown          = cfg.driver_fallback_cooldown_ms ?? nestedDrv.fallbackCooldownMs;
-  const flatVerify            = cfg.driver_verify_window_ms   ?? nestedDrv.verifyWindowMs;
-  const flatBaileysEnabled    = cfg.driver_baileys_enabled    ?? nestedDrv.baileys?.enabled;
+  const flatBaileysEnabled = cfg.driver_baileys_enabled ?? nestedDrv.baileys?.enabled;
   cfg.drivers = {
-    primary:            "baileys",
-    fallbackCooldownMs: Number(flatCooldown) || 60000,
-    verifyWindowMs:     Array.isArray(flatVerify) && flatVerify.length
-      ? (flatVerify as unknown[]).map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n) && n > 0)
-      : [500, 1000, 1500, 2500, 5000],
+    primary: "baileys",
     baileys: {
       enabled: coerceEnabled(flatBaileysEnabled, true),
     },
@@ -608,12 +596,7 @@ function normalize(cfg: Config): Config {
   // loose top-level Config keys (the `Config` interface exposes only
   // the nested `drivers` block).
   delete (cfg as Record<string, unknown>).driver_primary;
-  delete (cfg as Record<string, unknown>).driver_fallback_cooldown_ms;
-  delete (cfg as Record<string, unknown>).driver_verify_window_ms;
   delete (cfg as Record<string, unknown>).driver_baileys_enabled;
-  delete (cfg as Record<string, unknown>).driver_whatsmeow_enabled;
-  delete (cfg as Record<string, unknown>).driver_whatsmeow_grpc_address;
-  delete (cfg as Record<string, unknown>).driver_whatsmeow_binary_path;
 
   return cfg;
 }

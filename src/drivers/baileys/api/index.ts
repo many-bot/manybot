@@ -1655,12 +1655,10 @@ function makeSender(
 
   return {
     text(content: string, opts: { linkPreview?: boolean; mentions?: string[] } = {}) {
-      // The text path goes through sendFallbackGuard:
-      // try the active driver, verify the message actually landed in the
-      // driver's history, and on failure swap to the other driver. sendMedia
-      // and react below still go straight to the contract on purpose — media
-      // fallback is out of scope for this phase, react is one-shot and
-      // already idempotent at the protocol level.
+      // The text path goes through sendFallbackGuard: send via the active
+      // driver, trust it on resolve. sendMedia and react below still go
+      // straight to the contract on purpose — no guard needed, react is
+      // one-shot and already idempotent at the protocol level.
       return new MessageHandle((async () => {
         const quotedRef = await resolveQuoted();
         const mentionsResolved = opts.mentions?.length

@@ -144,9 +144,6 @@ function createMockContract(): {
     me: () => ({ id: "5511900000000@s.whatsapp.net" }),
 
     downloadMedia: async () => null,
-    // Mirrors real Baileys behavior: sendText's result lands in history
-    // immediately (sendFallbackGuard's verifyDelivery does a t=0 lookup
-    // here to confirm the send before the caller's await resolves).
     getHistory: async (jid: string) => sentHistory.filter(m => m.chatId === jid),
   } as unknown as WaContract;
 

@@ -1,19 +1,15 @@
 /**
  * driverManager.ts
  *
- * Registry for the active WhatsApp driver and any fallback drivers
- * registered alongside it. Centralizes the answer to "which driver do
- * I send through right now?" so sendFallbackGuard can pick the primary,
- * notice when it's degraded, and reach for the secondary without
- * scattering that decision across the codebase.
+ * Registry for the active WhatsApp driver. Centralizes the answer to
+ * "which driver do I send through right now?" without scattering that
+ * decision across the codebase.
  *
  * Singleton access via getDriverManager() — same pattern as the
  * globalSock in pluginLoader.ts. Only main.ts is expected to call
- * register(); everywhere else reads through active() / get() / isDegraded.
+ * register(); everywhere else reads through active() / get().
  *
  * Shutdown order in shutdown() is reverse-registration.
- *
- * See the interface and cooldown semantics.
  */
 
 import { logger } from "#logger";
@@ -29,16 +25,14 @@ import type { WaContract } from "#kernel/waContract.js";
 type DriverName = string;
 
 class DriverManager {
-  private drivers       = new Map<string, WaContract>();
-  private activeName    = "";
+  private drivers    = new Map<string, WaContract>();
+  private activeName = "";
   /** Insertion order — used by shutdown() to disconnect in reverse. */
-  private order:        string[] = [];
-  private degradedUntil = new Map<string, number>();
+  private order:     string[] = [];
 
   /**
    * Register a driver. The first call with isPrimary=true (or the first
-   * call overall if none sets it) becomes the active driver. Subsequent
-   * calls with isPrimary=false are stored as fallbacks.
+   * call overall if none sets it) becomes the active driver.
    */
   register(driver: WaContract, opts: { isPrimary?: boolean } = {}): void {
     const name = driver.name;
@@ -75,42 +69,10 @@ class DriverManager {
     return this.drivers.get(name)?.isReady() ?? false;
   }
 
-  isDegraded(name: DriverName): boolean {
-    const until = this.degradedUntil.get(name);
-    return !!until && Date.now() < until;
-  }
-
-  markDegraded(name: DriverName, durationMs: number): void {
-    this.degradedUntil.set(name, Date.now() + durationMs);
-  }
-
-  /**
-   * Drop the degradation entry for `name` so the next `isDegraded()`
-   * check returns false. Used after a successful send to clear the
-   * cooldown that the most recent failed send had set, without waiting
-   * for the timer to expire.
-   */
-  clearDegraded(name: DriverName): void {
-    this.degradedUntil.delete(name);
-  }
-
-  /**
-   * Promote a different driver to active. Used by tests / hot-swap;
-   * the production sendFallbackGuard never calls this — fallback uses
-   * the secondary by direct call, leaving activeName untouched so the
-   * primary gets retried after the cooldown.
-   */
-  switchTo(name: DriverName): void {
-    if (!this.drivers.has(name)) {
-      throw new Error(`[driverManager] cannot switch to unregistered driver "${name}"`);
-    }
-    this.activeName = name;
-  }
-
   /**
    * Disconnect every registered driver in reverse-registration order.
-   * Errors are logged, not thrown, so a stubborn secondary can't block
-   * the primary's shutdown (or vice versa).
+   * Errors are logged, not thrown, so one stubborn driver can't block
+   * another's shutdown.
    */
   async shutdown(): Promise<void> {
     for (let i = this.order.length - 1; i >= 0; i--) {
@@ -125,7 +87,6 @@ class DriverManager {
     }
     this.drivers.clear();
     this.order.length = 0;
-    this.degradedUntil.clear();
     this.activeName = "";
   }
 }

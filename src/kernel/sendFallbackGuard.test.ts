@@ -4,20 +4,17 @@ import { sendWithFallback, SendFailedError } from "#kernel/sendFallbackGuard.js"
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import type { WaContract, SentMessageRef } from "#kernel/waContract.js";
 
-function createMockDriver(name: "baileys", ready = true, failsSend = false, failsVerify = false): WaContract {
+function createMockDriver(name: "baileys", failsSend = false): WaContract {
   const mockRef = (id: string): SentMessageRef => ({ id, chatId: "123@c.us", timestamp: Date.now() });
 
   return {
     name,
-    isReady: () => ready,
+    isReady: () => true,
     sendText: async (jid: string, text: string) => {
       if (failsSend) throw new Error(`${name} sendText failed`);
       return mockRef(`msg_${name}`);
     },
-    getHistory: async () => {
-      if (failsVerify) return [];
-      return [{ id: `msg_${name}`, fromMe: true } as any];
-    },
+    getHistory: async () => [{ id: `msg_${name}`, fromMe: true } as any],
     connect: async () => {},
     disconnect: async () => {},
     me: () => ({ id: "123@c.us" }),
@@ -61,34 +58,21 @@ describe("kernel/sendFallbackGuard", () => {
     _resetDriverManagerForTests();
   });
 
-  test("delivers text via primary driver when healthy", async () => {
+  test("delivers text via active driver", async () => {
     const dm = getDriverManager();
-    const primary = createMockDriver("baileys");
-    dm.register(primary, { isPrimary: true });
+    dm.register(createMockDriver("baileys"), { isPrimary: true });
 
     const ref = await sendWithFallback("5511999999999@c.us", "hello");
     assert.equal(ref.id, "msg_baileys");
   });
 
-  test("throws SendFailedError with no_fallback when send fails", async () => {
+  test("throws SendFailedError when the driver's sendText rejects", async () => {
     const dm = getDriverManager();
-    const primaryFailing = createMockDriver("baileys", true, true);
-
-    dm.register(primaryFailing, { isPrimary: true });
+    dm.register(createMockDriver("baileys", true), { isPrimary: true });
 
     await assert.rejects(
-      async () => sendWithFallback("5511999999999@c.us", "no fallback"),
-      (err: any) => err instanceof SendFailedError && err.reason === "no_fallback"
+      async () => sendWithFallback("5511999999999@c.us", "will fail"),
+      (err: any) => err instanceof SendFailedError && err.jid === "5511999999999@c.us"
     );
-  });
-
-  test("resolves with primary's ref when verification can't confirm it (no fallback driver)", async () => {
-    const dm = getDriverManager();
-    const primaryUnconfirmed = createMockDriver("baileys", true, false, true);
-
-    dm.register(primaryUnconfirmed, { isPrimary: true });
-
-    const ref = await sendWithFallback("5511999999999@c.us", "verify fail");
-    assert.equal(ref.id, "msg_baileys", "sendText succeeded, so the send must be treated as delivered");
   });
 });

@@ -78,21 +78,6 @@ describe("kernel/driverManager", () => {
     assert.throws(() => dm.active(), /no active driver registered/);
   });
 
-  test("tracks degradation with expiration", async (t) => {
-    t.mock.timers.enable({ apis: ["Date"] });
-    const dm = getDriverManager();
-    const baileys = createFakeDriver("baileys");
-
-    dm.register(baileys, { isPrimary: true });
-    assert.equal(dm.isDegraded("baileys"), false);
-
-    dm.markDegraded("baileys", 1000);
-    assert.equal(dm.isDegraded("baileys"), true);
-
-    t.mock.timers.tick(1001);
-    assert.equal(dm.isDegraded("baileys"), false);
-  });
-
   test("shutdown disconnects all drivers", async () => {
     const dm = getDriverManager();
     const baileys = createFakeDriver("baileys");
