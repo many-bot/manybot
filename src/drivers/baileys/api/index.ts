@@ -2146,9 +2146,13 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
   }
 
   async function getGroup(jid: string) {
-    const meta = await contract.groupMetadata(jid);
-    if (!meta) throw new Error(`Group not found: ${jid}`);
-    return meta;
+    try {
+      const meta = await getGroupMetadataCached(contract, jid);
+      if (!meta) throw new Error();
+      return meta;
+    } catch {
+      throw new Error(`Group not found: ${jid}`);
+    }
   }
 
   /**
@@ -2245,9 +2249,11 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
    * announcements group has `isCommunityAnnounce` and a `linkedParent`),
    * but its admins are the Community's admins: a plain
    * `groupParticipantsUpdate` on it is rejected with "bad-request".
-   * Redirect to the parent instead. `users` were resolved against the
-   * announcements group's participant list, so they're resolved again
-   * against the parent, which may use a different jid form (LID vs PN).
+   * Redirect to the parent instead. `users` were already resolved against
+   * the announcements group's participant list — reuse them as-is rather
+   * than re-resolving against the parent: `groupMetadata()` on the
+   * Community jid only returns its admins, so a promote target (not yet
+   * an admin) would never be found there.
    */
   async function runRoleUpdate(
     jid: string,
@@ -2256,8 +2262,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
   ) {
     const meta = await getGroupMetadataCached(contract, jid);
     if (meta.isCommunityAnnounce && meta.linkedParent) {
-      const parentUsers = await resolveTargets(meta.linkedParent, users);
-      return runCommunityRoleUpdate(meta.linkedParent, parentUsers, action);
+      return runCommunityRoleUpdate(meta.linkedParent, users, action);
     }
     if (!meta.isCommunity) return runParticipantsUpdate(jid, users, action);
     return runCommunityRoleUpdate(jid, users, action);
