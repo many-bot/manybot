@@ -111,7 +111,10 @@ export interface BaileysAdapterHandle {
  * Exported so `api/index.ts` can decode the quoted payload when
  * synthesizing the `BotMessage` returned by `getReply()`.
  */
-export function decodeContent(content: unknown): { type: BotMessage["type"]; body: string; mimetype: string | undefined } {
+/** Hard cap on `BotMessage.body` — protects storage/logs/pipeline from oversized text. */
+export const MAX_BODY_LENGTH = 4096;
+
+export function decodeContent(content: unknown): { type: BotMessage["type"]; body: string; mimetype: string | undefined; big: boolean; bodyLength: number } {
   const m = normalizeMessageContent(content as never) ?? undefined;
   let type: BotMessage["type"] = "other";
   let body = "";
@@ -139,7 +142,10 @@ export function decodeContent(content: unknown): { type: BotMessage["type"]; bod
     type = "text";
     body = [m.buttonsMessage.contentText ?? "", m.buttonsMessage.footerText ?? ""].filter(Boolean).join(" ");
   }
-  return { type, body, mimetype };
+  const bodyLength = body.length;
+  const big = bodyLength > MAX_BODY_LENGTH;
+  if (big) body = body.slice(0, MAX_BODY_LENGTH);
+  return { type, body, mimetype, big, bodyLength };
 }
 
 export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapterHandle {
@@ -245,7 +251,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
   }
   function toBotMessage(msg: RawMessage): BotMessage {
     const m = normalizeMessageContent(msg.message) ?? undefined;
-    const { type, body, mimetype } = decodeContent(msg.message);
+    const { type, body, mimetype, big, bodyLength } = decodeContent(msg.message);
 
     const key = msg.key as unknown as {
       participant?: string; participantAlt?: string;
@@ -284,6 +290,8 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       contentHash:  sha1(body.trim()),
       timestamp:    Number(msg.messageTimestamp ?? 0) * 1000,
       body,
+      big,
+      bodyLength,
       mimetype:     mimetype ?? undefined,
       pushName:     (msg as unknown as { pushName?: string }).pushName,
       mentionedJid: ciTyped?.mentionedJid?.map(normalizeMentionedJid) ?? undefined,

@@ -1003,6 +1003,10 @@ export interface WAMessageContext {
   id:         string;
   timestamp:  number;
   body:       string;
+  /** True when the original text was longer than MAX_BODY_LENGTH and `body` was truncated. */
+  big:        boolean;
+  /** Length of the original, untruncated text. Only meaningful when `big` is true. */
+  bodyLength: number;
   type:       string;
   fromMe:     boolean;
   /** LID-canonical sender JID (`@lid`), or `null` when no LID is known yet for this contact. */
@@ -1163,6 +1167,8 @@ export function buildMessageContext(
           contentHash: "",
           timestamp:   quotedTimestamp,
           body:        decoded.body,
+          big:         decoded.big,
+          bodyLength:  decoded.bodyLength,
           mimetype:    decoded.mimetype,
           fromLid:     quotedFromLid,
           fromPn:      quotedFromPn,
@@ -1212,6 +1218,8 @@ export function buildMessageContext(
     id:         msg.id,
     timestamp:  msg.timestamp || 0,
     body,
+    big:        msg.big ?? false,
+    bodyLength: msg.bodyLength ?? body.length,
     type:       getMsgType(msg),
     fromMe:     msg.fromMe,
     sender,

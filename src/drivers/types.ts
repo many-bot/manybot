@@ -39,8 +39,12 @@ export interface BotMessage {
 
   // ── Optional fields populated when the driver / adapter can supply them. ──
 
-  /** Plain-text body / caption extracted from the wrapped message. */
+  /** Plain-text body / caption extracted from the wrapped message, capped at MAX_BODY_LENGTH. */
   body?: string;
+  /** True when the original text was longer than MAX_BODY_LENGTH and `body` was truncated. */
+  big?: boolean;
+  /** Length of the original, untruncated text. Only meaningful when `big` is true. */
+  bodyLength?: number;
   /** MIME type of the media payload, when `type` is a media kind. */
   mimetype?: string;
   /** Sender's "push name" (the nickname WhatsApp shows for the contact). */
