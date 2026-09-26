@@ -568,7 +568,7 @@ export interface WAMessageSender {
   text(content: string, opts?: SendTextOptions): MessageHandle;
   /**
    * Send an image.
-   * @param filePath - Local path or raw Buffer of the image.
+   * @param source - Local path or raw Buffer of the image.
    * @param caption - Optional caption shown under the image.
    * @param opts - Media options such as view-once.
    * @returns A {@link MessageHandle} for the sent message.
@@ -576,7 +576,7 @@ export interface WAMessageSender {
   image(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
    * Send a video.
-   * @param filePath - Local path or raw Buffer of the video.
+   * @param source - Local path or raw Buffer of the video.
    * @param caption - Optional caption shown under the video.
    * @param opts - Media options such as view-once or gifPlayback.
    * @returns A {@link MessageHandle} for the sent message.
@@ -585,7 +585,7 @@ export interface WAMessageSender {
   /**
    * Send an image/video as a GIF (auto-loops, muted). Accepts `.gif` and
    * `.mp4` inputs — `.gif` files are converted to mp4 via ffmpeg automatically.
-   * @param filePath - Local path or raw Buffer of the image/video.
+   * @param source - Local path or raw Buffer of the image/video.
    * @param caption - Optional caption shown below the GIF.
    * @param opts - Media options such as view-once.
    * @returns A {@link MessageHandle} for the sent message.
@@ -593,7 +593,7 @@ export interface WAMessageSender {
   gif(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
    * Send an audio message.
-   * @param filePath - Local path or raw Buffer of the audio.
+   * @param source - Local path or raw Buffer of the audio.
    * @param opts - Whether to send as a voice note (ptt) and/or view-once.
    * @returns A {@link MessageHandle} for the sent message.
    */
@@ -606,7 +606,7 @@ export interface WAMessageSender {
   sticker(source: string | Buffer): MessageHandle;
   /**
    * Send an arbitrary file as a document attachment.
-   * @param filePath - Local path or raw Buffer of the file.
+   * @param source - Local path or raw Buffer of the file.
    * @param filename - Display filename shown to the recipient; defaults to the basename of `filePath`.
    * @returns A {@link MessageHandle} for the sent message.
    */

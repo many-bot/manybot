@@ -577,7 +577,7 @@ export interface WAMessageSender {
   text(content: string, opts?: SendTextOptions): MessageHandle;
   /**
    * Envia uma imagem.
-   * @param filePath - Caminho local ou Buffer bruto da imagem.
+   * @param source - Caminho local ou Buffer bruto da imagem.
    * @param caption - Legenda opcional exibida abaixo da imagem.
    * @param opts - Opções de mídia como visualização única.
    * @returns Um {@link MessageHandle} para a mensagem enviada.
@@ -585,7 +585,7 @@ export interface WAMessageSender {
   image(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
    * Envia um vídeo.
-   * @param filePath - Caminho local ou Buffer bruto do vídeo.
+   * @param source- Caminho local ou Buffer bruto do vídeo.
    * @param caption - Legenda opcional exibida abaixo do vídeo.
    * @param opts - Opções de mídia como visualização única ou gifPlayback.
    * @returns Um {@link MessageHandle} para a mensagem enviada.
@@ -595,7 +595,7 @@ export interface WAMessageSender {
    * Envia uma imagem/vídeo como GIF (loop automático, mudo). Aceita
    * entradas `.gif` e `.mp4` — arquivos `.gif` são convertidos para mp4
    * automaticamente via ffmpeg.
-   * @param filePath - Caminho local ou Buffer bruto da imagem/vídeo.
+   * @param source- Caminho local ou Buffer bruto da imagem/vídeo.
    * @param caption - Legenda opcional exibida abaixo do GIF.
    * @param opts - Opções de mídia como visualização única.
    * @returns Um {@link MessageHandle} para a mensagem enviada.
@@ -603,7 +603,7 @@ export interface WAMessageSender {
   gif(source: string | Buffer, caption?: string, opts?: SendMediaOptions): MessageHandle;
   /**
    * Envia uma mensagem de áudio.
-   * @param filePath - Caminho local ou Buffer bruto do áudio.
+   * @param source - Caminho local ou Buffer bruto do áudio.
    * @param opts - Se deve enviar como mensagem de voz (ptt) e/ou visualização única.
    * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
@@ -616,7 +616,7 @@ export interface WAMessageSender {
   sticker(source: string | Buffer): MessageHandle;
   /**
    * Envia um arquivo arbitrário como anexo de documento.
-   * @param filePath - Caminho local ou Buffer bruto do arquivo.
+   * @param source- Caminho local ou Buffer bruto do arquivo.
    * @param filename - Nome de arquivo exibido ao destinatário; o padrão é o nome-base de `filePath`.
    * @returns Um {@link MessageHandle} para a mensagem enviada.
    */
