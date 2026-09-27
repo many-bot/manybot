@@ -513,6 +513,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     const ctx = buildApi({
@@ -614,6 +617,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     const ctx = buildApi({
@@ -661,6 +667,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     const gameCtx = buildApi({
@@ -719,6 +728,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     // Register a dependency plugin so plugins.get/require/exists have something real to resolve.
@@ -805,6 +817,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     const ctx = buildApi({
@@ -863,6 +878,9 @@ describe("kernel/pluginApi — buildApi (Runtime) with Mock WaContract", () => {
       id: { _serialized: "120363000000000@c.us", user: "120363000000000" },
       name: "Test Group",
       isGroup: true,
+      isCommunity: false,
+      isAnnounces: false,
+      community: null,
     };
 
     const ctx = buildApi({

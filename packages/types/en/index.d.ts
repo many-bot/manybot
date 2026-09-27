@@ -863,6 +863,15 @@ export interface ChatContext {
   id: string;
   name: string;
   isGroup: boolean;
+  /** WhatsApp Community support (Baileys only). `false`/`null` on every
+   *  other driver and on non-group chats. */
+  isCommunity: boolean;
+  /** True for a Community's announcement group. */
+  isAnnounces: boolean;
+  /** The Community jid this chat belongs to — the Community's own jid on
+   *  the Community chat itself, the parent's jid on a linked group, or
+   *  `null` if this chat isn't part of a Community. */
+  community: string | null;
   /**
    * Past messages in this chat (oldest → newest). Convenience filters:
    * `history.last(n)`, `history.from(senderId)`.
@@ -873,6 +882,12 @@ export interface ChatContext {
    * @returns The group's participants, or `[]` for non-group chats.
    */
   getParticipants(): Promise<GroupParticipant[]>;
+  /**
+   * Community-only: every group linked to this Community.
+   * @returns The Community's linked groups, or `[]` for any chat where
+   *   `isCommunity` is `false`.
+   */
+  getGroups(): Promise<Array<{ id: string; name: string }>>;
   /**
    * Check whether a given contact is a group admin.
    * @param contactId - The contact/participant JID to check.

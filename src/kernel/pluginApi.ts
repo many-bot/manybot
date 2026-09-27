@@ -360,8 +360,22 @@ export interface IChat {
   id: string;
   name: string;
   isGroup: boolean;
+  /** WhatsApp Community support (Baileys only). `false`/`null` on every
+   *  other driver and on non-group chats. */
+  isCommunity: boolean;
+  /** True for a Community's announcement group. */
+  isAnnounces: boolean;
+  /** The Community jid this chat belongs to — the Community's own jid on
+   *  the Community chat itself, the parent's jid on a linked group, or
+   *  `null` if this chat isn't part of a Community. */
+  community: string | null;
   history: WAHistoryArray;
   getParticipants(): Promise<IParticipant[]>;
+  /**
+   * Community-only: every group linked to this Community. Returns `[]`
+   * for any chat where `isCommunity` is `false`.
+   */
+  getGroups(): Promise<Array<{ id: string; name: string }>>;
   isAdmin(contactId: string): Promise<boolean>;
   isSenderAdmin(): Promise<boolean>;
   isBotAdmin(): Promise<boolean>;

@@ -36,6 +36,10 @@ export type WAChat = {
   id: { _serialized: string; user: string };
   name: string;
   isGroup: boolean;
+  /** Baileys Community support — always `false`/`null` for non-group chats. */
+  isCommunity: boolean;
+  isAnnounces: boolean;
+  community: string | null;
 };
 
 /** Plain-data contact metadata in the store. */

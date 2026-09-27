@@ -19,7 +19,8 @@ import { toBotMessage } from "#drivers/baileys/index.js";
 import { decodeContent } from "#drivers/baileys/adapter.js";
 import {
   loadGroupMeta, storeGroupMeta, dropGroupMeta, clearGroupMetaCache,
-  type WAGroupMetadata,
+  loadCommunityGroups, clearCommunityGroupsCache,
+  type WAGroupMetadata, type WACommunityGroup,
 } from "#drivers/baileys/groupMetaCache.js";
 import { logger }                    from "#logger";
 import { t, createPluginT,
@@ -343,6 +344,28 @@ function bindGroupMetaInvalidation(contract: WaContract) {
   contract.on("groups.update", (p) => {
     for (const u of p.updates) if (u.id) dropGroupMeta(u.id);
   });
+  // A newly linked/created group can join any Community — the event
+  // doesn't tell us which, so drop every cached getGroups() result rather
+  // than guess. Rare event, cheap to recompute on next access.
+  contract.on("groups.upsert", () => {
+    clearCommunityGroupsCache();
+  });
+}
+
+/**
+ * Community-only: all groups linked to `communityJid`, via a full-account
+ * scan (`groupFetchAllParticipating()`) filtered by `linkedParent` — there
+ * is no cheaper native lookup. Cached per Community jid (see
+ * `groupMetaCache.ts`) so repeated `ctx.chat.getGroups()` calls don't each
+ * pay for the scan.
+ */
+async function getCommunityGroups(contract: WaContract, communityJid: string): Promise<WACommunityGroup[]> {
+  return loadCommunityGroups(communityJid, async (jid) => {
+    const all = await rawSocketOf(contract).groupFetchAllParticipating();
+    return Object.values(all)
+      .filter((g) => g.linkedParent === jid)
+      .map((g) => ({ id: normalizeJid(g.id), name: g.subject }));
+  });
 }
 
 /** Test-only: clears the group-metadata cache and re-arms invalidation
@@ -373,24 +396,35 @@ export async function buildChatFromMsg(msg: BotMessage, store: BotStore, contrac
   const stored = store.chats.get(rawJid);
   let name = stored?.name;
 
-  if (!name && isGroup) {
-    const cached = groupNameCache.get(rawJid);
-    if (cached && Date.now() - cached.at < GROUP_NAME_CACHE_TTL_MS) {
-      name = cached.name;
-    } else {
-      try {
-        const meta = await getGroupMetadataCached(contract, rawJid);
-        if (meta?.subject) {
-          name = meta.subject;
-          groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
-        }
-      } catch {
-        // fall through to the numeric fallback below
+  // Community fields need actual group metadata regardless of whether the
+  // name above was already known — the groupNameCache fast path (name
+  // only) doesn't carry them, so this is a second, independent lookup.
+  // getGroupMetadataCached is itself TTL-cached, so on a warm cache this
+  // is an in-memory Map read, not a network call.
+  let isCommunity = false;
+  let isAnnounces = false;
+  let community: string | null = null;
+
+  if (isGroup) {
+    if (!name) {
+      const cached = groupNameCache.get(rawJid);
+      if (cached && Date.now() - cached.at < GROUP_NAME_CACHE_TTL_MS) name = cached.name;
+    }
+    try {
+      const meta = await getGroupMetadataCached(contract, rawJid);
+      if (!name && meta?.subject) {
+        name = meta.subject;
+        groupNameCache.set(rawJid, { name: meta.subject, at: Date.now() });
       }
+      isCommunity = !!meta.isCommunity;
+      isAnnounces = !!meta.isCommunityAnnounce;
+      community   = communityJidFromMeta(rawJid, meta);
+    } catch {
+      // fall through to the numeric fallback below; community fields stay false/null
     }
   }
 
-  return { id: { _serialized: jid, user }, name: name ?? user, isGroup };
+  return { id: { _serialized: jid, user }, name: name ?? user, isGroup, isCommunity, isAnnounces, community };
 }
 
 // ── MIME map for file sends ───────────────────────────────────────────────────
@@ -1636,6 +1670,21 @@ async function stickerToMp4(webpBuffer: Buffer): Promise<Buffer> {
  * @param {BotMessage | Promise<BotMessage | null | undefined> | null} [quoted]   — message to quote (can be Promise)
  * @param {object}                                                    [guard]
  */
+/**
+ * A Community's own jid isn't a real chat — `sock.sendMessage()` resolves
+ * without error but the message is silently undelivered (confirmed via
+ * manual testing). Reject early with a clear, translated error instead of
+ * letting every send method fail invisibly and instead of the lib sending
+ * a doomed request to WhatsApp (repeated invalid requests are a suspension
+ * risk). Only jids that can possibly be a Community pay the metadata-cache
+ * lookup: DMs return instantly.
+ */
+async function assertSendable(contract: WaContract, jid: string): Promise<void> {
+  if (!jid.endsWith("@g.us")) return;
+  const meta = await getGroupMetadataCached(contract, jid);
+  if (meta.isCommunity) throw new Error(t("driver.communitySendBlocked", { jid }));
+}
+
 function makeSender(
   contract: WaContract,
   store:    BotStore,
@@ -1660,6 +1709,7 @@ function makeSender(
       // straight to the contract on purpose — no guard needed, react is
       // one-shot and already idempotent at the protocol level.
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         const mentionsResolved = opts.mentions?.length
           ? await resolveMentionJids(contract, store, jid, opts.mentions)
@@ -1699,6 +1749,7 @@ function makeSender(
 
     image(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(caption), "typing");
@@ -1718,6 +1769,7 @@ function makeSender(
 
     video(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(caption), "typing");
@@ -1745,6 +1797,7 @@ function makeSender(
      */
     gif(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(caption), "typing");
@@ -1767,6 +1820,7 @@ function makeSender(
 
     audio(source: string | Buffer, { asVoice = true, viewOnce = false } = {}) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(), "recording");
@@ -1783,6 +1837,7 @@ function makeSender(
 
     sticker(source: string | Buffer) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(), "typing");
@@ -1796,6 +1851,7 @@ function makeSender(
 
     file(source: string | Buffer, filename?: string) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         await simulateState(contract, jid, mediaDuration(), "typing");
@@ -1823,6 +1879,7 @@ function makeSender(
      */
     poll(question: string, options: string[], { allowMultipleAnswers = false } = {}) {
       return new MessageHandle((async () => {
+        await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
         const ref = await contract.sendPoll(jid, {
@@ -2780,19 +2837,40 @@ function buildRunCommandFacet(
  * name. A non-group jid (DM) has no equivalent network call to validate
  * against, so it always succeeds with a best-effort name from the store.
  */
-async function resolveChatMeta(jid: string, contract: WaContract, store: BotStore): Promise<{ name: string; isGroup: boolean } | null> {
+interface ChatMeta {
+  name:        string;
+  isGroup:     boolean;
+  isCommunity: boolean;
+  isAnnounces: boolean;
+  community:   string | null;
+}
+
+async function resolveChatMeta(jid: string, contract: WaContract, store: BotStore): Promise<ChatMeta | null> {
   const isGroup = jid.endsWith("@g.us");
   if (!isGroup) {
     const stored = store.chats.get(jid);
-    return { name: stored?.name ?? jid.split("@")[0], isGroup: false };
+    return { name: stored?.name ?? jid.split("@")[0], isGroup: false, isCommunity: false, isAnnounces: false, community: null };
   }
   try {
     const meta = await getGroupMetadataCached(contract, jid);
-    return { name: meta.subject || jid.split("@")[0], isGroup: true };
+    return {
+      name:        meta.subject || jid.split("@")[0],
+      isGroup:     true,
+      isCommunity: !!meta.isCommunity,
+      isAnnounces: !!meta.isCommunityAnnounce,
+      community:   communityJidFromMeta(jid, meta),
+    };
   } catch (err) {
     logger.warn(`[chat.getChat] groupMetadata failed for "${jid}" — ${(err as Error).message}`);
     return null;
   }
+}
+
+/** `communityJid = isCommunity ? jid : (linkedParent ?? null)` — same
+ *  derivation used by `admin.promote/demote`'s community routing. */
+function communityJidFromMeta(jid: string, meta: WAGroupMetadata): string | null {
+  if (meta.isCommunity) return normalizeJid(jid);
+  return meta.linkedParent ? normalizeJid(meta.linkedParent) : null;
 }
 
 /**
@@ -2824,13 +2902,36 @@ function buildChatFacet(
   msg:                BotMessage,
   sender:             string | null,
   matchesParticipant: (candidates: (string | null | undefined)[], participantId: string) => boolean,
+  targetIsCommunity:  boolean = false,
+  targetIsAnnounces:  boolean = false,
+  targetCommunity:    string | null = null,
 ): IChat {
   const targetNormJid = normalizeJid(targetRawJid);
 
   return {
-    id:      targetNormJid,
-    name:    targetName,
-    isGroup: targetIsGroup,
+    id:          targetNormJid,
+    name:        targetName,
+    isGroup:     targetIsGroup,
+    isCommunity: targetIsCommunity,
+    isAnnounces: targetIsAnnounces,
+    community:   targetCommunity,
+
+    /**
+     * Community-only: every group linked to this Community (name + jid).
+     * Returns `[]` for a chat that isn't a Community. Backed by a full
+     * account group scan (`groupFetchAllParticipating()`, no cheaper
+     * native lookup exists) cached per Community jid — see
+     * `groupMetaCache.ts` — so repeated calls don't repay that cost.
+     * @returns {Promise<Array<{ id: string, name: string }>>}
+     */
+    async getGroups(): Promise<WACommunityGroup[]> {
+      if (!targetIsCommunity) return [];
+      try {
+        return await getCommunityGroups(contract, targetNormJid);
+      } catch {
+        return [];
+      }
+    },
 
     /**
      * Cached message history for this chat (oldest → newest), capped at
@@ -2955,7 +3056,10 @@ function buildChatFacet(
       const jid  = normalizeJid(targetJid);
       const meta = await resolveChatMeta(jid, contract, store);
       if (!meta) return null;
-      return buildChatFacet(jid, meta.name, meta.isGroup, contract, store, msg, sender, matchesParticipant);
+      return buildChatFacet(
+        jid, meta.name, meta.isGroup, contract, store, msg, sender, matchesParticipant,
+        meta.isCommunity, meta.isAnnounces, meta.community,
+      );
     },
 
     /**
@@ -3059,7 +3163,10 @@ export function buildApi({
 
     // ── chat ─────────────────────────────────────────────────────────────────
 
-    chat: buildChatFacet(rawJid, chat.name, chat.isGroup, contract, store, msg, sender, matchesParticipant),
+    chat: buildChatFacet(
+      rawJid, chat.name, chat.isGroup, contract, store, msg, sender, matchesParticipant,
+      chat.isCommunity, chat.isAnnounces, chat.community,
+    ),
 
     // ── admin ─────────────────────────────────────────────────────────────────
 

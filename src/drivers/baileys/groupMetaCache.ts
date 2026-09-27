@@ -24,6 +24,61 @@ export function dropGroupMeta(jid: string): void {
 export function clearGroupMetaCache(): void {
   cache.clear();
   inflight.clear();
+  communityGroupsCache.clear();
+  communityGroupsInflight.clear();
+}
+
+// ── Community groups cache ──────────────────────────────────────────────────
+//
+// `ctx.chat.getGroups()` (Community objects only) needs the full account
+// group list (`groupFetchAllParticipating()`) filtered by `linkedParent` —
+// there's no cheaper native way to list a Community's linked groups. That
+// full-account scan is expensive, so cache the filtered result per
+// Community jid with the same TTL as group metadata, deduped in-flight the
+// same way as `loadGroupMeta`.
+
+export type WACommunityGroup = { id: string; name: string };
+
+const communityGroupsCache    = new Map<string, { groups: WACommunityGroup[]; at: number }>();
+const communityGroupsInflight = new Map<string, Promise<WACommunityGroup[]>>();
+
+export function peekCommunityGroups(communityJid: string): WACommunityGroup[] | undefined {
+  const entry = communityGroupsCache.get(communityJid);
+  return entry && Date.now() - entry.at < TTL_MS ? entry.groups : undefined;
+}
+
+/** Drops every cached Community's group list — used when a new group is
+ *  linked (`groups.upsert`), since we don't cheaply know which Community
+ *  it joined without re-fetching. Coarser than per-jid invalidation, but
+ *  `groups.upsert` is rare enough that this is not a concern. */
+export function clearCommunityGroupsCache(): void {
+  communityGroupsCache.clear();
+  communityGroupsInflight.clear();
+}
+
+export function loadCommunityGroups(
+  communityJid: string,
+  fetcher: (communityJid: string) => Promise<WACommunityGroup[]>,
+): Promise<WACommunityGroup[]> {
+  const hit = peekCommunityGroups(communityJid);
+  if (hit) return Promise.resolve(hit);
+
+  const pending = communityGroupsInflight.get(communityJid);
+  if (pending) return pending;
+
+  const request: Promise<WACommunityGroup[]> = fetcher(communityJid)
+    .then((groups) => {
+      if (communityGroupsInflight.get(communityJid) === request) {
+        communityGroupsCache.set(communityJid, { groups, at: Date.now() });
+      }
+      return groups;
+    })
+    .finally(() => {
+      if (communityGroupsInflight.get(communityJid) === request) communityGroupsInflight.delete(communityJid);
+    });
+
+  communityGroupsInflight.set(communityJid, request);
+  return request;
 }
 
 export function loadGroupMeta(
