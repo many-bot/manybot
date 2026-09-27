@@ -16,6 +16,11 @@
   - Each run has a `running`/`idle` state ([runState.ts](src/kernel/runState.ts)). Runs answering a command are journaled in `settings.db` until they finish, so anything still there after a restart was interrupted.
   - It is a notice, not an automatic retry, because plugins have side effects. To avoid false positives, only commands routed through the command registry, or legacy `run(ctx)` plugins that worked for over a second on a prefixed message the registry doesn't know, are reported. Background/event-handler errors are not.
   - Each message is reported at most once, even across restarts.
+- `ctx.chat.getGroups()`: lists every group linked to a Community (Baileys-only). Chat contexts also gain `isCommunity`, `isAnnounces` and `community` (parent JID, or own JID when the chat itself is the Community) fields.
+- `ctx.chat.acceptInvite(urlOrCode)`: joins a group via invite link or code, resolving `{status: "joined", groupId}` / `{status: "requested"}` (pending admin approval), or throwing `GroupInviteError` with a `.reason` (`not_found`/`invalid_code`/`already_member`/`unknown`).
+- Sending directly to a Community's own JID is now rejected early with a translated error (`communitySendBlocked`) instead of resolving silently without delivering the message.
+- `downloadMedia()` now resolves `isAnimated` via a byte-level check (WhatsApp reports all stickers as `image/webp`), and accepts `{ asFrames }` to return decoded animated-webp frames with per-frame `delayMs`.
+- Oversized message bodies are now capped at 4096 characters (`MAX_BODY_LENGTH`), with truncation metadata (`big`, `bodyLength`) exposed on `BotMessage` and `WAMessageContext`, including quoted messages.
 
 ### Fixed
 
@@ -36,6 +41,10 @@
   - Baileys' default `cachedGroupMetadata` hook always returned `undefined`, so every group send queried WhatsApp for metadata and hit `rate-overlimit` (429). The socket now sets its own hook, backed by a shared cache (`groupMetaCache.ts`) that is also used by the API lookups, invalidated on `group-participants.update` / `groups.update` and cleared on every new socket.
   - `ctx.msg.react()`, `ctx.msg.unreact()` and `ctx.msg.delete()` (also on `MessageHandle`) now wait for a send slot like every other outbound action. `sendMessage({delete})` resolves once written to the socket, so tight loops had part of the burst silently dropped server-side.
   - `ctx.chat.history.from()` now matches by sender LID **or** phone number. Entries received before Baileys learned the contact's LID (`sender = null`) were being skipped.
+- Menu command no longer activates when `commands.yaml` declares no commands (or only a `menu:` block).
+- `scheduler.db` / `settings.db` are now opened lazily on first real use instead of unconditionally at import time, and get periodic WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)` every 10min) plus a checkpoint on shutdown -- fixes unbounded `*-wal` growth on bots that never use scheduling/settings.
+- Group metadata lookups now go through cache to avoid WhatsApp rate-limit errors. Promoting members to admin in Communities now works correctly by reusing the linked announce group's member list, since the Community itself only returns admins as participants.
+- `WAMessageSender` file methods: renamed the `filePath` param to `source` in types.
 
 ### New Configuration Options
 
@@ -59,6 +68,7 @@
 
 - Fixed config/`commands.yaml` reload debounce timers (`configReloadTimeout` / `yamlReloadTimeout`) not being cleared on `cleanupPlugins()`, which could leave a dangling timer after shutdown.
 - `i18n`: removed `returnObjects` option from `t()`.
+- Dropped the dual-driver fallback path; ManyBot now runs Baileys-only. Removed `verifyDelivery`/`sendVia` fallback in `sendFallbackGuard` and degradation tracking (`isDegraded`/`markDegraded`/`switchTo`) in `driverManager`, simplified `Config.drivers` (dropped `fallbackCooldownMs`/`verifyWindowMs`), consolidated `send_failed_no_fallback`/`send_failed_both_drivers` into a single `send_failed` event, and added `AlertEvent.sinks` to route alerts to specific channels.
 
 ### Build / CI
 
@@ -66,4 +76,6 @@
 - New local `pre-commit` hook: auto-bumps `packages/types/package.json` minor version when staged changes touch the published `@manybot/types` definitions (`packages/types/{en,pt}`).
 - Renamed `hooks/` to `scripts/git-hooks/` (server-side release infra, no contributor impact).
 - Updated `sharp`, `nodemailer` and `emoji-regex` dependencies.
+- Updated TypeScript and ESLint.
+- Added the types drift check script to `package.json`.
 
