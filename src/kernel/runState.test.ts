@@ -112,7 +112,12 @@ describe("kernel/runState — journal", () => {
 });
 
 describe("kernel/runState — isEngaged", () => {
+  afterEach(() => {
+    mock.timers.reset();
+  });
+
   test("a command run is engaged immediately, a legacy run only after the threshold, an origin-less run never", () => {
+    mock.timers.enable({ apis: ["setTimeout", "Date"] });
     const now = Date.now();
     const command = beginRun("e1", origin("command"));
     const legacy  = beginRun("e2", origin("legacy"));
@@ -120,8 +125,10 @@ describe("kernel/runState — isEngaged", () => {
 
     assert.equal(isEngaged(command, now), true);
     assert.equal(isEngaged(legacy, now), false);
-    assert.equal(isEngaged(legacy, now + LEGACY_ENGAGED_AFTER_MS), true);
-    assert.equal(isEngaged(passive, now + 60_000), false);
+
+    mock.timers.tick(LEGACY_ENGAGED_AFTER_MS);
+    assert.equal(isEngaged(legacy, Date.now()), true);
+    assert.equal(isEngaged(passive, Date.now() + 60_000), false);
 
     command.finish(); legacy.finish(); passive.finish();
   });
