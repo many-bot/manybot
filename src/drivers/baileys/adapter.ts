@@ -114,11 +114,12 @@ export interface BaileysAdapterHandle {
 /** Hard cap on `BotMessage.body` — protects storage/logs/pipeline from oversized text. */
 export const MAX_BODY_LENGTH = 4096;
 
-export function decodeContent(content: unknown): { type: BotMessage["type"]; body: string; mimetype: string | undefined; big: boolean; bodyLength: number } {
+export function decodeContent(content: unknown): { type: BotMessage["type"]; body: string; mimetype: string | undefined; big: boolean; bodyLength: number; groupInvite: BotMessage["groupInvite"] } {
   const m = normalizeMessageContent(content as never) ?? undefined;
   let type: BotMessage["type"] = "other";
   let body = "";
   let mimetype: string | undefined;
+  let groupInvite: BotMessage["groupInvite"];
   if (m?.conversation)                       { type = "text";     body = m.conversation; }
   else if (m?.extendedTextMessage?.text)    { type = "text";     body = m.extendedTextMessage.text ?? ""; }
   else if (m?.imageMessage)                  { type = "image";    body = m.imageMessage.caption   ?? ""; mimetype = m.imageMessage.mimetype    ?? undefined; }
@@ -126,6 +127,17 @@ export function decodeContent(content: unknown): { type: BotMessage["type"]; bod
   else if (m?.audioMessage)                  { type = "audio";                                mimetype = m.audioMessage.mimetype    ?? undefined; }
   else if (m?.documentMessage)               { type = "document"; body = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
   else if (m?.stickerMessage)                { type = "sticker";                              mimetype = m.stickerMessage.mimetype  ?? undefined; }
+  else if (m?.groupInviteMessage)            {
+    type = "invite";
+    body = m.groupInviteMessage.caption ?? m.groupInviteMessage.groupName ?? "";
+    groupInvite = {
+      groupJid:         m.groupInviteMessage.groupJid ?? "",
+      inviteCode:       m.groupInviteMessage.inviteCode ?? "",
+      inviteExpiration: Number(m.groupInviteMessage.inviteExpiration ?? 0),
+      groupName:        m.groupInviteMessage.groupName ?? undefined,
+      caption:          m.groupInviteMessage.caption ?? undefined,
+    };
+  }
   else if (m?.templateMessage) {
     type = "text";
     const tpl = m.templateMessage.hydratedTemplate ?? m.templateMessage.hydratedFourRowTemplate;
@@ -145,7 +157,7 @@ export function decodeContent(content: unknown): { type: BotMessage["type"]; bod
   const bodyLength = body.length;
   const big = bodyLength > MAX_BODY_LENGTH;
   if (big) body = body.slice(0, MAX_BODY_LENGTH);
-  return { type, body, mimetype, big, bodyLength };
+  return { type, body, mimetype, big, bodyLength, groupInvite };
 }
 
 export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapterHandle {
@@ -251,7 +263,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
   }
   function toBotMessage(msg: RawMessage): BotMessage {
     const m = normalizeMessageContent(msg.message) ?? undefined;
-    const { type, body, mimetype, big, bodyLength } = decodeContent(msg.message);
+    const { type, body, mimetype, big, bodyLength, groupInvite } = decodeContent(msg.message);
 
     const key = msg.key as unknown as {
       participant?: string; participantAlt?: string;
@@ -293,6 +305,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       big,
       bodyLength,
       mimetype:     mimetype ?? undefined,
+      groupInvite,
       pushName:     (msg as unknown as { pushName?: string }).pushName,
       mentionedJid: ciTyped?.mentionedJid?.map(normalizeMentionedJid) ?? undefined,
       quotedKey: ciTyped?.stanzaId ? {
@@ -660,6 +673,36 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
           }
         }
         logger.warn(`[groupAcceptInvite] unhandled failure for "${code}" — ${describeError(err)}`);
+        throw new GroupInviteError("unknown", describeError(err), { cause: err });
+      }
+    },
+
+    async groupAcceptInviteV4(key, invite): Promise<GroupAcceptInviteResult> {
+      try {
+        const groupId = await (sock as unknown as {
+          groupAcceptInviteV4(
+            k: { id: string | null; remoteJid: string; fromMe: boolean; participant: string | undefined },
+            i: { groupJid: string; inviteCode: string; inviteExpiration: number; groupName?: string; caption?: string },
+          ): Promise<string>;
+        }).groupAcceptInviteV4(toFlatKey(key), invite);
+        if (!groupId) return { status: "requested" };
+        return { status: "joined", groupId: jidNormalizedUser(groupId) };
+      } catch (err) {
+        if (err instanceof Boom) {
+          const statusCode = err.output?.statusCode;
+          const text       = err.message?.toLowerCase() ?? "";
+          if (statusCode === 409 && text.includes("already")) {
+            throw new GroupInviteError("already_member", "Already a member of the group behind this invite", { cause: err });
+          }
+          if (statusCode === 409) return { status: "requested" };
+          if (statusCode === 404 || statusCode === 410) {
+            throw new GroupInviteError("not_found", `Invite for group "${invite.groupJid}" doesn't exist or has expired`, { cause: err });
+          }
+          if (statusCode === 400 || statusCode === 401) {
+            throw new GroupInviteError("invalid_code", `Invalid invite code: "${invite.inviteCode}"`, { cause: err });
+          }
+        }
+        logger.warn(`[groupAcceptInviteV4] unhandled failure for group="${invite.groupJid}" — ${describeError(err)}`);
         throw new GroupInviteError("unknown", describeError(err), { cause: err });
       }
     },

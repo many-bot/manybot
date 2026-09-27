@@ -653,6 +653,7 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
         audioMessage?:    { mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
         documentMessage?: { caption?: string; mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
         stickerMessage?:  { mimetype?: string; contextInfo?: { stanzaId?: string; participant?: string; mentionedJid?: string[] } };
+        groupInviteMessage?: { groupJid?: string; inviteCode?: string; inviteExpiration?: number | string; groupName?: string; caption?: string };
         templateMessage?: {
           hydratedTemplate?: { hydratedContentText?: string; hydratedButtons?: Array<{ urlButton?: { url?: string } }> };
           hydratedFourRowTemplate?: { hydratedContentText?: string; hydratedButtons?: Array<{ urlButton?: { url?: string } }> };
@@ -668,6 +669,7 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
   let type: import("#drivers/types.js").BotMessage["type"] = "other";
   let text = "";
   let mimetype: string | undefined;
+  let groupInvite: import("#drivers/types.js").BotMessage["groupInvite"];
   if (m?.conversation)                       { type = "text";     text = m.conversation; }
   else if (m?.extendedTextMessage?.text)     { type = "text";     text = m.extendedTextMessage.text; }
   else if (m?.imageMessage)                  { type = "image";    text = m.imageMessage.caption    ?? ""; mimetype = m.imageMessage.mimetype    ?? undefined; }
@@ -675,6 +677,17 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
   else if (m?.audioMessage)                  { type = "audio";    text = ""; mimetype = m.audioMessage.mimetype ?? undefined; }
   else if (m?.documentMessage)               { type = "document"; text = m.documentMessage.caption ?? ""; mimetype = m.documentMessage.mimetype ?? undefined; }
   else if (m?.stickerMessage)                { type = "sticker";  text = ""; mimetype = m.stickerMessage.mimetype ?? undefined; }
+  else if (m?.groupInviteMessage)            {
+    type = "invite";
+    text = m.groupInviteMessage.caption ?? m.groupInviteMessage.groupName ?? "";
+    groupInvite = {
+      groupJid:         m.groupInviteMessage.groupJid ?? "",
+      inviteCode:       m.groupInviteMessage.inviteCode ?? "",
+      inviteExpiration: Number(m.groupInviteMessage.inviteExpiration ?? 0),
+      groupName:        m.groupInviteMessage.groupName ?? undefined,
+      caption:          m.groupInviteMessage.caption ?? undefined,
+    };
+  }
   else if (m?.templateMessage) {
     type = "text";
     const tpl = m.templateMessage.hydratedTemplate ?? m.templateMessage.hydratedFourRowTemplate;
@@ -722,6 +735,7 @@ export function toBotMessage(msg: WAProtoMsg): import("#drivers/types.js").BotMe
     timestamp:   Number(msg.messageTimestamp ?? 0) * 1000,
     body:           text || undefined,
     mimetype,
+    groupInvite,
     pushName:       msg.pushName ?? undefined,
     mentionedJid:   contextInfo?.mentionedJid ?? undefined,
     quotedKey:      contextInfo?.stanzaId ? {

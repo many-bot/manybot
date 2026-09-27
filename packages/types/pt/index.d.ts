@@ -58,11 +58,13 @@ export interface BotMessage {
   id: string;
   chatId: string;
   fromMe: boolean;
-  type: "text" | "image" | "video" | "audio" | "sticker" | "document" | "other";
+  type: "text" | "image" | "video" | "audio" | "sticker" | "document" | "invite" | "other";
   contentHash: string;
   timestamp: number;
   body?: string;
   mimetype?: string;
+  /** Payload do convite de grupo, presente quando `type` é `"invite"`. */
+  groupInvite?: BotGroupInvite;
   pushName?: string;
   mentionedJid?: string[];
   quotedKey?: BotQuotedRef;
@@ -70,6 +72,19 @@ export interface BotMessage {
   fromPn?: string;
   participantAlt?: string;
   remoteJidAlt?: string;
+}
+
+/**
+ * Convite de grupo enviado como mensagem no chat (`GroupInviteMessage` do
+ * Baileys) — diferente de um link/código de convite comum. Carrega tudo que
+ * `ctx.chat.acceptInvite()` precisa para aceitá-lo.
+ */
+export interface BotGroupInvite {
+  groupJid: string;
+  inviteCode: string;
+  inviteExpiration: number;
+  groupName?: string;
+  caption?: string;
 }
 
 /**
@@ -842,6 +857,10 @@ export interface WAMessageContext {
    */
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
+  /** Payload do convite de grupo quando `type === "invite"` (convite de
+   *  grupo encaminhado como mensagem); `null` caso contrário. Passe esta
+   *  mensagem inteira para `ctx.chat.acceptInvite(msg)` para entrar. */
+  groupInvite: BotGroupInvite | null;
   /**
    * Busca informações normalizadas sobre o remetente da mensagem.
    * @returns O {@link NormalizedContact} do remetente, ou `null` se o bot ainda não tiver
@@ -948,9 +967,14 @@ export interface ChatContext {
    * um erro). Lança {@link GroupInviteError} para falhas reais —
    * convite não encontrado/expirado, código inválido, já é membro —
    * veja seu campo `.reason`.
-   * @param urlOrCode - URL completa `https://chat.whatsapp.com/<código>` ou apenas o `<código>`.
+   * A partir desta versão, também aceita um convite de grupo encaminhado
+   * como mensagem: passe o `WAMessageContext` inteiro (ex.: `ctx.msg`)
+   * quando `ctx.msg.type === "invite"`. Presume que a mensagem pertence
+   * a este chat (o pareamento normal `ctx.chat`/`ctx.msg`).
+   * @param urlOrCodeOrMsg - URL completa `https://chat.whatsapp.com/<código>`,
+   *   apenas o `<código>`, ou um {@link WAMessageContext} do tipo `invite`.
    */
-  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  acceptInvite(urlOrCodeOrMsg: string | WAMessageContext): Promise<GroupAcceptInviteResult>;
   /**
    * Busca nativa de qualquer mensagem apenas pelo seu ID — o kernel
    * resolve automaticamente o JID do chat dono da mensagem (sem

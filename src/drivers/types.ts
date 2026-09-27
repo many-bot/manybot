@@ -32,7 +32,7 @@ export interface BotMessage {
   id:          string;
   chatId:      string;
   fromMe:      boolean;
-  type:        "text" | "image" | "video" | "audio" | "sticker" | "document" | "other";
+  type:        "text" | "image" | "video" | "audio" | "sticker" | "document" | "invite" | "other";
   contentHash: string;
   /** Epoch milliseconds. */
   timestamp:   number;
@@ -53,6 +53,8 @@ export interface BotMessage {
   mentionedJid?:     string[];
   /** Reference to the message this one is quoting, if any. */
   quotedKey?:        BotQuotedRef;
+  /** Group-invite payload, populated when `type` is `"invite"`. */
+  groupInvite?:      BotGroupInvite;
 
   // ── LID-mapping hints preserved across the Baileys advisor split. ──
   /** @lid form of the sender's JID, when known. */
@@ -85,6 +87,19 @@ export interface BotQuotedRef {
   remoteJid?:   string | null;
   fromMe?:      boolean | null;
   participant?: string | null;
+}
+
+/**
+ * Group invite sent as an in-chat message (Baileys' `GroupInviteMessage`) —
+ * distinct from a plain invite link/code. Carries everything
+ * `WaContract.groupAcceptInviteV4` needs to accept it.
+ */
+export interface BotGroupInvite {
+  groupJid:        string;
+  inviteCode:      string;
+  inviteExpiration: number;
+  groupName?:      string;
+  caption?:        string;
 }
 
 /** Minimal chat shape, driver-neutral. */

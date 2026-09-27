@@ -14,7 +14,7 @@
  * other driver package.
  */
 
-import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
+import type { BotMessage, BotQuotedRef, BotGroupInvite } from "#drivers/types.js";
 
 export type { BotMessage, BotQuotedRef };
 
@@ -359,6 +359,16 @@ export interface WaContract {
    * bot already a member, etc.) — see its `reason` field.
    */
   groupAcceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  /**
+   * Accept a group invite sent as an in-chat message (`GroupInviteMessage`)
+   * instead of a link/code — see {@link WaContract.groupAcceptInvite} for
+   * that case. `key` identifies the invite message itself (so Baileys can
+   * mark it expired after joining); at minimum `participant` (the sender)
+   * must be set. Same `GroupAcceptInviteResult` / `GroupInviteError`
+   * semantics. Optional — drivers without message-based invite support
+   * (e.g. whatsmeow today) can omit it.
+   */
+  groupAcceptInviteV4?(key: BotQuotedRef, invite: BotGroupInvite): Promise<GroupAcceptInviteResult>;
 
   // ── profile (bot + group) ───────────────────────────────────────────────────
   updateProfilePicture(jid: string, buffer: Buffer): Promise<void>;

@@ -11,8 +11,9 @@
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
-import type { BotMessage, BotQuotedRef } from "#drivers/types.js";
+import type { BotMessage, BotQuotedRef, BotGroupInvite } from "#drivers/types.js";
 import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
+import { GroupInviteError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
@@ -158,6 +159,7 @@ function getMsgType(msg: BotMessage): string {
     case "audio":    return "audio";
     case "sticker":  return "sticker";
     case "document": return "document";
+    case "invite":   return "invite";
     default:         return "unknown";
   }
 }
@@ -1068,6 +1070,10 @@ export interface WAMessageContext {
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
   getContact(): Promise<IContact | null>;
+  /** Group-invite payload when `type === "invite"` (a forwarded group invite
+   *  sent as a message); `null` otherwise. Pass this whole message to
+   *  `ctx.chat.acceptInvite(msg)` to join. */
+  groupInvite: BotGroupInvite | null;
 }
 
 /**
@@ -1204,6 +1210,7 @@ export function buildMessageContext(
           big:         decoded.big,
           bodyLength:  decoded.bodyLength,
           mimetype:    decoded.mimetype,
+          groupInvite: decoded.groupInvite,
           fromLid:     quotedFromLid,
           fromPn:      quotedFromPn,
           participantAlt: quotedFromLid,
@@ -1267,6 +1274,7 @@ export function buildMessageContext(
     hasMedia: msgHasMedia(msg),
     isGif:    msgIsGif(msg, store),
     mentionedJid: msg.mentionedJid ?? [],
+    groupInvite: msg.groupInvite ?? null,
 
     async downloadMedia(opts: { asMp4?: boolean; asFrames?: boolean } = {}): Promise<DownloadedMedia | null> {
       try {
@@ -3063,14 +3071,35 @@ function buildChatFacet(
     },
 
     /**
-     * Join a group via invite link or bare code. Delegates to the
-     * driver contract's `groupAcceptInvite()` — see its doc for the
-     * "requested" (admin-approval) vs thrown `GroupInviteError` split.
-     * @param {string} urlOrCode
+     * Join a group via invite link/code, or accept a `GroupInviteMessage`
+     * forwarded into chat — pass the whole message (e.g.
+     * `ctx.chat.acceptInvite(ctx.msg)` when `ctx.msg.type === "invite"`).
+     * Assumes the message being passed belongs to this chat (the normal
+     * `ctx.chat`/`ctx.msg` pairing) — that's what lets Baileys mark the
+     * invite as expired once joined. Delegates to the driver contract's
+     * `groupAcceptInvite()` / `groupAcceptInviteV4()` — see their docs for
+     * the "requested" (admin-approval) vs thrown `GroupInviteError` split.
+     * @param {string | WAMessageContext} urlOrCodeOrMsg
      * @returns {Promise<GroupAcceptInviteResult>}
      */
-    async acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult> {
-      return contract.groupAcceptInvite(urlOrCode);
+    async acceptInvite(urlOrCodeOrMsg: string | WAMessageContext): Promise<GroupAcceptInviteResult> {
+      if (typeof urlOrCodeOrMsg === "string") {
+        return contract.groupAcceptInvite(urlOrCodeOrMsg);
+      }
+      const invite = urlOrCodeOrMsg.groupInvite;
+      if (!invite) {
+        throw new GroupInviteError("invalid_code", "Message is not a group invite (groupInviteMessage)");
+      }
+      if (!contract.groupAcceptInviteV4) {
+        throw new GroupInviteError("unknown", "This driver doesn't support accepting invite messages");
+      }
+      const key: BotQuotedRef = {
+        id:          urlOrCodeOrMsg.id,
+        remoteJid:   targetNormJid,
+        fromMe:      urlOrCodeOrMsg.fromMe,
+        participant: urlOrCodeOrMsg.sender ?? urlOrCodeOrMsg.senderPn ?? undefined,
+      };
+      return contract.groupAcceptInviteV4(key, invite);
     },
 
     /**

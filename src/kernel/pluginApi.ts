@@ -400,9 +400,12 @@ export interface IChat {
    * `GroupInviteError` (from `#kernel/waContract.js`) for real
    * failures — invite not found/expired, malformed code, already a
    * member — see its `.reason` field.
-   * @param urlOrCode - Full `https://chat.whatsapp.com/<code>` URL or bare `<code>`.
+   * @param urlOrCodeOrMsg - Full `https://chat.whatsapp.com/<code>` URL,
+   *   bare `<code>`, or an `invite`-type `WAMessageContext` (e.g. `ctx.msg`
+   *   when `ctx.msg.type === "invite"`) — a forwarded group invite sent as
+   *   a message rather than a link.
    */
-  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  acceptInvite(urlOrCodeOrMsg: string | WAMessageContext): Promise<GroupAcceptInviteResult>;
   /**
    * Native lookup of any message by its ID alone — the kernel resolves
    * the owning chat's JID automatically (no need to store it

@@ -56,11 +56,13 @@ export interface BotMessage {
   id: string;
   chatId: string;
   fromMe: boolean;
-  type: "text" | "image" | "video" | "audio" | "sticker" | "document" | "other";
+  type: "text" | "image" | "video" | "audio" | "sticker" | "document" | "invite" | "other";
   contentHash: string;
   timestamp: number;
   body?: string;
   mimetype?: string;
+  /** Group-invite payload, populated when `type` is `"invite"`. */
+  groupInvite?: BotGroupInvite;
   pushName?: string;
   mentionedJid?: string[];
   quotedKey?: BotQuotedRef;
@@ -68,6 +70,19 @@ export interface BotMessage {
   fromPn?: string;
   participantAlt?: string;
   remoteJidAlt?: string;
+}
+
+/**
+ * Group invite sent as an in-chat message (Baileys' `GroupInviteMessage`) —
+ * distinct from a plain invite link/code. Carries everything
+ * `ctx.chat.acceptInvite()` needs to accept it.
+ */
+export interface BotGroupInvite {
+  groupJid: string;
+  inviteCode: string;
+  inviteExpiration: number;
+  groupName?: string;
+  caption?: string;
 }
 
 /**
@@ -828,6 +843,10 @@ export interface WAMessageContext {
    */
   pin(duration?: number): Promise<void>;
   hasPrefix: boolean;
+  /** Group-invite payload when `type === "invite"` (a forwarded group invite
+   *  sent as a message); `null` otherwise. Pass this whole message to
+   *  `ctx.chat.acceptInvite(msg)` to join. */
+  groupInvite: BotGroupInvite | null;
   /**
    * Fetch normalized info about the message sender.
    * @returns The sender's {@link NormalizedContact}, or `null` if the bot doesn't have a
@@ -933,9 +952,14 @@ export interface ChatContext {
    * {@link GroupInviteError} for real failures — invite not
    * found/expired, malformed code, already a member — see its
    * `.reason` field.
-   * @param urlOrCode - Full `https://chat.whatsapp.com/<code>` URL or bare `<code>`.
+   * As of this version, it also accepts a forwarded group invite sent as
+   * a message: pass the whole `WAMessageContext` (e.g. `ctx.msg`) when
+   * `ctx.msg.type === "invite"`. Assumes the message belongs to this
+   * chat (the normal `ctx.chat`/`ctx.msg` pairing).
+   * @param urlOrCodeOrMsg - Full `https://chat.whatsapp.com/<code>` URL,
+   *   bare `<code>`, or an `invite`-type {@link WAMessageContext}.
    */
-  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  acceptInvite(urlOrCodeOrMsg: string | WAMessageContext): Promise<GroupAcceptInviteResult>;
   /**
    * Native lookup of any message by its ID alone — the kernel resolves
    * the owning chat's JID automatically (no need to store it

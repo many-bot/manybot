@@ -133,6 +133,13 @@ type ParamFingerprint = {
 //   - whitespace and insignificant punctuation differences are gone.
 function canonicalize(typeStr: string): string {
   return typeStr
+    // Strip TS's `import("/abs/path/to/module").Name` qualifier that
+    // shows up when `typeToString` resolves a type imported from
+    // another file (e.g. a BotMessage-adjacent type referenced from a
+    // published .d.ts that re-declares the same interface locally
+    // instead of importing it). Same nominal name on both sides —
+    // only the module path differs, which isn't drift.
+    .replace(/import\([^)]*\)\./g, "")
     // Replace every nominal name that we deliberately treat as
     // structural-equivalent across the two sides. The list lives
     // here so it stays in sync with the design rationale.
