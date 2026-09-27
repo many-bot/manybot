@@ -21,6 +21,8 @@
 - Sending directly to a Community's own JID is now rejected early with a translated error (`communitySendBlocked`) instead of resolving silently without delivering the message.
 - `downloadMedia()` now resolves `isAnimated` via a byte-level check (WhatsApp reports all stickers as `image/webp`), and accepts `{ asFrames }` to return decoded animated-webp frames with per-frame `delayMs`.
 - Oversized message bodies are now capped at 4096 characters (`MAX_BODY_LENGTH`), with truncation metadata (`big`, `bodyLength`) exposed on `BotMessage` and `WAMessageContext`, including quoted messages.
+- New `msg.type: "invite"` and `ctx.chat.acceptInvite()` now also accept a `WAMessageContext` (in addition to a string) to accept a group invite message directly. Adds `BotGroupInvite` (`groupJid`, `inviteCode`, `inviteExpiration`, `groupName?`, `caption?`) and the optional `WaContract.groupAcceptInviteV4()` (Baileys-only; omitted on drivers without support, e.g. whatsmeow), mapping Boom errors to `GroupInviteError` (`already_member`/`not_found`/`invalid_code`/`unknown`).
+- `ctx.chat.mention`: new getter for community group mentions (`BotGroupMention`), threaded through `sendText`/`sendFallbackGuard` (Baileys-only).
 
 ### Fixed
 
@@ -45,6 +47,7 @@
 - `scheduler.db` / `settings.db` are now opened lazily on first real use instead of unconditionally at import time, and get periodic WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)` every 10min) plus a checkpoint on shutdown -- fixes unbounded `*-wal` growth on bots that never use scheduling/settings.
 - Group metadata lookups now go through cache to avoid WhatsApp rate-limit errors. Promoting members to admin in Communities now works correctly by reusing the linked announce group's member list, since the Community itself only returns admins as participants.
 - `WAMessageSender` file methods: renamed the `filePath` param to `source` in types.
+- Baileys: `badSession` now retries up to 3x (clear session + reconnect) before halting, instead of halting on the first occurrence; an alert is still sent on the eventual halt.
 
 ### New Configuration Options
 
