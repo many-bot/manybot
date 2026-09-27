@@ -18,6 +18,7 @@ import { waitForSendSlot } from "./sendGuard.js";
 import { getDriverManager } from "./driverManager.js";
 import { fireAlert } from "./alerts.js";
 import type { SentMessageRef, BotQuotedRef } from "#kernel/waContract.js";
+import type { BotGroupMention } from "#drivers/types.js";
 
 export class SendFailedError extends Error {
   readonly jid:    string;
@@ -38,7 +39,7 @@ export class SendFailedError extends Error {
 export async function sendWithFallback(
   jid:  string,
   text: string,
-  opts: { quoted?: BotQuotedRef; mentions?: string[] } = {}
+  opts: { quoted?: BotQuotedRef; mentions?: string[]; groupMentions?: BotGroupMention[] } = {}
 ): Promise<SentMessageRef> {
   const dm         = getDriverManager();
   const primary    = dm.active();

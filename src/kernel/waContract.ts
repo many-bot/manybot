@@ -14,7 +14,7 @@
  * other driver package.
  */
 
-import type { BotMessage, BotQuotedRef, BotGroupInvite } from "#drivers/types.js";
+import type { BotMessage, BotQuotedRef, BotGroupInvite, BotGroupMention } from "#drivers/types.js";
 
 export type { BotMessage, BotQuotedRef };
 
@@ -310,7 +310,7 @@ export interface WaContract {
   on<E extends WaEventName>(event: E, handler: (payload: WaEventPayload<E>) => void): () => void;
 
   // ── send (text routes through sendFallbackGuard; these are the direct calls) ─
-  sendText(jid: string, text: string, opts?: { quoted?: BotQuotedRef; mentions?: string[] }): Promise<SentMessageRef>;
+  sendText(jid: string, text: string, opts?: { quoted?: BotQuotedRef; mentions?: string[]; groupMentions?: BotGroupMention[] }): Promise<SentMessageRef>;
   sendImage(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean }): Promise<SentMessageRef>;
   sendVideo(jid: string, buffer: Buffer, opts?: { caption?: string; quoted?: BotQuotedRef; mentions?: string[]; viewOnce?: boolean; gifPlayback?: boolean }): Promise<SentMessageRef>;
   sendAudio(jid: string, buffer: Buffer, opts?: { quoted?: BotQuotedRef; viewOnce?: boolean; ptt?: boolean; mimetype?: string }): Promise<SentMessageRef>;

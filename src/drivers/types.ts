@@ -102,6 +102,17 @@ export interface BotGroupInvite {
   caption?:        string;
 }
 
+/**
+ * A group mention embedded in `contextInfo.groupMentions` (WhatsApp's
+ * mechanism for mentioning a group, distinct from a user mention's
+ * `mentionedJid`). `groupSubject` is the display name WhatsApp renders
+ * for the mention.
+ */
+export interface BotGroupMention {
+  groupJid:     string;
+  groupSubject: string;
+}
+
 /** Minimal chat shape, driver-neutral. */
 export interface BotChat {
   id: string;

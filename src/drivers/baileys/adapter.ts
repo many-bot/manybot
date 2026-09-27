@@ -459,6 +459,15 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sendOpts: any = buildSendOpts(jid, opts?.quoted);
       if (opts?.mentions?.length) content.mentions = opts.mentions;
+      if (opts?.groupMentions?.length) {
+        const invalid = opts.groupMentions.filter(m => !m.groupJid?.endsWith("@g.us") || !m.groupSubject);
+        if (invalid.length) {
+          logger.warn(`[baileys] sendText: groupMentions inválido, ignorando: ${JSON.stringify(invalid)}`);
+        } else {
+          logger.debug(`[baileys] sendText: enviando com groupMentions: ${JSON.stringify(opts.groupMentions)}`);
+          content.contextInfo = { ...content.contextInfo, groupMentions: opts.groupMentions };
+        }
+      }
       const ref = await sock.sendMessage(jid, content, sendOpts);
       return toSentRef(ref, jid);
     },

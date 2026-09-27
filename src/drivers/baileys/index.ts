@@ -113,6 +113,13 @@ const CACHE_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5min
 // recover from on its own.
 const MAX_RESTART_REQUIRED = 3;
 let restartRequiredCount = 0;
+// Same idea for badSession (500): a lone badSession is treated as a
+// spurious server-side rejection (e.g. an outgoing stanza WhatsApp didn't
+// like) and recovered from by wiping local creds and re-pairing on our
+// own. Recurring badSession right after re-pairing means the corruption
+// is real/persistent, so we stop self-healing and halt instead.
+const MAX_BAD_SESSION = 3;
+let badSessionCount = 0;
 
 /**
  * Loads the on-disk cache and merges it into `store` (union, never
@@ -224,6 +231,7 @@ async function startBot() {
       state = "READY_INIT";
       reconnectAttempts = 0;
       restartRequiredCount = 0;
+      badSessionCount = 0;
       setStatus(true);
       logger.success(t("system.connected"));
       logger.info(t("system.clientId", { id: CLIENT_ID }));
@@ -277,24 +285,31 @@ async function startBot() {
 
        if (loggedOut || badSession) {
          if (badSession) {
-           logger.warn("Session data corrupted (badSession=500). Clearing session dir.");
-           // No longer mark degraded - halt on failure
-           logger.error("Baileys driver failed due to bad session - bot will halt");
-           process.exit(1);
+           badSessionCount++;
+           logger.warn(`Session data corrupted (badSession=500). Clearing session dir (${badSessionCount}/${MAX_BAD_SESSION}).`);
          } else {
            logger.warn(t("system.sessionExpired"));
-           // No longer mark degraded - halt on failure
-           logger.error("Baileys driver failed due to session expired - bot will halt");
+         }
+
+         try {
+           await fs.rm(AUTH_DIR, { recursive: true, force: true });
+         } catch (e) {
+           logger.error(`[whatsapp] Failed to remove session dir: ${(e as Error).message}`);
+         }
+
+         if (loggedOut || badSessionCount >= MAX_BAD_SESSION) {
+           halted = true;
+           logger.error(`Baileys driver failed due to ${badSession ? "recurring bad session" : "session expired"} - bot will halt`);
+           sendAlert({
+             level:   "critical",
+             title:   t("alerts.reconnectHaltedTitle"),
+             message: `${badSession ? "badSession recorrente" : "loggedOut"} — sessão apagada, é necessário reparear (escanear QR).`,
+           }).catch(() => {});
            process.exit(1);
          }
-  try {
-    await fs.rm(AUTH_DIR, { recursive: true, force: true });
-  } catch (e) {
-    logger.error(`Baileys driver failed due to ${badSession ? "bad session" : "session expired"} - bot will halt`);
-    process.exit(1);
-          logger.error(`[whatsapp] Failed to remove session dir: ${(e as Error).message}`);
-        }
-        scheduleReconnect(1000);
+
+         logger.warn("[whatsapp] Reconnecting with a clean session.");
+         scheduleReconnect(1000);
       } else if (restartReq) {
         restartRequiredCount++;
         if (restartRequiredCount >= MAX_RESTART_REQUIRED) {

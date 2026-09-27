@@ -24,7 +24,7 @@
 
 import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
-import type { BotMessage } from "#drivers/types.js";
+import type { BotMessage, BotGroupMention } from "#drivers/types.js";
 import type { ScopedAccessor } from "#kernel/settingsDb.js";
 
 // Re-export the implementation module so existing callers that
@@ -369,6 +369,13 @@ export interface IChat {
    *  the Community chat itself, the parent's jid on a linked group, or
    *  `null` if this chat isn't part of a Community. */
   community: string | null;
+  /**
+   * Mention payload for this group, ready to pass as the `.text()` opts
+   * (mirrors `IContact.mention`). `null` for a DM or for a group not
+   * linked to a community — WhatsApp only renders group mentions in
+   * that case, and accessing this logs a warning explaining why.
+   */
+  mention: { text: string; groupMentions: BotGroupMention[] } | null;
   history: WAHistoryArray;
   getParticipants(): Promise<IParticipant[]>;
   /**

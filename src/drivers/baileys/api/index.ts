@@ -11,7 +11,7 @@
 
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
-import type { BotMessage, BotQuotedRef, BotGroupInvite } from "#drivers/types.js";
+import type { BotMessage, BotQuotedRef, BotGroupInvite, BotGroupMention } from "#drivers/types.js";
 import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
 import { GroupInviteError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
@@ -1711,7 +1711,7 @@ function makeSender(
   };
 
   return {
-    text(content: string, opts: { linkPreview?: boolean; mentions?: string[] } = {}) {
+    text(content: string, opts: { linkPreview?: boolean; mentions?: string[]; groupMentions?: BotGroupMention[] } = {}) {
       // The text path goes through sendFallbackGuard: send via the active
       // driver, trust it on resolve. sendMedia and react below still go
       // straight to the contract on purpose — no guard needed, react is
@@ -1732,6 +1732,7 @@ function makeSender(
         const ref = await sendWithFallback(jid, content, {
           quoted: quotedRef ?? undefined,
           mentions: mentionsResolved,
+          groupMentions: opts.groupMentions,
         });
 
         // The guard returns a SentMessageRef (id + chatId + timestamp) but
@@ -2932,6 +2933,21 @@ function buildChatFacet(
      * `groupMetaCache.ts` — so repeated calls don't repay that cost.
      * @returns {Promise<Array<{ id: string, name: string }>>}
      */
+    get mention(): { text: string; groupMentions: BotGroupMention[] } | null {
+      if (!targetIsGroup) {
+        logger.warn(`[chat.mention] "${targetNormJid}" é uma DM. Menção de grupo não é suportada aqui.`);
+        return null;
+      }
+      if (!targetCommunity) {
+        logger.warn(`[chat.mention] "${targetNormJid}" não pertence a uma comunidade. Menção de grupo não é suportada aqui.`);
+        return null;
+      }
+      return {
+        text: `@${targetNormJid}`,
+        groupMentions: [{ groupJid: targetNormJid, groupSubject: targetName }],
+      };
+    },
+
     async getGroups(): Promise<WACommunityGroup[]> {
       if (!targetIsCommunity) return [];
       try {
