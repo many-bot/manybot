@@ -745,6 +745,10 @@ export interface WAMessageContext {
   id: string;
   timestamp: number;
   body: string;
+  /** True when the original text was longer than MAX_BODY_LENGTH and `body` was truncated. */
+  big: boolean;
+  /** Length of the original, untruncated text. Only meaningful when `big` is true. */
+  bodyLength: number;
   type: string;
   fromMe: boolean;
   /** LID-canonical sender JID (`@lid`), or `null` when no LID is known yet for this contact. */
