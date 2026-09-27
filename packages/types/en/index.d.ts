@@ -925,6 +925,18 @@ export interface ChatContext {
    */
   getChat(jid: string): Promise<ChatContext | null>;
   /**
+   * Join a group via invite link or bare code — not scoped to this
+   * `ChatContext` instance's own chat, same escape-hatch spirit as
+   * `getChat()`. Resolves `{ status: "joined", groupId }` on success,
+   * or `{ status: "requested" }` when the group needs admin approval
+   * (the join request was sent — this is not an error). Throws
+   * {@link GroupInviteError} for real failures — invite not
+   * found/expired, malformed code, already a member — see its
+   * `.reason` field.
+   * @param urlOrCode - Full `https://chat.whatsapp.com/<code>` URL or bare `<code>`.
+   */
+  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  /**
    * Native lookup of any message by its ID alone — the kernel resolves
    * the owning chat's JID automatically (no need to store it
    * separately). Returns the same shape as `ctx.msg`, so `.reply()`,
@@ -934,6 +946,22 @@ export interface ChatContext {
    * @returns The message, or `null` if the ID is unknown/evicted.
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
+}
+
+/** Result of {@link ChatContext.acceptInvite}. */
+export interface GroupAcceptInviteResult {
+  status: "joined" | "requested";
+  /** Normalized JID of the group. Present only when `status === "joined"`. */
+  groupId?: string;
+}
+
+/** Reason code carried by {@link GroupInviteError}. */
+export type GroupInviteErrorReason = "not_found" | "invalid_code" | "already_member" | "unknown";
+
+/** Thrown by {@link ChatContext.acceptInvite} on a real failure (never for the "requires approval" case — see its doc). */
+export class GroupInviteError extends Error {
+  readonly reason: GroupInviteErrorReason;
+  constructor(reason: GroupInviteErrorReason, message: string, options?: { cause?: unknown });
 }
 
 // ── Admin API (ctx.admin) ───────────────────────────────────────────────────

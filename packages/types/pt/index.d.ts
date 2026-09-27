@@ -877,6 +877,16 @@ export interface ChatContext {
   id: string;
   name: string;
   isGroup: boolean;
+  /** Suporte a Comunidades do WhatsApp (somente Baileys). `false`/`null`
+   *  em qualquer outro driver e em chats que não são grupo. */
+  isCommunity: boolean;
+  /** `true` para o grupo de anúncios de uma Comunidade. */
+  isAnnounces: boolean;
+  /** O jid da Comunidade à qual este chat pertence — o próprio jid da
+   *  Comunidade quando o chat é a Comunidade, o jid do pai quando é um
+   *  grupo vinculado, ou `null` se este chat não pertence a nenhuma
+   *  Comunidade. */
+  community: string | null;
   /**
    * Mensagens passadas deste chat (mais antiga → mais recente). Filtros de
    * conveniência: `history.last(n)`, `history.from(senderId)`.
@@ -887,6 +897,12 @@ export interface ChatContext {
    * @returns Os participantes do grupo, ou `[]` para chats que não são grupo.
    */
   getParticipants(): Promise<GroupParticipant[]>;
+  /**
+   * Somente Comunidade: todos os grupos vinculados a esta Comunidade.
+   * @returns Os grupos vinculados da Comunidade, ou `[]` para qualquer
+   *   chat onde `isCommunity` seja `false`.
+   */
+  getGroups(): Promise<Array<{ id: string; name: string }>>;
   /**
    * Verifica se um determinado contato é admin do grupo.
    * @param contactId - O JID do contato/participante a verificar.
@@ -924,6 +940,18 @@ export interface ChatContext {
    */
   getChat(jid: string): Promise<ChatContext | null>;
   /**
+   * Entra em um grupo via link de convite ou código — não é vinculado
+   * ao chat desta instância de `ChatContext`, mesmo espírito de escape
+   * hatch do `getChat()`. Resolve `{ status: "joined", groupId }` em
+   * caso de sucesso, ou `{ status: "requested" }` quando o grupo exige
+   * aprovação de admin (o pedido de entrada foi enviado — isso não é
+   * um erro). Lança {@link GroupInviteError} para falhas reais —
+   * convite não encontrado/expirado, código inválido, já é membro —
+   * veja seu campo `.reason`.
+   * @param urlOrCode - URL completa `https://chat.whatsapp.com/<código>` ou apenas o `<código>`.
+   */
+  acceptInvite(urlOrCode: string): Promise<GroupAcceptInviteResult>;
+  /**
    * Busca nativa de qualquer mensagem apenas pelo seu ID — o kernel
    * resolve automaticamente o JID do chat dono da mensagem (sem
    * necessidade de guardá-lo separadamente). Retorna a mesma forma de
@@ -933,6 +961,22 @@ export interface ChatContext {
    * @returns A mensagem, ou `null` se o ID for desconhecido/expirado.
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
+}
+
+/** Resultado de {@link ChatContext.acceptInvite}. */
+export interface GroupAcceptInviteResult {
+  status: "joined" | "requested";
+  /** JID normalizado do grupo. Presente apenas quando `status === "joined"`. */
+  groupId?: string;
+}
+
+/** Código de motivo carregado por {@link GroupInviteError}. */
+export type GroupInviteErrorReason = "not_found" | "invalid_code" | "already_member" | "unknown";
+
+/** Lançado por {@link ChatContext.acceptInvite} em uma falha real (nunca no caso de "requer aprovação" — veja a doc). */
+export class GroupInviteError extends Error {
+  readonly reason: GroupInviteErrorReason;
+  constructor(reason: GroupInviteErrorReason, message: string, options?: { cause?: unknown });
 }
 
 // ── API de administração (ctx.admin) ─────────────────────────────────────────

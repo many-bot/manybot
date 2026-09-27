@@ -139,6 +139,7 @@
     "groupParticipantsUpdateRejected": "{{method}}(\"{{action}}\") rejeitado para: {{detail}}",
     "groupParticipantsUpdateFailed": "{{method}}(\"{{action}}\") falhou para o grupo \"{{group}}\" com participantes [{{users}}]: {{message}}",
     "communityParticipantsUnsupported": "O driver ativo não suporta alterar cargos em uma Comunidade (\"{{group}}\").",
+    "communitySendBlocked": "Não é possível enviar mensagens diretamente para uma Comunidade (\"{{jid}}\") — envie para um dos grupos vinculados a ela.",
     "pollDecryptFailed": "Erro ao decriptar voto da enquete: {{error}}",
     "invalidReaction": "Reação inválida: \"{{emoji}}\". Por favor, use apenas um emoji."
   },
