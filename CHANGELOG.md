@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.12.0 - In-development
+## v5.12.0 - 2026-09-27
 
 ### New Features
 
