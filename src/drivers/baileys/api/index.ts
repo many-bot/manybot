@@ -1449,7 +1449,11 @@ class MessageHandle implements PromiseLike<WAMessageContext | undefined> {
     return makeSender(
       this._contract,
       this._store,
-      this._jid || "",
+      async () => {
+        if (this._jid) return this._jid;
+        const msg = await this.rawPromise;
+        return msg?.chatId ?? "";
+      },
       this.rawPromise,
       this._guardOptions
     );
@@ -1696,11 +1700,15 @@ async function assertSendable(contract: WaContract, jid: string): Promise<void> 
 function makeSender(
   contract: WaContract,
   store:    BotStore,
-  jid:      string,
+  jid:      string | (() => Promise<string>),
   quoted:   BotMessage | Promise<BotMessage | null | undefined> | null = null,
   { cooldown = true, jitter = true } = {}
 ) {
-  const normJid = normalizeJid(jid);
+  // jid may be a resolver instead of a plain string: MessageHandle.reply
+  // uses this to defer lookup until the underlying send has actually
+  // resolved (its chatId isn't known synchronously — see MessageHandle).
+  const resolveJid = async (): Promise<string> =>
+    typeof jid === "function" ? jid() : jid;
 
   // Helper: resolve quoted message if it's a Promise, then turn it into a
   // BotQuotedRef the contract's send methods accept.
@@ -1717,6 +1725,7 @@ function makeSender(
       // straight to the contract on purpose — no guard needed, react is
       // one-shot and already idempotent at the protocol level.
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         const mentionsResolved = opts.mentions?.length
@@ -1758,6 +1767,8 @@ function makeSender(
 
     image(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1778,6 +1789,8 @@ function makeSender(
 
     video(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1806,6 +1819,8 @@ function makeSender(
      */
     gif(source: string | Buffer, caption = "", opts: { viewOnce?: boolean; mentions?: string[] } = {}) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1829,6 +1844,8 @@ function makeSender(
 
     audio(source: string | Buffer, { asVoice = true, viewOnce = false } = {}) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1846,6 +1863,8 @@ function makeSender(
 
     sticker(source: string | Buffer) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1860,6 +1879,8 @@ function makeSender(
 
     file(source: string | Buffer, filename?: string) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
@@ -1888,6 +1909,8 @@ function makeSender(
      */
     poll(question: string, options: string[], { allowMultipleAnswers = false } = {}) {
       return new MessageHandle((async () => {
+        const jid = await resolveJid();
+        const normJid = normalizeJid(jid);
         await assertSendable(contract, jid);
         const quotedRef = await resolveQuoted();
         await waitForSendSlot(normJid, { cooldown, jitter });
