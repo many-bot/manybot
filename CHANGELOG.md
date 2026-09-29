@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.12.1 - 2026-09-28
+
+### Fixed
+
+- Baileys: `MessageHandle.reply()` could send with an empty chat JID when the message's `chatId` wasn't known yet, so `assertSendable` and `waitForSendSlot` ran against the wrong chat. `makeSender` now accepts a JID resolver and resolves it before each send.
+
 ## v5.12.0 - 2026-09-27
 
 ### New Features
