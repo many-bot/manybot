@@ -161,7 +161,7 @@ The scripts in `scripts/git-hooks/` (`post-receive`, `release.sh`, `github-relea
 
 ## Releases and the changelog
 
-`CHANGELOG.md` is the source of truth for what changed between releases. Clean the file before every version, past versions are tracked by Git log only, grouped by _New Features_, _Improvements_, _Refactors_, _Build / CI_, _New Dependencies_, and _New Configuration Options_.
+`CHANGELOG.md` is the source of truth for what changed between releases. When a new minor or major version starts, the file is rewritten from scratch, past versions are tracked by Git log only. Patches don't rewrite it: they get their own `## vX.Y.Z - date` section on top of the previous one, so the file holds every patch of the current minor/major version (e.g. `v5.12.1` goes above `v5.12.0`). Entries are grouped by _New Features_, _Improvements_, _Refactors_, _Build / CI_, _New Dependencies_, and _New Configuration Options_.
 
 Two expectations for contributors:
 
