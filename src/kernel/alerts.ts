@@ -244,6 +244,63 @@ export type AlertKind =
   | "plugin_crash"
   | (string & {}); // open for future kinds without breaking the union
 
+// ── Per-kind rate limiting ────────────────────────────────────────────────
+//
+// High-frequency failures (e.g. a burst of CDN 404s during a reconnect)
+// would otherwise flood every sink on every single occurrence. The rate
+// limiter suppresses repeated fires of the same kind within a window and
+// emits one summarising alert once the window closes.
+//
+// Only kinds listed here are throttled — anything unlisted fires immediately.
+
+interface RateLimitState {
+  windowStart: number;
+  count:       number;
+  timer:       ReturnType<typeof setTimeout> | null;
+  lastDetails: Record<string, unknown>;
+}
+
+const RATE_LIMIT_CONFIG: Partial<Record<AlertKind, { windowMs: number }>> = {
+  download_media_failed: { windowMs: 5 * 60 * 1000 }, // 5 min window
+};
+
+const rateLimitState = new Map<AlertKind, RateLimitState>();
+
+function flushRateLimited(kind: AlertKind, state: RateLimitState): void {
+  state.timer = null;
+  if (state.count <= 1) return; // the first one already fired individually
+  const cfg = RATE_LIMIT_CONFIG[kind]!;
+  const windowSec = Math.round(cfg.windowMs / 1000);
+  void sendAlert({
+    level:   "warning",
+    title:   `[x${state.count}] ${kind}`,
+    message: `${state.count} occurrences in the last ${windowSec}s (last: ${JSON.stringify(state.lastDetails)})`,
+    sinks:   ["log", "whatsapp"],
+  });
+  state.count = 0;
+}
+
+function fireRateLimited(kind: AlertKind, buildEvent: () => AlertEvent, details: Record<string, unknown>): void {
+  const cfg = RATE_LIMIT_CONFIG[kind]!;
+  const now = Date.now();
+  let state = rateLimitState.get(kind);
+
+  if (!state || now - state.windowStart > cfg.windowMs) {
+    // First occurrence (or window expired) — fire immediately, start window.
+    if (state?.timer) clearTimeout(state.timer);
+    state = { windowStart: now, count: 1, timer: null, lastDetails: details };
+    rateLimitState.set(kind, state);
+    void sendAlert(buildEvent());
+    // Schedule the summary flush for when the window closes.
+    state.timer = setTimeout(() => flushRateLimited(kind, state!), cfg.windowMs);
+    return;
+  }
+
+  // Within the window — suppress individual alert, just count.
+  state.count++;
+  state.lastDetails = details;
+}
+
 export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}): void {
   let event: AlertEvent;
   if (kind === "send_failed") {
@@ -254,7 +311,7 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
                (details.error ? ` error=${String(details.error)}` : ""),
     };
   } else if (kind === "download_media_failed") {
-    event = {
+    fireRateLimited(kind, () => ({
       level:   "warning",
       title:   t("alerts.downloadMediaFailedTitle"),
       message: t("alerts.downloadMediaFailedMessage", {
@@ -264,7 +321,9 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
         error:    details.error ? String(details.error) : "",
       }),
       fatal: false,
-    };
+      sinks: ["log", "whatsapp"],
+    }), details);
+    return;
   } else if (kind === "plugin_crash") {
     const disabled = Boolean(details.disabled);
     const source = details.source === "global"
