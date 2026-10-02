@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed (breaking)
+
+- `ctx.admin.kick()` now follows the WhatsApp app's Community semantics. Targeting a Community (`chat.community`) or its announcements group removes the member from **every** group of the Community, announcements last (one group at a time, with a short pause between removals). Previously it removed the member from that single group only — so banning from the announcements group left them in the Community's other groups, and kicking the Community jid itself did nothing. Kicking from an ordinary linked group (e.g. "General") or from a group outside any Community is unchanged.
+  - `kick()` now resolves with one `GroupKickOutcome` per group (`removed` / `not_member` / `failed`, with `reason` and the raw WhatsApp `code`). Groups the member isn't in are `not_member`, not errors.
+  - If the removal fails in any group, `kick()` rejects with the new `CommunityKickError` (`results`, `removed`, `failed`). Every group is still attempted; nothing stops at the first failure. Reasons: `not_admin` (checked before sending anything), `target_superadmin` (group owner, checked before sending anything), `rate_limited`, `timeout`, `unknown`.
+  - The member is resolved per group, so a member addressed by LID in one group and by phone number in another is handled. Kicking the Community jid no longer fails to find members, even though a Community's own metadata only lists admins.
+  - Plugins that relied on "kick from the announcements group only" must target a linked group instead.
+- `@manybot/types` 2.3.0: adds `GroupKickOutcome`, `GroupKickReason`, `CommunityKickError`; `AdminApi.kick()` returns `TargetableAction<GroupKickOutcome[]>`.
+
+### Fixed
+
+- Baileys: listing a Community's linked groups now seeds the shared group-metadata cache from the same account scan, so Community-wide admin actions no longer cost one extra `groupMetadata()` lookup per group.
+
 ## v5.12.1 - 2026-09-28
 
 ### Fixed
