@@ -777,7 +777,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
         | { contextInfo?: { quotedMessage?: unknown; stanzaId?: string | null; participant?: string | null } }
         | undefined;
       const embeddedContent = embedded?.contextInfo?.quotedMessage;
-      const raw: RawMessage | undefined = embeddedContent
+      let raw: RawMessage | undefined = embeddedContent
         ? ({
             key: {
               id:          embedded.contextInfo?.stanzaId ?? msg.id,
@@ -798,8 +798,17 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       // are retried (isTransientNetworkError); anything else (e.g. a
       // genuinely malformed/expired media key) fails fast instead of
       // burning 3 attempts on something a retry can't fix.
+      //
+      // Baileys bug workaround (present since at least rc13, confirmed rc14):
+      // `downloadMediaMessage` is supposed to call `reuploadRequest` when it
+      // gets a 404/410 from the CDN (expired media URL), but its check reads
+      // `error?.status` — a Boom v7 field. Boom v9 (bundled in Baileys) only
+      // exposes `.output.statusCode`, so the check is always false and
+      // `updateMediaMessage` is never triggered automatically. We detect the
+      // CDN-expiry case ourselves and drive the reupload loop explicitly.
       let lastErr: unknown;
       let attempts = 0;
+      let reuploaded = false;
       while (true) {
         attempts++;
         try {
@@ -816,6 +825,28 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
           return { mimetype: msg.mimetype ?? "application/octet-stream", data: buffer, isAnimated };
         } catch (err) {
           lastErr = err;
+
+          // Boom v9 uses .output.statusCode; v7 used .status. Handle both.
+          const httpStatus: number | undefined =
+            (err as { output?: { statusCode?: number } }).output?.statusCode ??
+            (err as { status?: number }).status;
+
+          // CDN URL expired (404) or gone (410): request a fresh URL via
+          // updateMediaMessage and retry once. Only attempt reupload once —
+          // if the server-side reupload itself fails or the fresh URL also
+          // 404s, fall through to the normal failure path.
+          if (!reuploaded && (httpStatus === 404 || httpStatus === 410)) {
+            reuploaded = true;
+            logger.warn(`[waContract] downloadMedia CDN ${httpStatus} for msg=${msg.id}, requesting reupload…`);
+            try {
+              raw = await sock.updateMediaMessage(raw);
+            } catch (reuploadErr) {
+              logger.warn(`[waContract] downloadMedia reupload request failed for msg=${msg.id}: ${describeError(reuploadErr)}`);
+              break;
+            }
+            continue;
+          }
+
           const delayMs = isTransientNetworkError(err) ? DOWNLOAD_MEDIA_RETRY_DELAYS_MS[attempts - 1] : undefined;
           if (delayMs === undefined) break;
           logger.warn(`[waContract] downloadMedia attempt ${attempts}/${DOWNLOAD_MEDIA_RETRY_DELAYS_MS.length + 1} failed for msg=${msg.id} chat=${msg.chatId} mimetype=${msg.mimetype ?? "?"}, retrying in ${delayMs}ms: ${describeError(err)}`);
