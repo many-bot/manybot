@@ -1003,6 +1003,34 @@ export class GroupInviteError extends Error {
   constructor(reason: GroupInviteErrorReason, message: string, options?: { cause?: unknown });
 }
 
+/** Why a group was not cleared by {@link AdminApi.kick} (see {@link GroupKickOutcome}). */
+export type GroupKickReason = "not_admin" | "target_superadmin" | "rate_limited" | "timeout" | "unknown";
+
+/** Result of {@link AdminApi.kick} for one group. */
+export interface GroupKickOutcome {
+  groupId: string;
+  name: string;
+  isAnnounce: boolean;
+  /** `not_member`: the target was not in this group — not an error. */
+  status: "removed" | "not_member" | "failed";
+  reason?: GroupKickReason;
+  /** Raw WhatsApp status code (`"403"`, `"408"`, …) when the rejection came from the server. */
+  code?: string;
+  message?: string;
+}
+
+/**
+ * Thrown by {@link AdminApi.kick} when a Community-wide removal failed in at
+ * least one group. `results` covers every group the removal touched;
+ * `removed` / `failed` are convenience filters over it.
+ */
+export class CommunityKickError extends Error {
+  readonly results: GroupKickOutcome[];
+  readonly removed: GroupKickOutcome[];
+  readonly failed: GroupKickOutcome[];
+  constructor(results: GroupKickOutcome[], message: string);
+}
+
 // ── Admin API (ctx.admin) ───────────────────────────────────────────────────
 
 /**
@@ -1045,10 +1073,22 @@ export interface AdminApi {
   add(memberIds: string | string[]): TargetableAction;
   /**
    * Remove one or more members from the group.
+   *
+   * Targeting a Community (`chat.community`) or its announcements group
+   * removes the member from **every** group of the Community, announcements
+   * last — like the WhatsApp app. Any other group, including the
+   * Community's ordinary linked groups, only affects that group. Groups
+   * where the member isn't present are reported as `not_member`.
+   *
+   * Resolves with one {@link GroupKickOutcome} per group. If the removal
+   * failed in any group of a Community, rejects with
+   * {@link CommunityKickError}, whose `results` / `removed` / `failed`
+   * say exactly where it worked and why it didn't.
+   *
    * @param memberIds - A single JID or an array of JIDs to remove.
    * @returns A {@link TargetableAction}, awaitable or redirectable via `.to(jid)`.
    */
-  kick(memberIds: string | string[]): TargetableAction;
+  kick(memberIds: string | string[]): TargetableAction<GroupKickOutcome[]>;
   /**
    * Promote one or more members to group admin.
    * @param memberIds - A single JID or an array of JIDs to promote.

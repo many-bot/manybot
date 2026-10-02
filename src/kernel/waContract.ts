@@ -276,6 +276,41 @@ export class GroupInviteError extends Error {
   }
 }
 
+/** Why a group was not cleared by `ctx.admin.kick()` (see {@link GroupKickOutcome}). */
+export type GroupKickReason = "not_admin" | "target_superadmin" | "rate_limited" | "timeout" | "unknown";
+
+/** Result of `ctx.admin.kick()` for one group. */
+export interface GroupKickOutcome {
+  groupId: string;
+  name: string;
+  isAnnounce: boolean;
+  /** `not_member`: the target was not in this group — not an error. */
+  status: "removed" | "not_member" | "failed";
+  reason?: GroupKickReason;
+  /** Raw WhatsApp status code (`"403"`, `"408"`, …) when the rejection came from the server. */
+  code?: string;
+  message?: string;
+}
+
+/**
+ * Thrown by `ctx.admin.kick()` when a Community-wide removal failed in at
+ * least one group. `results` covers every group the removal touched;
+ * `removed` / `failed` are convenience filters over it.
+ */
+export class CommunityKickError extends Error {
+  readonly results: GroupKickOutcome[];
+  readonly removed: GroupKickOutcome[];
+  readonly failed: GroupKickOutcome[];
+
+  constructor(results: GroupKickOutcome[], message: string) {
+    super(message);
+    this.name = "CommunityKickError";
+    this.results = results;
+    this.removed = results.filter((r) => r.status === "removed");
+    this.failed = results.filter((r) => r.status === "failed");
+  }
+}
+
 // ── Profile ─────────────────────────────────────────────────────────────────
 
 export interface BotMe {
@@ -343,7 +378,7 @@ export interface WaContract {
    * (the parent group, `isCommunity`) — WhatsApp uses a distinct protocol
    * operation there. Optional: drivers without Community support omit it.
    */
-  communityParticipantsUpdate?(jid: string, users: string[], action: "promote" | "demote"): Promise<Array<{ status: string; jid?: string }>>;
+  communityParticipantsUpdate?(jid: string, users: string[], action: "promote" | "demote" | "remove"): Promise<Array<{ status: string; jid?: string }>>;
   groupUpdateSubject(jid: string, subject: string): Promise<void>;
   groupUpdateDescription(jid: string, description: string): Promise<void>;
   groupInviteCode(jid: string): Promise<string>;

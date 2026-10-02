@@ -1018,6 +1018,34 @@ export class GroupInviteError extends Error {
   constructor(reason: GroupInviteErrorReason, message: string, options?: { cause?: unknown });
 }
 
+/** Por que um grupo não foi limpo por {@link AdminApi.kick} (veja {@link GroupKickOutcome}). */
+export type GroupKickReason = "not_admin" | "target_superadmin" | "rate_limited" | "timeout" | "unknown";
+
+/** Resultado de {@link AdminApi.kick} para um grupo. */
+export interface GroupKickOutcome {
+  groupId: string;
+  name: string;
+  isAnnounce: boolean;
+  /** `not_member`: o alvo não estava neste grupo — não é erro. */
+  status: "removed" | "not_member" | "failed";
+  reason?: GroupKickReason;
+  /** Código de status bruto do WhatsApp (`"403"`, `"408"`, …) quando a recusa veio do servidor. */
+  code?: string;
+  message?: string;
+}
+
+/**
+ * Lançado por {@link AdminApi.kick} quando a remoção de uma Comunidade
+ * falhou em pelo menos um grupo. `results` cobre todos os grupos
+ * tocados; `removed` / `failed` são filtros de conveniência sobre ele.
+ */
+export class CommunityKickError extends Error {
+  readonly results: GroupKickOutcome[];
+  readonly removed: GroupKickOutcome[];
+  readonly failed: GroupKickOutcome[];
+  constructor(results: GroupKickOutcome[], message: string);
+}
+
 // ── API de administração (ctx.admin) ─────────────────────────────────────────
 
 /**
@@ -1061,10 +1089,22 @@ export interface AdminApi {
   add(memberIds: string | string[]): TargetableAction;
   /**
    * Remove um ou mais membros do grupo.
-   * @param memberIds - Um único JID ou um array de JIDs para remover.
-   * @returns Um {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
+   *
+   * Se o alvo for uma Comunidade (`chat.community`) ou o grupo de
+   * anúncios dela, remove o membro de **todos** os grupos da Comunidade,
+   * o de anúncios por último — como no app do WhatsApp. Qualquer outro
+   * grupo, inclusive os grupos vinculados comuns, afeta só aquele grupo.
+   * Grupos em que o membro não está voltam como `not_member`.
+   *
+   * Resolve com um {@link GroupKickOutcome} por grupo. Se a remoção
+   * falhar em algum grupo de uma Comunidade, rejeita com
+   * {@link CommunityKickError}, cujo `results` / `removed` / `failed`
+   * dizem exatamente onde funcionou e por que não funcionou.
+   *
+   * @param memberIds - Um JID ou uma lista de JIDs a remover.
+   * @returns Uma {@link TargetableAction}, aguardável ou redirecionável via `.to(jid)`.
    */
-  kick(memberIds: string | string[]): TargetableAction;
+  kick(memberIds: string | string[]): TargetableAction<GroupKickOutcome[]>;
   /**
    * Promove um ou mais membros a admin do grupo.
    * @param memberIds - Um único JID ou um array de JIDs para promover.

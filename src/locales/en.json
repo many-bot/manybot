@@ -139,6 +139,7 @@
     "groupParticipantsUpdateRejected": "{{method}}(\"{{action}}\") rejected for: {{detail}}",
     "groupParticipantsUpdateFailed": "{{method}}(\"{{action}}\") failed for group \"{{group}}\" with participants [{{users}}]: {{message}}",
     "communityParticipantsUnsupported": "The active driver does not support changing roles in a Community (\"{{group}}\").",
+    "communityKickPartial": "Removed from {{removed}} of {{total}} group(s) of the Community; failed in: {{details}}",
     "communitySendBlocked": "Cannot send messages directly to a Community (\"{{jid}}\") — send to one of its linked groups instead.",
     "pollDecryptFailed": "Failed to decrypt poll vote: {{error}}",
     "invalidReaction": "Invalid reaction: \"{{emoji}}\". Please use a single emoji."

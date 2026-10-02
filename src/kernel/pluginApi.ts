@@ -22,7 +22,7 @@
  *     the implementation, never plugins.
  */
 
-import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { BotMessage, BotGroupMention } from "#drivers/types.js";
 import type { ScopedAccessor } from "#kernel/settingsDb.js";
@@ -297,7 +297,7 @@ export interface ITargetableAction<T = unknown> {
 // `assertParticipantsUpdateOk` in drivers/baileys/api/index.ts).
 export interface IAdmin {
   add(memberIds: string | string[]): ITargetableAction;
-  kick(memberIds: string | string[]): ITargetableAction;
+  kick(memberIds: string | string[]): ITargetableAction<GroupKickOutcome[]>;
   promote(memberIds: string | string[]): ITargetableAction;
   demote(memberIds: string | string[]): ITargetableAction;
   setSubject(name: string): ITargetableAction;

@@ -14,6 +14,9 @@ import {
 import type { PluginEntry } from "#kernel/pluginLoader.js";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import { __resetSessionsForTests } from "#kernel/chatSession.js";
+import { __setAdminActionTimingForTests } from "#kernel/sendGuard.js";
+
+__setAdminActionTimingForTests({ gapMs: 0, retryBaseMs: 1 });
 
 // Setup temp config directory for tests
 const testTmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-pluginapi-test-"));
@@ -21,6 +24,7 @@ process.env.MANYBOT_CONFIG_DIR = testTmpDir;
 
 const RAW_SOCK_SYM = Symbol.for("manybot.baileys.rawSocket");
 const COMMUNITY_JID = "120363111111111@g.us";
+const COMMUNITY_LINKED_JID = "120363111111112@g.us";
 
 interface MockCallHistory {
   sentTexts: Array<{ jid: string; text: string; opts?: unknown }>;
@@ -82,6 +86,21 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
       ],
     }),
   };
+
+  // Raw-shape account scan (`groupFetchAllParticipating`) — the Community's
+  // one linked group, used by the kick cascade.
+  (rawMockSock as Record<string, unknown>).groupFetchAllParticipating = async () => ({
+    [COMMUNITY_LINKED_JID]: {
+      id: COMMUNITY_LINKED_JID,
+      subject: "Linked Mock Group",
+      linkedParent: COMMUNITY_JID,
+      participants: [
+        { id: "5516999999999@s.whatsapp.net", admin: "admin", phoneNumber: "5516999999999@s.whatsapp.net" },
+        { id: "5516888888888@s.whatsapp.net", admin: "superadmin", phoneNumber: "5516888888888@s.whatsapp.net" },
+        { id: "5516777777777@s.whatsapp.net", admin: null, phoneNumber: "5516777777777@s.whatsapp.net" },
+      ],
+    },
+  });
 
   let msgSeq = 0;
   const sentHistory: BotMessage[] = [];
@@ -423,13 +442,15 @@ describe("kernel/pluginApi — buildSetupApi with Mock WaContract", () => {
     assert.equal(calls.groupParticipantUpdates.length, 0);
   });
 
-  test("admin.kick on a community still goes through groupParticipantsUpdate", async () => {
+  test("admin.kick on a community cascades to its linked groups via groupParticipantsUpdate", async () => {
     const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
 
     await ctx.admin.kick("5516777777777@s.whatsapp.net").to(COMMUNITY_JID);
 
     assert.equal(calls.communityParticipantUpdates.length, 0);
     assert.equal(calls.groupParticipantUpdates.at(-1)?.action, "remove");
+    assert.equal(calls.groupParticipantUpdates.at(-1)?.jid, COMMUNITY_LINKED_JID);
+    assert.ok(calls.groupParticipantUpdates.every((c) => c.jid !== COMMUNITY_JID));
   });
 
   test("admin.promote on a community surfaces per-participant rejections", async () => {

@@ -139,6 +139,7 @@
     "groupParticipantsUpdateRejected": "{{method}}(\"{{action}}\") rechazado para: {{detail}}",
     "groupParticipantsUpdateFailed": "{{method}}(\"{{action}}\") falló para el grupo \"{{group}}\" con participantes [{{users}}]: {{message}}",
     "communityParticipantsUnsupported": "El driver activo no admite cambiar roles en una Comunidad (\"{{group}}\").",
+    "communityKickPartial": "Eliminado de {{removed}} de {{total}} grupo(s) de la Comunidad; falló en: {{details}}",
     "communitySendBlocked": "No se puede enviar mensajes directamente a una Comunidad (\"{{jid}}\") — envía a uno de sus grupos vinculados.",
     "pollDecryptFailed": "No se pudo descifrar el voto de la encuesta: {{error}}",
     "invalidReaction": "Reacción inválida: \"{{emoji}}\". Por favor, use un solo emoji."

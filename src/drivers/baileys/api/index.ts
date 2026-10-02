@@ -12,8 +12,8 @@
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef, BotGroupInvite, BotGroupMention } from "#drivers/types.js";
-import type { WaContract, DownloadedMedia, GroupAcceptInviteResult } from "#kernel/waContract.js";
-import { GroupInviteError } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, GroupKickReason } from "#kernel/waContract.js";
+import { GroupInviteError, CommunityKickError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
 import { toBotMessage } from "#drivers/baileys/index.js";
@@ -30,7 +30,7 @@ import { t, createPluginT,
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { getChatPrefix }             from "#kernel/chatOverrides.js";
 import { enqueue }                   from "#download";
-import { waitForEditSlot }           from "#kernel/sendGuard.js";
+import { waitForEditSlot, runAdminAction } from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
 import { emptyFolder }               from "#utils/file.js";
 import { isAnimatedWebp, demuxWebpFrames } from "#utils/webp.js";
@@ -364,10 +364,30 @@ function bindGroupMetaInvalidation(contract: WaContract) {
 async function getCommunityGroups(contract: WaContract, communityJid: string): Promise<WACommunityGroup[]> {
   return loadCommunityGroups(communityJid, async (jid) => {
     const all = await rawSocketOf(contract).groupFetchAllParticipating();
-    return Object.values(all)
-      .filter((g) => g.linkedParent === jid)
-      .map((g) => ({ id: normalizeJid(g.id), name: g.subject }));
+    const linked = Object.values(all).filter((g) => g.linkedParent === jid);
+    // The scan already carries full metadata (participants included) —
+    // seed the shared cache so a Community-wide admin action doesn't pay
+    // one `groupMetadata()` round trip per linked group afterwards.
+    for (const g of linked) storeGroupMeta(g.id, g);
+    return linked.map((g) => ({ id: normalizeJid(g.id), name: g.subject }));
   });
+}
+
+// Pause between the per-group removals of a Community-wide kick, so a large
+// Community doesn't fire dozens of admin requests back to back.
+const KICK_CASCADE_DELAY_MIN_MS = 300;
+const KICK_CASCADE_DELAY_JITTER_MS = 500;
+let kickCascadeDelayOverrideMs: number | null = null;
+
+function kickCascadeDelay(): Promise<void> {
+  const ms = kickCascadeDelayOverrideMs
+    ?? KICK_CASCADE_DELAY_MIN_MS + Math.random() * KICK_CASCADE_DELAY_JITTER_MS;
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+/** Test-only: overrides the pause between per-group removals (`null` restores the default). */
+export function __setKickCascadeDelayForTests(ms: number | null): void {
+  kickCascadeDelayOverrideMs = ms;
 }
 
 /** Test-only: clears the group-metadata cache and re-arms invalidation
@@ -2196,34 +2216,39 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
    * of silently sending a guessed jid that WhatsApp rejects deep inside
    * the per-participant status array (see assertParticipantsUpdateOk).
    */
+  function findParticipantId(meta: WAGroupMetadata, id: string): string | undefined {
+    const hasExplicitDomain = /@(s\.whatsapp\.net|lid|g\.us|c\.us)$/.test(id.trim());
+    const wire     = toWireJid(id);
+    const resolved = normalizeJid(store.resolveJid(id));
+    const idDigits = id.replace(/\D/g, "");
+    const match = meta.participants.find((p) => {
+      const pAny = p as unknown as { id: string; jid?: string; lid?: string };
+      if (hasExplicitDomain) {
+        return (
+          toWireJid(pAny.id) === wire ||
+          normalizeJid(store.resolveJid(pAny.id)) === resolved ||
+          (pAny.jid ? toWireJid(pAny.jid) === wire : false) ||
+          (pAny.lid ? toWireJid(pAny.lid) === wire : false)
+        );
+      }
+      // Bare number, no domain hint: match by digits against id/jid/lid,
+      // instead of assuming a PN domain that may not be the one WhatsApp
+      // actually uses for this participant (see PN-vs-LID note above).
+      const cands = [pAny.id, pAny.jid, pAny.lid].filter((v): v is string => !!v);
+      return idDigits.length > 0 && cands.some((c) => c.replace(/\D/g, "") === idDigits);
+    }) as unknown as { id: string } | undefined;
+    return match?.id;
+  }
+
   async function resolveTargets(groupJid: string, identifiers: string[]): Promise<string[]> {
     const meta = await getGroupMetadataCached(contract, groupJid);
     const out: string[] = [];
     for (const id of identifiers) {
-      const hasExplicitDomain = /@(s\.whatsapp\.net|lid|g\.us|c\.us)$/.test(id.trim());
-      const wire     = toWireJid(id);
-      const resolved = normalizeJid(store.resolveJid(id));
-      const idDigits = id.replace(/\D/g, "");
-      const match = meta.participants.find((p) => {
-        const pAny = p as unknown as { id: string; jid?: string; lid?: string };
-        if (hasExplicitDomain) {
-          return (
-            toWireJid(pAny.id) === wire ||
-            normalizeJid(store.resolveJid(pAny.id)) === resolved ||
-            (pAny.jid ? toWireJid(pAny.jid) === wire : false) ||
-            (pAny.lid ? toWireJid(pAny.lid) === wire : false)
-          );
-        }
-        // Bare number, no domain hint: match by digits against id/jid/lid,
-        // instead of assuming a PN domain that may not be the one WhatsApp
-        // actually uses for this participant (see PN-vs-LID note above).
-        const cands = [pAny.id, pAny.jid, pAny.lid].filter((v): v is string => !!v);
-        return idDigits.length > 0 && cands.some((c) => c.replace(/\D/g, "") === idDigits);
-      }) as unknown as { id: string } | undefined;
-      if (!match) {
+      const matchId = findParticipantId(meta, id);
+      if (!matchId) {
         throw new Error(t("driver.groupParticipantNotFound", { id, group: groupJid }));
       }
-      out.push(match.id);
+      out.push(matchId);
     }
     return Array.from(new Set(out));
   }
@@ -2285,7 +2310,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
   ) {
     let results: unknown;
     try {
-      results = await apply();
+      results = await runAdminAction(apply, `${method}(${action})`);
     } catch (err) {
       throw new Error(t("driver.groupParticipantsUpdateFailed", {
         method,
@@ -2355,14 +2380,173 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     return runCommunityRoleUpdate(jid, users, action);
   }
 
-  function createTargetableAction(
-    action: (jid: string, users: string[]) => Promise<unknown>,
+  /**
+   * The Community a kick should cascade through, or `null` for an ordinary
+   * group. Removing someone from the Community — or from its announcements
+   * group, which every member belongs to — means removing them from the
+   * whole Community, the way the WhatsApp app does it. A plain
+   * `groupParticipantsUpdate("remove")` on either only affects that one
+   * group, and the Community-level remove op is rejected for non-admins.
+   * Linked groups (e.g. "General") stay local.
+   */
+  function communityOf(meta: WAGroupMetadata, jid: string): string | null {
+    if (meta.isCommunity) return jid;
+    if (meta.isCommunityAnnounce && meta.linkedParent) return meta.linkedParent;
+    return null;
+  }
+
+  function isBotAdminIn(meta: WAGroupMetadata): boolean {
+    return meta.participants.some((p) => {
+      if (p.admin !== "admin" && p.admin !== "superadmin") return false;
+      const pAny = p as unknown as { id: string; jid?: string; lid?: string };
+      return [pAny.id, pAny.jid, pAny.lid].some((v) => !!v && isSelf(v));
+    });
+  }
+
+  function kickReasonFor(code: string): GroupKickReason {
+    if (code === "401" || code === "403") return "not_admin";
+    if (code === "408") return "timeout";
+    if (code === "429") return "rate_limited";
+    return "unknown";
+  }
+
+  /** Removes `users` from one group, turning every failure mode into a structured outcome instead of a throw. */
+  async function removeFromGroup(
+    base: Pick<GroupKickOutcome, "groupId" | "name" | "isAnnounce">,
+    users: string[]
+  ): Promise<GroupKickOutcome> {
+    let results: unknown;
+    try {
+      results = await runAdminAction(
+        () => contract.groupParticipantsUpdate(base.groupId, users, "remove"),
+        "groupParticipantsUpdate(remove)"
+      );
+    } catch (err) {
+      const message = (err as Error).message;
+      const rateLimited = /rate-overlimit|429/.test(message);
+      return { ...base, status: "failed", reason: rateLimited ? "rate_limited" : "unknown", message };
+    } finally {
+      dropGroupMeta(base.groupId);
+    }
+    const failed = Array.isArray(results)
+      ? (results as { status?: string; jid?: string }[]).filter((r) => r?.status && r.status !== "200")
+      : [];
+    if (failed.length === 0) return { ...base, status: "removed" };
+    if (failed.every((r) => r.status === "404")) return { ...base, status: "not_member" };
+    const code = failed[0].status!;
+    return {
+      ...base,
+      status: "failed",
+      reason: kickReasonFor(code),
+      code,
+      message: failed.map((r) => `${r.jid ?? "?"}=${r.status}`).join(", "),
+    };
+  }
+
+  /**
+   * `admin.kick()` on a plain group: one removal, same rejection semantics
+   * as before (a real `Error` when WhatsApp refuses).
+   */
+  async function kickLocal(jid: string, meta: WAGroupMetadata, ids: string[]): Promise<GroupKickOutcome[]> {
+    const users = await resolveTargets(jid, ids);
+    if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf"));
+    await runParticipantsUpdate(jid, users, "remove");
+    return [{ groupId: jid, name: meta.subject, isAnnounce: !!meta.isCommunityAnnounce, status: "removed" }];
+  }
+
+  /**
+   * `admin.kick()` on a Community / its announcements group: removes the
+   * member from every linked group (announcements last), one at a time.
+   * Groups where the member isn't present are skipped, not failed. Nothing
+   * throws mid-way — every group gets an outcome, and a
+   * {@link CommunityKickError} carrying them all is thrown at the end if
+   * any group failed.
+   */
+  async function kickCommunity(communityJid: string, ids: string[]): Promise<GroupKickOutcome[]> {
+    const linked = await getCommunityGroups(contract, communityJid);
+
+    const targets: { groupId: string; name: string; isAnnounce: boolean; meta: WAGroupMetadata }[] = [];
+    const unreachable: GroupKickOutcome[] = [];
+    for (const g of linked) {
+      try {
+        const meta = await getGroupMetadataCached(contract, g.id);
+        targets.push({ groupId: g.id, name: g.name, isAnnounce: !!meta.isCommunityAnnounce, meta });
+      } catch (err) {
+        unreachable.push({
+          groupId: g.id, name: g.name, isAnnounce: false,
+          status: "failed", reason: "unknown", message: (err as Error).message,
+        });
+      }
+    }
+    targets.sort((a, b) => Number(a.isAnnounce) - Number(b.isAnnounce));
+
+    const results: GroupKickOutcome[] = [];
+    let removedAny = false;
+    for (const { groupId, name, isAnnounce, meta } of targets) {
+      const base = { groupId, name, isAnnounce };
+
+      const present = ids
+        .map((id) => findParticipantId(meta, id))
+        .filter((v): v is string => !!v);
+      const users = Array.from(new Set(present));
+      if (users.length === 0) {
+        results.push({ ...base, status: "not_member" });
+        continue;
+      }
+      if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf"));
+
+      if (!isBotAdminIn(meta)) {
+        results.push({ ...base, status: "failed", reason: "not_admin" });
+        continue;
+      }
+      const protectedTarget = meta.participants.some(
+        (p) => p.admin === "superadmin" && users.includes(p.id)
+      );
+      if (protectedTarget) {
+        results.push({ ...base, status: "failed", reason: "target_superadmin" });
+        continue;
+      }
+
+      if (removedAny) await kickCascadeDelay();
+      const outcome = await removeFromGroup(base, users);
+      if (outcome.status === "removed") removedAny = true;
+      results.push(outcome);
+    }
+    results.push(...unreachable);
+
+    const failed = results.filter((r) => r.status === "failed");
+    if (failed.length > 0) {
+      const removed = results.filter((r) => r.status === "removed").length;
+      throw new CommunityKickError(
+        results,
+        t("driver.communityKickPartial", {
+          removed,
+          total: removed + failed.length,
+          details: failed.map((r) => `${r.name} (${r.reason})`).join(", "),
+        })
+      );
+    }
+    return results;
+  }
+
+  async function kickMembers(jid: string, ids: string[]): Promise<GroupKickOutcome[]> {
+    const meta = await getGroupMetadataCached(contract, jid);
+    const communityJid = communityOf(meta, jid);
+    if (communityJid) return kickCommunity(communityJid, ids);
+    return kickLocal(jid, meta, ids);
+  }
+
+  function createTargetableAction<T = unknown>(
+    action: (jid: string, users: string[]) => Promise<T>,
     memberIds: string | string[],
-    mode: "existingMember" | "newMember" = "existingMember"
+    mode: "existingMember" | "newMember" | "unresolved" = "existingMember"
   ) {
     const raw = Array.isArray(memberIds) ? memberIds : [memberIds];
     const resolve = async (groupJid: string) =>
-      mode === "existingMember"
+      mode === "unresolved"
+        // The action resolves the members itself (per group).
+        ? raw
+        : mode === "existingMember"
         ? resolveTargets(groupJid, raw)
         // `add` targets people who aren't members yet — there's no
         // participant-list entry to match against, so fall back to a
@@ -2379,18 +2563,18 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
         const users = await resolve(targetJid);
         return action(targetJid, users);
       },
-      then<TResult1 = any, TResult2 = never>(
-        onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | undefined | null,
+      then<TResult1 = T, TResult2 = never>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null,
         onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null
       ): Promise<TResult1 | TResult2> {
         return executeCurrent().then(onfulfilled, onrejected);
       },
       catch<TResult = never>(
         onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null
-      ): Promise<any | TResult> {
+      ): Promise<T | TResult> {
         return executeCurrent().catch(onrejected);
       },
-      finally(onfinally?: (() => void) | undefined | null): Promise<any> {
+      finally(onfinally?: (() => void) | undefined | null): Promise<T> {
         return executeCurrent().finally(onfinally);
       },
     };
@@ -2446,10 +2630,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     kick(memberIds: string | string[]) {
-      return createTargetableAction(async (jid, users) => {
-        if (users.some(isSelf)) throw new Error(t("driver.cannotKickSelf"));
-        return runParticipantsUpdate(jid, users, "remove");
-      }, memberIds);
+      return createTargetableAction(kickMembers, memberIds, "unresolved");
     },
     /** @param {string|string[]} memberIds — JID (@s.whatsapp.net/@lid), this framework's @c.us form, or a bare phone number */
     promote(memberIds: string | string[]) {
