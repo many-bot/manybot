@@ -13,6 +13,9 @@
  *                              message. Only active at SECURITY_LEVEL
  *                              "high"; low/medium leave edit timing to the
  *                              caller.
+ *   6. Admin-action queue    — participant updates (promote/demote/remove)
+ *                              run one at a time with a jittered gap and
+ *                              back off + retry on "rate-overlimit".
  *
  * All of the above scale with SECURITY_LEVEL ("low" | "medium" | "high").
  * Higher levels are slower and more conservative — lower risk of WhatsApp's
@@ -34,6 +37,8 @@ interface SecurityProfile {
   jitterMs:            { min: number; max: number };
   concurrency:         number; // max chats answered at the same time, globally
   typingMaxMs:         number; // cap on the "typing..." indicator, regardless of text length
+  adminActionGapMs:    { min: number; max: number }; // minimum gap between admin actions, globally
+  adminRetryBaseMs:    number; // first backoff after a rate-limit; doubles per retry
   /** Edit throttle. Only set on the "high" profile — low/medium have no edit throttle. */
   editThrottle?: {
     minGapMs:           { min: number; max: number };
@@ -48,6 +53,8 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     jitterMs:           { min: 30, max: 120 },
     concurrency:        Infinity,
     typingMaxMs:        2000,
+    adminActionGapMs:   { min: 400, max: 800 },
+    adminRetryBaseMs:   2000,
   },
   medium: {
     globalMsgPerSec:    5,
@@ -55,6 +62,8 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     jitterMs:           { min: 50, max: 200 },
     concurrency:        2,
     typingMaxMs:        4000,
+    adminActionGapMs:   { min: 1000, max: 1800 },
+    adminRetryBaseMs:   3000,
   },
   high: {
     globalMsgPerSec:    2,
@@ -62,6 +71,8 @@ const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
     jitterMs:           { min: 150, max: 500 },
     concurrency:        1,
     typingMaxMs:        8000,
+    adminActionGapMs:   { min: 2000, max: 3500 },
+    adminRetryBaseMs:   5000,
     editThrottle: {
       minGapMs:           { min: 800, max: 2000 },
       maxEditsPerMessage: 5,
@@ -246,6 +257,63 @@ export async function waitForEditSlot(messageId: string): Promise<boolean> {
   state.lastEditAt = Date.now();
   editState.set(messageId, state);
   return true;
+}
+
+// ── Admin-action queue ────────────────────────────────────────────────────────
+// Group/community participant updates share one serial queue: WhatsApp answers
+// bursts of admin IQs with "rate-overlimit", so they run one at a time with a
+// jittered gap, and a rate-limited call is retried with exponential backoff
+// (the queue stays blocked meanwhile, so later actions don't pile on).
+
+const ADMIN_MAX_RETRIES = 3;
+const RATE_LIMIT_RE     = /rate-overlimit|\b429\b/;
+
+let adminQueue: Promise<unknown> = Promise.resolve();
+let lastAdminActionAt = 0;
+let adminTimingOverride: { gapMs: number; retryBaseMs: number } | null = null;
+
+/** Test-only: replaces the profile's admin-action gap and retry backoff (`null` restores the profile). */
+export function __setAdminActionTimingForTests(timing: { gapMs: number; retryBaseMs: number } | null): void {
+  adminTimingOverride = timing;
+  lastAdminActionAt = 0;
+}
+
+export function isRateLimitError(err: unknown): boolean {
+  return RATE_LIMIT_RE.test((err as Error)?.message ?? "");
+}
+
+/**
+ * Run `fn` (a WhatsApp admin operation) through the serial admin queue.
+ * Rate-limit errors are retried up to 3 times with exponential backoff;
+ * any other error, or the last rate-limit error, is rethrown unchanged.
+ *
+ * @param {() => Promise<T>} fn
+ * @param {string}           [label] — for logging
+ * @returns {Promise<T>}
+ */
+export function runAdminAction<T>(fn: () => Promise<T>, label = "admin action"): Promise<T> {
+  const run = async (): Promise<T> => {
+    const profile = currentProfile();
+    const retryBaseMs = adminTimingOverride?.retryBaseMs ?? profile.adminRetryBaseMs;
+    for (let attempt = 0; ; attempt++) {
+      const gapMs   = adminTimingOverride?.gapMs ?? randomBetween(profile.adminActionGapMs);
+      const gapWait = lastAdminActionAt + gapMs - Date.now();
+      if (gapWait > 0) await sleep(gapWait);
+      try {
+        return await fn();
+      } catch (err) {
+        if (!isRateLimitError(err) || attempt >= ADMIN_MAX_RETRIES) throw err;
+        const backoff = retryBaseMs * 2 ** attempt;
+        logger.warn(`[sendGuard] ${label} rate-limited — retry ${attempt + 1}/${ADMIN_MAX_RETRIES} in ${backoff}ms`);
+        await sleep(backoff);
+      } finally {
+        lastAdminActionAt = Date.now();
+      }
+    }
+  };
+  const result = adminQueue.then(run, run);
+  adminQueue = result.catch(() => undefined);
+  return result;
 }
 
 /**

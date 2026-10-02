@@ -6,7 +6,10 @@ import {
   mediaDuration,
   acquireChatSlot,
   simulateState,
-  waitForSendSlot
+  waitForSendSlot,
+  runAdminAction,
+  isRateLimitError,
+  __setAdminActionTimingForTests
 } from "#kernel/sendGuard.js";
 import type { WaContract } from "#kernel/waContract.js";
 
@@ -123,6 +126,57 @@ describe("kernel/sendGuard", () => {
       const sendPromise = waitForSendSlot("123@c.us", { cooldown: false, jitter: false });
       t.mock.timers.tick(500);
       await sendPromise;
+    });
+  });
+  describe("runAdminAction", () => {
+    beforeEach(() => {
+      __setAdminActionTimingForTests({ gapMs: 0, retryBaseMs: 1 });
+    });
+
+    test("detects rate-limit errors", () => {
+      assert.ok(isRateLimitError(new Error("rate-overlimit")));
+      assert.ok(isRateLimitError(new Error("request failed with 429")));
+      assert.ok(!isRateLimitError(new Error("bad-request")));
+    });
+
+    test("runs queued actions one at a time, in order", async () => {
+      const order: string[] = [];
+      const task = (name: string, ms: number) => runAdminAction(async () => {
+        order.push(`start:${name}`);
+        await new Promise((r) => setTimeout(r, ms));
+        order.push(`end:${name}`);
+      });
+
+      await Promise.all([task("a", 20), task("b", 1), task("c", 1)]);
+
+      assert.deepEqual(order, ["start:a", "end:a", "start:b", "end:b", "start:c", "end:c"]);
+    });
+
+    test("retries rate-limited calls and resolves once WhatsApp accepts", async () => {
+      let calls = 0;
+      const result = await runAdminAction(async () => {
+        if (++calls < 3) throw new Error("rate-overlimit");
+        return "ok";
+      });
+
+      assert.equal(result, "ok");
+      assert.equal(calls, 3);
+    });
+
+    test("gives up after 3 retries and rethrows the rate-limit error", async () => {
+      let calls = 0;
+      await assert.rejects(
+        runAdminAction(async () => { calls++; throw new Error("rate-overlimit"); }),
+        /rate-overlimit/
+      );
+      assert.equal(calls, 4);
+    });
+
+    test("does not retry other errors, and a failure does not block the queue", async () => {
+      let calls = 0;
+      await assert.rejects(runAdminAction(async () => { calls++; throw new Error("bad-request"); }), /bad-request/);
+      assert.equal(calls, 1);
+      assert.equal(await runAdminAction(async () => "next"), "next");
     });
   });
 });
