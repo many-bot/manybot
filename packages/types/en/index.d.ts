@@ -86,6 +86,16 @@ export interface BotGroupInvite {
 }
 
 /**
+ * A group mention embedded in `contextInfo.groupMentions` (WhatsApp's
+ * mechanism for mentioning a group). `groupSubject` is the display name
+ * WhatsApp renders for the mention.
+ */
+export interface BotGroupMention {
+  groupJid: string;
+  groupSubject: string;
+}
+
+/**
  * Identifier for a specific message on WhatsApp — the driver-neutral
  * shape of a "message key", used as the reference for reactions,
  * edits, deletes, quotes, and poll-vote bookkeeping.
@@ -891,6 +901,11 @@ export interface ChatContext {
    *  the Community chat itself, the parent's jid on a linked group, or
    *  `null` if this chat isn't part of a Community. */
   community: string | null;
+  /**
+   * Mention payload for this group, ready to pass as the `.text()` opts.
+   * `null` for a DM or for a group not linked to a community.
+   */
+  mention: { text: string; groupMentions: BotGroupMention[] } | null;
   /**
    * Past messages in this chat (oldest → newest). Convenience filters:
    * `history.last(n)`, `history.from(senderId)`.

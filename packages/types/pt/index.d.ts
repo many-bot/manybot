@@ -88,6 +88,16 @@ export interface BotGroupInvite {
 }
 
 /**
+ * Menção a grupo embutida em `contextInfo.groupMentions` (mecanismo do
+ * WhatsApp para mencionar um grupo). `groupSubject` é o nome exibido pelo
+ * WhatsApp na menção.
+ */
+export interface BotGroupMention {
+  groupJid: string;
+  groupSubject: string;
+}
+
+/**
  * Identificador de uma mensagem específica no WhatsApp — o formato neutro
  * em relação ao driver de uma "chave de mensagem", usado como referência
  * para reações, edições, exclusões, citações e contabilização de votos de
@@ -906,6 +916,11 @@ export interface ChatContext {
    *  grupo vinculado, ou `null` se este chat não pertence a nenhuma
    *  Comunidade. */
   community: string | null;
+  /**
+   * Payload de menção para este grupo, pronto para ser passado nas opções de `.text()`.
+   * `null` para uma DM ou para um grupo não vinculado a uma comunidade.
+   */
+  mention: { text: string; groupMentions: BotGroupMention[] } | null;
   /**
    * Mensagens passadas deste chat (mais antiga → mais recente). Filtros de
    * conveniência: `history.last(n)`, `history.from(senderId)`.
