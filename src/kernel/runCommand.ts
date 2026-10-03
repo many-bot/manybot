@@ -27,7 +27,7 @@ import { logger } from "#logger";
 import { tFor } from "#i18n";
 import { CMD_PREFIX } from "#config";
 import { fireAlert } from "./alerts.js";
-import { runPlugin } from "./pluginGuard.js";
+import { runPlugin, isPluginTimeoutError, COOLDOWN_MS, MAX_COOLDOWN_FAILURES } from "./pluginGuard.js";
 import type { RunOrigin } from "./runState.js";
 import type { BotQuotedRef } from "#kernel/waContract.js";
 import { checkPermission } from "./commandPermissions.js";
@@ -310,10 +310,14 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
     fireAlert("plugin_crash", {
       plugin: pluginName,
       command: flat.name,
-      kind: err.message?.startsWith("timed out") ? "timeout" : "exception",
+      kind: isPluginTimeoutError(err) ? "timeout" : "exception",
       message: err.message,
       errorCount: entry?.errorCount ?? 1,
+      cooldownFailures: entry?.cooldownFailures ?? 1,
+      cooldownMinutes: COOLDOWN_MS / 60_000,
+      maxCooldownFailures: MAX_COOLDOWN_FAILURES,
       disabled: entry?.status === "error",
+      cooldown: entry?.status === "cooldown",
       source: "command",
     });
     // Re-raise so pluginGuard can keep its 3-strike bookkeeping.

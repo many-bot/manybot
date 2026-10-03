@@ -63,15 +63,28 @@ export function resolvePluginCommandHandler(def: PluginCommandExport | undefined
 
 export interface PluginEntry {
   name: string;
-  status: "active" | "disabled" | "error";
+  /**
+   * "cooldown": paused after repeated timeouts (see pluginGuard.ts),
+   * resumes to "active" on its own once the cooldown window elapses —
+   * distinct from "error", which is the last-resort, permanent disable.
+   */
+  status: "active" | "disabled" | "error" | "cooldown";
   run: ((ctx: unknown) => Promise<void>) | null;
   setup: ((ctx: unknown) => Promise<void>) | null;
   commands: Record<string, PluginCommandExport> | null;
   exports: unknown;
   error: Error | null;
   guardOptions: Record<string, unknown>;
+  /** Consecutive caught exceptions (informational only — never disables). */
   errorCount?: number;
   lastFailureAt?: number;
+  /** Consecutive timeouts since the last success/exception/cooldown. */
+  timeoutStrikes?: number;
+  lastTimeoutAt?: number;
+  /** Consecutive cooldown cycles that failed again right after resuming. */
+  cooldownFailures?: number;
+  /** True from the moment a cooldown ends until the next run settles. */
+  recoveringFromCooldown?: boolean;
 }
 
 const PLUGINS_DIR = path.join(PATHS.HOME, "plugins");

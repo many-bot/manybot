@@ -12,7 +12,10 @@ const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "manybot-pluginguard-c
 process.env.MANYBOT_CONFIG_DIR = configDir;
 
 const { pluginRegistry, loadPlugin, reloadPlugin, cleanupPlugins } = await import("#kernel/pluginLoader.js");
-const { recordPluginFailure, runPlugin } = await import("#kernel/pluginGuard.js");
+const {
+  recordPluginFailure, runPlugin, isPluginTimeoutError,
+  TIMEOUT_STRIKES_FOR_COOLDOWN, MAX_COOLDOWN_FAILURES,
+} = await import("#kernel/pluginGuard.js");
 const { pluginState } = await import("#kernel/runState.js");
 const { getDriverManager, _resetDriverManagerForTests } = await import("#kernel/driverManager.js");
 
@@ -47,21 +50,22 @@ after(async () => {
 });
 
 describe("kernel/pluginGuard — recordPluginFailure bookkeeping", () => {
-  test("increments errorCount and disables the plugin on the 3rd failure", async () => {
+  test("increments errorCount on each exception but never auto-disables", async () => {
     await writePlugin("flaky", "export default async function () {}\n");
     await loadPlugin("flaky");
 
-    recordPluginFailure("flaky", new Error("boom 1"));
-    assert.equal(pluginRegistry.get("flaky")?.errorCount, 1);
-    assert.equal(pluginRegistry.get("flaky")?.status, "active");
+    for (let i = 1; i <= 3; i++) {
+      recordPluginFailure("flaky", new Error(`boom ${i}`));
+      assert.equal(pluginRegistry.get("flaky")?.errorCount, i);
+      assert.equal(pluginRegistry.get("flaky")?.status, "active");
+    }
 
-    recordPluginFailure("flaky", new Error("boom 2"));
-    assert.equal(pluginRegistry.get("flaky")?.errorCount, 2);
-    assert.equal(pluginRegistry.get("flaky")?.status, "active");
-
-    recordPluginFailure("flaky", new Error("boom 3"));
-    assert.equal(pluginRegistry.get("flaky")?.errorCount, 3);
-    assert.equal(pluginRegistry.get("flaky")?.status, "error", "plugin must be disabled on the 3rd strike");
+    // Well past the old 3-strike threshold — exceptions alone must never disable.
+    for (let i = 4; i <= 10; i++) {
+      recordPluginFailure("flaky", new Error(`boom ${i}`));
+    }
+    assert.equal(pluginRegistry.get("flaky")?.errorCount, 10);
+    assert.equal(pluginRegistry.get("flaky")?.status, "active", "exceptions must never auto-disable a plugin");
   });
 
   test("returns false for a plugin name not in the registry", () => {
@@ -104,6 +108,94 @@ describe("kernel/pluginGuard — recordPluginFailure bookkeeping", () => {
   });
 });
 
+describe("kernel/pluginGuard — timeout classification and cooldown", () => {
+  test("isPluginTimeoutError only matches an actual withTimeout() abort, not a message that merely mentions it", () => {
+    assert.equal(isPluginTimeoutError(new Error("[p] timed out after 1ms")), false, "a look-alike message must NOT be misclassified");
+    assert.equal(isPluginTimeoutError(new Error("some other error")), false);
+  });
+
+  test("a real withTimeout() abort is tagged and classified as a timeout, not counted as an exception", async () => {
+    await writePlugin("slow", "export default async function () { await new Promise(() => {}); }\n");
+    await loadPlugin("slow");
+    const plugin = pluginRegistry.get("slow")!;
+
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const run = runPlugin(plugin, {});
+      mock.timers.tick(120_000);
+      await run;
+    } finally {
+      mock.timers.reset();
+    }
+
+    assert.equal(plugin.timeoutStrikes, 1, "a real timeout must be classified as isTimeout");
+    assert.equal(plugin.errorCount ?? 0, 0, "a timeout must not be counted as an exception");
+  });
+
+  test(`timeouts accumulate and pause the plugin into cooldown at ${TIMEOUT_STRIKES_FOR_COOLDOWN} strikes, never disabling directly`, async () => {
+    await writePlugin("hangs", "export default async function () {}\n");
+    await loadPlugin("hangs");
+
+    for (let i = 1; i < TIMEOUT_STRIKES_FOR_COOLDOWN; i++) {
+      recordPluginFailure("hangs", new Error(`hang ${i}`), { isTimeout: true });
+      assert.equal(pluginRegistry.get("hangs")?.status, "active");
+      assert.equal(pluginRegistry.get("hangs")?.timeoutStrikes, i);
+    }
+
+    recordPluginFailure("hangs", new Error("hang final"), { isTimeout: true });
+    const plugin = pluginRegistry.get("hangs");
+    assert.equal(plugin?.status, "cooldown", "must pause instead of disabling at the threshold");
+    assert.equal(plugin?.timeoutStrikes, 0, "strikes reset on entering cooldown");
+  });
+
+  test(`a plugin is disabled only after ${MAX_COOLDOWN_FAILURES} cooldown cycles fail again right after resuming`, async () => {
+    await writePlugin("loops", "export default async function () {}\n");
+    await loadPlugin("loops");
+
+    for (let i = 0; i < TIMEOUT_STRIKES_FOR_COOLDOWN; i++) {
+      recordPluginFailure("loops", new Error("hang"), { isTimeout: true });
+    }
+    assert.equal(pluginRegistry.get("loops")?.status, "cooldown");
+
+    for (let cycle = 1; cycle < MAX_COOLDOWN_FAILURES; cycle++) {
+      // Simulate the cooldown timer elapsing (endCooldown()) without
+      // waiting out the real COOLDOWN_MS in the test.
+      const p = pluginRegistry.get("loops")!;
+      p.status = "active";
+      p.recoveringFromCooldown = true;
+      pluginRegistry.set("loops", p);
+
+      recordPluginFailure("loops", new Error(`hang after cooldown ${cycle}`), { isTimeout: true });
+      assert.equal(pluginRegistry.get("loops")?.status, "cooldown", `cycle ${cycle}/${MAX_COOLDOWN_FAILURES} must still just re-enter cooldown`);
+      assert.equal(pluginRegistry.get("loops")?.cooldownFailures, cycle);
+    }
+
+    const p = pluginRegistry.get("loops")!;
+    p.status = "active";
+    p.recoveringFromCooldown = true;
+    pluginRegistry.set("loops", p);
+
+    recordPluginFailure("loops", new Error("hang after final cooldown"), { isTimeout: true });
+    assert.equal(pluginRegistry.get("loops")?.status, "error", "must disable as a last resort — this is the real signal of a stuck plugin");
+  });
+
+  test("a clean run after a cooldown clears recoveringFromCooldown, so the next timeout starts a fresh strike count", async () => {
+    await writePlugin("recovers-ok", "export default async function () {}\n");
+    await loadPlugin("recovers-ok");
+    const plugin = pluginRegistry.get("recovers-ok")!;
+    plugin.status = "active";
+    plugin.recoveringFromCooldown = true;
+    pluginRegistry.set("recovers-ok", plugin);
+
+    await runPlugin(plugin, {}, async () => {}); // succeeds cleanly
+    assert.equal(plugin.recoveringFromCooldown, false);
+
+    recordPluginFailure("recovers-ok", new Error("hang"), { isTimeout: true });
+    assert.equal(pluginRegistry.get("recovers-ok")?.status, "active", "must be a fresh strike (1/N), not a cooldown-failure disable");
+    assert.equal(pluginRegistry.get("recovers-ok")?.timeoutStrikes, 1);
+  });
+});
+
 describe("kernel/pluginLoader — errorCount must survive a successful reload", () => {
   // Regression test for the bug found via manual testing: recordPluginFailure()
   // triggers a fire-and-forget reloadPlugin() after every non-disabling
@@ -131,9 +223,11 @@ describe("kernel/pluginLoader — errorCount must survive a successful reload", 
       "a successful reload must preserve the errorCount from before the reload"
     );
 
-    // A third failure after that reload must now actually disable it.
+    // A third (and further) exception must keep the plugin active —
+    // exceptions are the "light" severity and never auto-disable.
     recordPluginFailure("reload-keeps-count", new Error("third failure"));
-    assert.equal(pluginRegistry.get("reload-keeps-count")?.status, "error");
+    assert.equal(pluginRegistry.get("reload-keeps-count")?.status, "active");
+    assert.equal(pluginRegistry.get("reload-keeps-count")?.errorCount, 3);
   });
 
   test("a genuinely fresh load (no prior entry) still starts errorCount at 0", async () => {

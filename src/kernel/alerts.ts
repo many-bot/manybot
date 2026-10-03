@@ -326,23 +326,37 @@ export function fireAlert(kind: AlertKind, details: Record<string, unknown> = {}
     return;
   } else if (kind === "plugin_crash") {
     const disabled = Boolean(details.disabled);
+    const cooldown = Boolean(details.cooldown);
     const source = details.source === "global"
       ? t("alerts.pluginCrashSourceGlobal")
       : t("alerts.pluginCrashSourceCommand", { command: details.command ? String(details.command) : "?" });
     const vars = {
-      plugin:  String(details.plugin ?? "?"),
+      plugin:    String(details.plugin ?? "?"),
       source,
-      kind:    details.kind === "timeout" ? t("alerts.pluginCrashKindTimeout") : t("alerts.pluginCrashKindException"),
-      attempt: String(details.errorCount ?? "?"),
-      error:   details.message ? String(details.message) : "",
+      kind:      details.kind === "timeout" ? t("alerts.pluginCrashKindTimeout") : t("alerts.pluginCrashKindException"),
+      attempt:   String(details.errorCount ?? "?"),
+      error:     details.message ? String(details.message) : "",
+      minutes:   String(details.cooldownMinutes ?? "?"),
+      cycle:     String(details.cooldownFailures ?? "?"),
+      maxCycles: String(details.maxCooldownFailures ?? "?"),
     };
+    const titleKey = disabled
+      ? "alerts.pluginCrashDisabledTitle"
+      : cooldown
+        ? "alerts.pluginCrashCooldownTitle"
+        : "alerts.pluginCrashTitle";
+    const messageKey = disabled
+      ? "alerts.pluginCrashDisabledMessage"
+      : cooldown
+        ? "alerts.pluginCrashCooldownMessage"
+        : "alerts.pluginCrashMessage";
     event = {
       level:   disabled ? "critical" : "warning",
-      title:   t(disabled ? "alerts.pluginCrashDisabledTitle" : "alerts.pluginCrashTitle", { plugin: vars.plugin }),
-      message: t(disabled ? "alerts.pluginCrashDisabledMessage" : "alerts.pluginCrashMessage", vars),
-      // A plugin crashing — even 3 times over, ending in it being
-      // disabled — never brings the bot process down (see the AlertKind
-      // docs below). Only main.ts's shutdown(reason, true) sets fatal.
+      title:   t(titleKey, { plugin: vars.plugin }),
+      message: t(messageKey, vars),
+      // A plugin crashing — even repeatedly, ending in it being disabled —
+      // never brings the bot process down (see the AlertKind docs below).
+      // Only main.ts's shutdown(reason, true) sets fatal.
       fatal:   false,
     };
   } else {
