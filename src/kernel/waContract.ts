@@ -311,6 +311,18 @@ export class CommunityKickError extends Error {
   }
 }
 
+/** Result of `ctx.chat.close()` / `ctx.chat.open()`. */
+export type ChatSettingResult =
+  | { status: "ok" }
+  | { status: "not_authorized"; message: string }
+  | { status: "chat_is_not_group"; message: string }
+  /** The chat is a group, but this driver has no `groupSettingUpdate()`. */
+  | { status: "unsupported"; message: string }
+  /** Admin check passed but the request itself failed (network, rate
+   *  limit, WhatsApp-side rejection, …). `message` carries the real
+   *  error so it doesn't get misread as a permission problem. */
+  | { status: "failed"; message: string };
+
 // ── Profile ─────────────────────────────────────────────────────────────────
 
 export interface BotMe {
@@ -379,6 +391,13 @@ export interface WaContract {
    * operation there. Optional: drivers without Community support omit it.
    */
   communityParticipantsUpdate?(jid: string, users: string[], action: "promote" | "demote" | "remove"): Promise<Array<{ status: string; jid?: string }>>;
+  /**
+   * Toggle "only admins can send messages" (WhatsApp's `announcement`
+   * group setting). Optional: drivers without group-settings support
+   * can omit it — `ctx.chat.close()`/`.open()` then resolve
+   * `{ status: "unsupported" }` instead of calling this.
+   */
+  groupSettingUpdate?(jid: string, setting: "announcement" | "not_announcement"): Promise<void>;
   groupUpdateSubject(jid: string, subject: string): Promise<void>;
   groupUpdateDescription(jid: string, description: string): Promise<void>;
   groupInviteCode(jid: string): Promise<string>;

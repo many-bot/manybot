@@ -938,6 +938,31 @@ export interface ChatContext {
    */
   clearMessages(): Promise<void>;
   /**
+   * Restrict this group so only admins can send messages (WhatsApp's
+   * "announcement" mode). Requires the bot to be a group admin.
+   * @returns `{ status: "chat_is_not_group" }` on a DM,
+   *   `{ status: "unsupported" }` on a group when the active driver has
+   *   no group-settings support, `{ status: "not_authorized" }` when the
+   *   bot isn't a group admin, `{ status: "failed", message }` for any
+   *   other failure (network, rate limit, WhatsApp-side rejection), or
+   *   `{ status: "ok" }` on success. Never throws.
+   * @example
+   * ```js
+   * const result = await ctx.chat.close();
+   * if (result.status === "ok") {
+   *   await ctx.msg.reply.text("Group closed.");
+   * } else if (result.status === "not_authorized") {
+   *   await ctx.msg.reply.text("I need to be an admin to do that.");
+   * } else {
+   *   // "chat_is_not_group" | "unsupported" | "failed" — message has the detail
+   *   await ctx.msg.reply.text(`Couldn't close: ${result.message}`);
+   * }
+   * ```
+   */
+  close(): Promise<ChatSettingResult>;
+  /** Reverse of {@link ChatContext.close} — reopens the group for everyone. */
+  open(): Promise<ChatSettingResult>;
+  /**
    * Look up any other chat (group or DM) by its JID, returning a new
    * {@link ChatContext} with this exact same shape — it's itself
    * `getChat()`-able too. Unlike every other method here, which is
@@ -986,6 +1011,18 @@ export interface ChatContext {
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
 }
+
+/** Result of {@link ChatContext.close} / {@link ChatContext.open}. */
+export type ChatSettingResult =
+  | { status: "ok" }
+  | { status: "not_authorized"; message: string }
+  | { status: "chat_is_not_group"; message: string }
+  /** The chat is a group, but this driver has no group-settings support. */
+  | { status: "unsupported"; message: string }
+  /** Admin check passed but the request itself failed (network, rate
+   *  limit, WhatsApp-side rejection, …). `message` carries the real
+   *  error so it doesn't get misread as a permission problem. */
+  | { status: "failed"; message: string };
 
 /** Result of {@link ChatContext.acceptInvite}. */
 export interface GroupAcceptInviteResult {

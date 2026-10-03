@@ -637,6 +637,10 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
       return res.map(({ status, jid }) => ({ status, jid }));
     },
 
+    async groupSettingUpdate(jid, setting) {
+      await (sock as unknown as { groupSettingUpdate(j: string, s: string): Promise<void> }).groupSettingUpdate(jid, setting);
+    },
+
     async groupUpdateSubject(jid, subject) {
       await (sock as unknown as { groupUpdateSubject(j: string, s: string): Promise<void> }).groupUpdateSubject(jid, subject);
     },

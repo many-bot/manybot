@@ -22,7 +22,7 @@
  *     the implementation, never plugins.
  */
 
-import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, ChatSettingResult } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { BotMessage, BotGroupMention } from "#drivers/types.js";
 import type { ScopedAccessor } from "#kernel/settingsDb.js";
@@ -387,6 +387,19 @@ export interface IChat {
   isSenderAdmin(): Promise<boolean>;
   isBotAdmin(): Promise<boolean>;
   clearMessages(): Promise<void>;
+  /**
+   * Restrict this group so only admins can send messages (WhatsApp's
+   * "announcement" mode). Requires the bot to be a group admin.
+   * Resolves `{ status: "chat_is_not_group" }` on a DM,
+   * `{ status: "unsupported" }` on a group when the active driver has
+   * no group-settings support, `{ status: "not_authorized" }` when the
+   * bot isn't a group admin, `{ status: "failed", message }` for any
+   * other failure (network, rate limit, WhatsApp-side rejection), or
+   * `{ status: "ok" }` on success. Never throws.
+   */
+  close(): Promise<ChatSettingResult>;
+  /** Reverse of {@link close} — reopens the group for everyone. */
+  open(): Promise<ChatSettingResult>;
   /**
    * Look up any other chat (group or DM) by its JID, returning a new
    * `IChat` instance with this exact same shape (itself `getChat()`-able

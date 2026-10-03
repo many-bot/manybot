@@ -12,7 +12,7 @@
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef, BotGroupInvite, BotGroupMention } from "#drivers/types.js";
-import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, GroupKickReason } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, GroupKickReason, ChatSettingResult } from "#kernel/waContract.js";
 import { GroupInviteError, CommunityKickError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
@@ -3121,6 +3121,45 @@ function buildChatFacet(
 ): IChat {
   const targetNormJid = normalizeJid(targetRawJid);
 
+  // Shared by `isBotAdmin()` and `setGroupAnnounceMode()` — single
+  // source of truth for "is the bot an admin in this metadata", so a
+  // future LID/PN matching fix only needs to land here.
+  function isBotAdminInGroupMeta(meta: WAGroupMetadata): boolean {
+    const me     = contract.me();
+    const botLid = (me as unknown as { lid?: string })?.lid;
+    const botCandidates = [me.id, botLid];
+    if (!botCandidates.some(Boolean)) return false;
+    return meta.participants.some(
+      p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
+    );
+  }
+
+  async function setGroupAnnounceMode(announce: boolean): Promise<ChatSettingResult> {
+    if (!targetIsGroup) {
+      return { status: "chat_is_not_group", message: `"${targetNormJid}" is not a group chat.` };
+    }
+    if (!contract.groupSettingUpdate) {
+      return { status: "unsupported", message: "Group settings are not supported by this driver." };
+    }
+    let meta: WAGroupMetadata;
+    try {
+      meta = await getGroupMetadataFresh(contract, targetRawJid);
+    } catch (err) {
+      logger.warn(`[chat.${announce ? "close" : "open"}] metadata fetch failed for "${targetNormJid}": ${String(err)}`);
+      return { status: "failed", message: String(err) };
+    }
+    if (!isBotAdminInGroupMeta(meta)) {
+      return { status: "not_authorized", message: "Bot must be a group admin to change this setting." };
+    }
+    try {
+      await contract.groupSettingUpdate(targetRawJid, announce ? "announcement" : "not_announcement");
+      return { status: "ok" };
+    } catch (err) {
+      logger.warn(`[chat.${announce ? "close" : "open"}] failed for "${targetNormJid}": ${String(err)}`);
+      return { status: "failed", message: String(err) };
+    }
+  }
+
   return {
     id:          targetNormJid,
     name:        targetName,
@@ -3248,15 +3287,9 @@ function buildChatFacet(
      */
     async isBotAdmin(): Promise<boolean> {
       if (!targetIsGroup) return false;
-      const me       = contract.me();
-      const botLid   = (me as unknown as { lid?: string })?.lid;
-      const botCandidates = [me.id, botLid];
-      if (!botCandidates.some(Boolean)) return false;
       try {
         const meta = await getGroupMetadataFresh(contract, targetRawJid);
-        return meta.participants.some(
-          p => matchesParticipant(botCandidates, p.id) && (p.admin === "admin" || p.admin === "superadmin")
-        );
+        return isBotAdminInGroupMeta(meta);
       } catch {
         return false;
       }
@@ -3265,6 +3298,14 @@ function buildChatFacet(
     /** Clear all messages in this chat — not supported in Baileys. */
     async clearMessages() {
       logger.warn("[pluginApi] clearMessages() is not supported with Baileys");
+    },
+
+    async close(): Promise<ChatSettingResult> {
+      return setGroupAnnounceMode(true);
+    },
+
+    async open(): Promise<ChatSettingResult> {
+      return setGroupAnnounceMode(false);
     },
 
     /**
