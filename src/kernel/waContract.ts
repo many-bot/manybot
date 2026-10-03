@@ -334,6 +334,8 @@ export interface BotMe {
 
 export interface WaContract {
   readonly name: "baileys" | "whatsmeow";
+  /** Installed version of the underlying driver library/service (e.g. "7.0.0-rc.14"), or "unknown" if it could not be resolved. */
+  readonly version: string;
 
   // ── lifecycle ───────────────────────────────────────────────────────────────
   connect(): Promise<void>;

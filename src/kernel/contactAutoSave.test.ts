@@ -12,6 +12,7 @@ function createMockContract(): WaContract & { savedContacts: Array<{ jid: string
       saved.push({ jid, name: info.fullName || "" });
     },
     name: "baileys",
+    version: "test",
     isReady: () => true,
     connect: async () => {},
     disconnect: async () => {},

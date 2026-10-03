@@ -24,6 +24,9 @@ import { baileysContract }            from "#drivers/baileys/index.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
 import { stopSettingsDb } from "#settingsdb";
+import { recordInstanceStartup, stopTelemetryDb } from "#kernel/telemetryDb.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { sendAlert }                  from "#kernel/alerts.js";
 import { startStatusServer }          from "#kernel/statusServer.js";
 import { getDriverManager }           from "#kernel/driverManager.js";
@@ -38,6 +41,10 @@ import { rmSync }                     from "node:fs";
 import { access }                     from "node:fs/promises";
 
 setLogLevel(LOG_LEVEL);
+
+const MANYBOT_VERSION = (
+  JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../package.json"), "utf8")) as { version: string }
+).version;
 
 let shuttingDown = false;
 
@@ -110,6 +117,7 @@ async function shutdown(reason: string, isError = false) {
 
   stopScheduler();
   stopSettingsDb();
+  stopTelemetryDb();
 
   try {
     await driverManager.shutdown();
@@ -197,6 +205,7 @@ if (process.argv.includes("--getid")) {
 
   activeDriver.connect()
     .then(() => {
+      recordInstanceStartup(MANYBOT_VERSION, activeDriver.name, activeDriver.version);
       logger.success(t("bot.ready"));
     })
     .catch((err) => {

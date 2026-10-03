@@ -263,6 +263,7 @@ describe("kernel/runCommand", () => {
       _resetDriverManagerForTests();
       getDriverManager().register({
         name: "baileys",
+        version: "test",
         isReady: () => true,
         sendText: async (jid: string, text: string, opts?: { quoted?: { id?: string | null } }) => {
           sent.push({ jid, text, quotedId: opts?.quoted?.id });

@@ -20,6 +20,9 @@
  * populates from the Baileys store.messages map on demand.
  */
 
+import { createRequire } from "module";
+import path from "path";
+import { readFileSync, existsSync } from "fs";
 import { createSocket, AUTH_DIR, store as sharedStore } from "./sdk/baileysSock.js";
 import { createBaileysAdapter } from "./adapter.js";
 import { handleMessage } from "./messageHandler.js";
@@ -30,6 +33,7 @@ import { isIntegrationOptIn }        from "#kernel/integrationMode.js";
 import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
 import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
+import { recordGroupJoin, recordGroupLeave } from "#kernel/telemetryDb.js";
 import { setStatus } from "#kernel/statusServer.js";
 import { logger } from "#logger";
 import { PLUGINS, CLIENT_ID } from "#config";
@@ -359,6 +363,34 @@ halted = true;
       enqueueForChat(jid, () => handleMessage(msg, contract, store));
     }
   });
+
+  // Telemetry: group membership (instance.group table). "groups.upsert"
+  // fires both for a genuine new join and for every already-joined group
+  // on reconnect history-sync — recordGroupJoin() is idempotent for the
+  // latter case (see its doc).
+  contract.on("groups.upsert", ({ groups }) => {
+    if (state !== "READY") return;
+    for (const g of groups) {
+      recordGroupJoin(normalizeJid(g.id));
+    }
+  });
+
+  contract.on("group-participants.update", ({ id, participants, action }) => {
+    if (state !== "READY") return;
+    if (action !== "remove") return;
+
+    const me     = contract.me();
+    const botJid = me.id  ? normalizeJid(me.id)          : null;
+    const botLid = me.lid ? normalizeJid(me.lid as string) : null;
+    const botWasRemoved = participants.some((p) => {
+      const np = normalizeJid(p);
+      return (botJid && np === botJid) || (botLid && np === botLid);
+    });
+
+    if (botWasRemoved) {
+      recordGroupLeave(normalizeJid(id));
+    }
+  });
 }
 
 /**
@@ -378,6 +410,32 @@ function sockIsOpen(): boolean {
 // per-call methods throw — plugins are only loaded after `connection.update
 // === "open"`, so they never see the pre-connect state.
 
+/**
+ * Resolves the installed @whiskeysockets/baileys version for telemetry
+ * (instance.backend_version). Walks up from the resolved module path
+ * instead of importing "@whiskeysockets/baileys/package.json" directly,
+ * since that subpath isn't guaranteed to be in the package's "exports" map.
+ */
+function resolveBaileysVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    let dir = path.dirname(require.resolve("@whiskeysockets/baileys"));
+    for (let i = 0; i < 6; i++) {
+      const pkgPath = path.join(dir, "package.json");
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string; version?: string };
+        if (pkg.name === "@whiskeysockets/baileys") return pkg.version ?? "unknown";
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // fall through to "unknown"
+  }
+  return "unknown";
+}
+
 function requireReady(): WaContract {
   if (!currentAdapter) {
     throw new Error("[baileys] driver not connected — call connect() first");
@@ -387,6 +445,7 @@ function requireReady(): WaContract {
 
 export const baileysContract: WaContract & { getId?(): Promise<void> } = {
   name: "baileys" as const,
+  version: resolveBaileysVersion(),
 
   async connect() {
     shuttingDown = false;

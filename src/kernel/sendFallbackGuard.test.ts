@@ -9,6 +9,7 @@ function createMockDriver(name: "baileys", failsSend = false): WaContract {
 
   return {
     name,
+    version: "test",
     isReady: () => true,
     sendText: async (jid: string, text: string) => {
       if (failsSend) throw new Error(`${name} sendText failed`);

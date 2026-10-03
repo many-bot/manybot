@@ -107,6 +107,7 @@ function createMockContract(): { contract: WaContract; calls: MockCallHistory } 
 
   const contract: WaContract = {
     name: "baileys",
+    version: "test",
     connect: async () => {},
     disconnect: async () => {},
     isReady: () => true,

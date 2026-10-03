@@ -30,6 +30,7 @@ beforeEach(() => {
   _resetDriverManagerForTests();
   getDriverManager().register({
     name: "baileys",
+    version: "test",
     isReady: () => true,
     sendText: async (jid: string, text: string, opts?: { quoted?: { id?: string | null } }) => {
       if (failSends) throw new Error("socket closed");

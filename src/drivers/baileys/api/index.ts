@@ -52,6 +52,7 @@ import { sendWithFallback }          from "#kernel/sendFallbackGuard.js";
 import { buildSettingsApi }          from "#settingsdb";
 import * as commandAccess            from "#kernel/commandAccess.js";
 import * as chatSession              from "#kernel/chatSession.js";
+import { getInstanceInfo, getProcessedMessageCount, getUserInfo, getGroupInfo, getAllPlugins } from "#kernel/telemetryDb.js";
 import { resolveDispatch, runCommand as dispatchCommand, type RunCommandResult } from "#kernel/runCommand.js";
 import { jidNormalizedUser }         from "@whiskeysockets/baileys";
 import { normalizeText }             from "#utils/normalizeText.js";
@@ -862,7 +863,37 @@ async function normalizeContact(jid: string, info: import("#drivers/baileys/sdk/
   };
 }
 
-// ── Chats API ─────────────────────────────────────────────────────────────────
+// ── Stats API (pseudonymous, aggregate-only telemetry) ─────────────────────────
+
+function buildStatsApi() {
+  return {
+    instance: () => {
+      const info = getInstanceInfo();
+      if (!info) return null;
+      return {
+        instanceId:     info.instanceId,
+        startedAt:      info.startedAt,
+        manybotVersion: info.manybotVersion,
+        backend:        info.backend,
+        backendVersion: info.backendVersion,
+      };
+    },
+    messagesProcessed: () => getProcessedMessageCount(),
+    user: (lid: string) => {
+      const info = getUserInfo(lid);
+      if (!info) return null;
+      return { id: info.id, firstSeen: info.firstSeen, lastSeen: info.lastSeen };
+    },
+    group: (jid: string) => {
+      const info = getGroupInfo(jid);
+      if (!info) return null;
+      return { id: info.id, joinedAt: info.joinedAt, leftAt: info.leftAt };
+    },
+    plugins: () => getAllPlugins().map((p) => ({
+      key: p.key, version: p.version, enabled: p.enabled,
+    })),
+  };
+}
 
 function buildCommandsApi() {
   return {
@@ -878,14 +909,20 @@ function buildCommandsApi() {
 // Scoped to the current chat (normJid) + the calling plugin. Only built in
 // buildApi() (runtime), not buildBaseApi() — there is no "current chat" at
 // setup time to lock.
-function buildSessionApi(chatId: string, pluginName: string) {
+function buildSessionApi(chatId: string, pluginName: string, onProcessed?: () => void) {
   return {
-    acquire: () => chatSession.acquireSession(chatId, pluginName),
+    acquire: () => {
+      const acquired = chatSession.acquireSession(chatId, pluginName);
+      if (acquired) onProcessed?.();
+      return acquired;
+    },
     release: () => { chatSession.releaseSession(chatId, pluginName); },
     isLocked: () => chatSession.isSessionLocked(chatId),
     isMine: () => chatSession.getSessionHolder(chatId) === pluginName,
   };
 }
+
+// ── Chats API ─────────────────────────────────────────────────────────────────
 
 function buildChatsApi(store: BotStore) {
   return {
@@ -1190,8 +1227,9 @@ export function buildMessageContext(
   msg: BotMessage,
   contract: WaContract,
   store: BotStore,
-  guardOptions: { cooldown?: boolean; jitter?: boolean } = {}
+  guardOptions: { cooldown?: boolean; jitter?: boolean; onProcessed?: () => void } = {}
 ): WAMessageContext {
+  const onProcessed = guardOptions.onProcessed;
   const body    = getMsgBody(msg);
   const prefix  = getChatPrefix(msg.chatId);
   const rawArgs = body.trim().split(/\s+/);
@@ -1333,7 +1371,9 @@ export function buildMessageContext(
     command,
     args: rawArgs.slice(1),
     is(cmd: string) {
-      return hasPrefix && command === normalizeText(cmd);
+      const matched = hasPrefix && command === normalizeText(cmd);
+      if (matched) onProcessed?.();
+      return matched;
     },
     hasMedia: msgHasMedia(msg),
     isGif:    msgIsGif(msg, store),
@@ -2998,6 +3038,7 @@ function buildBaseApi(
     storage:   buildStorageApi(pluginName),
     botId:     botLid ?? botJid,
     commands:  buildCommandsApi(),
+    stats:     buildStatsApi(),
   };
 }
 
@@ -3450,6 +3491,7 @@ export function buildApi({
   pluginRegistry,
   pluginName,
   guardOptions = {},
+  onProcessed,
 }: {
   msg:            BotMessage;
   chat:           WAChat;
@@ -3458,6 +3500,10 @@ export function buildApi({
   pluginRegistry: Map<string, PluginEntry>;
   pluginName:     string;
   guardOptions?:  Record<string, unknown>;
+  /** Telemetry hook (kernel-internal, not part of PluginContext): called at most once per
+   *  message, the first time it's "effectively processed" — a matched `ctx.msg.is()` or a
+   *  successful `ctx.session.acquire()`. See kernel/telemetryDb.ts message_stats.processed. */
+  onProcessed?:   () => void;
 }): PluginContext {
 
   const rawJid   = msg.chatId;
@@ -3492,11 +3538,11 @@ export function buildApi({
 
     runCommand: buildRunCommandFacet(msg, chat, contract, store, pluginRegistry, pluginName),
 
-    session: buildSessionApi(normJid, pluginName),
+    session: buildSessionApi(normJid, pluginName, onProcessed),
 
     // ── msg ──────────────────────────────────────────────────────────────────
 
-    msg: buildMessageContext(msg, contract, store, { cooldown, jitter }),
+    msg: buildMessageContext(msg, contract, store, { cooldown, jitter, onProcessed }),
 
     // ── chat ─────────────────────────────────────────────────────────────────
 

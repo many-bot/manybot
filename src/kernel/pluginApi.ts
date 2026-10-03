@@ -239,6 +239,28 @@ export interface ISession {
   isMine(): boolean;
 }
 
+// Sub-facet: pseudonymous, aggregate-only telemetry (kernel/telemetryDb.ts).
+// Read-only — plugins cannot write telemetry, only read what the kernel
+// already tracks. No message content is ever available here.
+export interface IStats {
+  /** This installation's identity + last-startup info, or `null` before the first recorded startup. */
+  instance(): {
+    instanceId: string;
+    startedAt: number;
+    manybotVersion: string;
+    backend: string;
+    backendVersion: string;
+  } | null;
+  /** Total messages effectively processed by the framework since this installation began tracking. */
+  messagesProcessed(): number;
+  /** First/last-seen timestamps (unix epoch, UTC) for a user `lid`, or `null` if never seen. `id` is a per-installation salted hash, never the raw lid. */
+  user(lid: string): { id: string; firstSeen: number; lastSeen: number } | null;
+  /** Join/leave timestamps (unix epoch, UTC) for a group `jid`, or `null` if unknown. `id` is a per-installation salted hash, never the raw jid. The record is kept after a leave. */
+  group(jid: string): { id: string; joinedAt: number; leftAt: number | null } | null;
+  /** All plugins the kernel has tracked (enabled state) — not just this one. */
+  plugins(): Array<{ key: string; version: string; enabled: boolean }>;
+}
+
 // Result of `ctx.runCommand(...)` — mirrors `RunCommandResult` from
 // `kernel/runCommand.ts` (Phase 3/8 unified dispatcher). Re-declared
 // here (not re-imported) to keep the contract self-contained; the
@@ -553,6 +575,9 @@ export interface PluginContext {
   // current chat + this plugin. Not present on SetupContext — there is
   // no current chat to lock at setup time.
   session: ISession;
+
+  // Pseudonymous, aggregate-only telemetry. Read-only.
+  stats: IStats;
 }
 
 /**
@@ -592,5 +617,6 @@ export interface SetupContext {
   me: IMe;
   events: IEvents;
   settings: { global: ScopedAccessor };
+  stats: IStats;
 }
 

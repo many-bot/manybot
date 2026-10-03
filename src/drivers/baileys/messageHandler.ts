@@ -39,6 +39,7 @@ import { isSessionLocked, getSessionHolder } from "#kernel/chatSession.js";
 import { renderSessionLockedMessage } from "#kernel/chatSessionNotice.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
+import { incrementProcessedMessages, touchUser } from "#kernel/telemetryDb.js";
 import { normalizeJid } from "#drivers/jid.js";
 import { logger } from "#logger";
 import type { LoadingSpec } from "#kernel/commandsConfig.js";
@@ -285,11 +286,23 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
   trackIncomingForContactSave(contract, msg, msgCtx.sender, isGroup, msgCtx.hasPrefix)
     .catch(() => {});
 
+  // Telemetry (message_stats.processed + user.first_seen/last_seen): fires
+  // at most once per message, the first time it's effectively processed by
+  // some plugin (a matched ctx.msg.is() or a successful ctx.session.acquire()
+  // — see buildApi's onProcessed param). Not every incoming message counts.
+  let processedMarked = false;
+  const markProcessed = () => {
+    if (processedMarked) return;
+    processedMarked = true;
+    incrementProcessedMessages();
+    if (msgCtx.sender) touchUser(msgCtx.sender);
+  };
+
   // Caps how many chats get answered at the same time — see SECURITY_LEVEL.
   const releaseChatSlot = await acquireChatSlot(jid);
 
   try {
-    await runPluginsForMessage(msg, chat, msgCtx, contract, store, rawJid, rawKey);
+    await runPluginsForMessage(msg, chat, msgCtx, contract, store, rawJid, rawKey, markProcessed);
   } finally {
     releaseChatSlot();
   }
@@ -302,7 +315,8 @@ async function runPluginsForMessage(
   contract: WaContract,
   store: BotStore,
   rawJid: string,
-  rawKey: BotMessage["quotedKey"]
+  rawKey: BotMessage["quotedKey"],
+  markProcessed: () => void
 ): Promise<void> {
   const chatPrefix = getChatPrefix(msg.chatId);
   const chatLocale = getChatLocale(msg.chatId);
@@ -382,6 +396,7 @@ async function runPluginsForMessage(
       pluginRegistry,
       pluginName:   matched.pluginName ?? "system",
       guardOptions: {},
+      onProcessed:  markProcessed,
     });
 
     const permResult = await checkPermission(matched, {
@@ -456,6 +471,7 @@ async function runPluginsForMessage(
       pluginRegistry,
       pluginName:   "core",
       guardOptions: {},
+      onProcessed:  markProcessed,
     });
 
     const coreLoading = startLoadingIndicator(
@@ -518,6 +534,7 @@ async function runPluginsForMessage(
       pluginRegistry,
       pluginName:   plugin.name,
       guardOptions: plugin.guardOptions,
+      onProcessed:  markProcessed,
     });
 
     const useTyping = !matchedPlugin && plugin.guardOptions?.typing !== false;

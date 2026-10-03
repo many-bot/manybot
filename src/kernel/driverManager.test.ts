@@ -9,6 +9,7 @@ function createFakeDriver(name: "baileys", ready = true): WaContract & { disconn
 
   return {
     name,
+    version: "test",
     isReady: () => ready,
     disconnect: async () => {
       state.disconnected = true;

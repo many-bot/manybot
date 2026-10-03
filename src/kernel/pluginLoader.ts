@@ -18,6 +18,7 @@ import { PATHS }         from "#config";
 import { buildSetupApi, cleanupPluginEvents } from "#manyapi";
 import { initCommandRegistry } from "#kernel/commandRegistry.js";
 import type { WaContract } from "#kernel/waContract.js";
+import { upsertPlugin, setPluginEnabled } from "#kernel/telemetryDb.js";
 import type { BotStore } from "#client/store.js";
 
 import type { CommandPermissions, LocalizedString } from "./commandsConfig.js";
@@ -212,6 +213,25 @@ export async function setupPlugins(contract: WaContract, store: BotStore): Promi
   }
 }
 
+/**
+ * Telemetry identity for a plugin (plugin.key/plugin.version — see
+ * kernel/telemetryDb.ts). `key` defaults to the plugin's directory name
+ * when manyplug.json doesn't declare one explicitly (e.g. "synt-xerror/welcome");
+ * `version` defaults to "unknown" when absent.
+ */
+async function readPluginTelemetryMeta(name: string): Promise<{ key: string; version: string }> {
+  const manifest = path.join(PLUGINS_DIR, name, "manyplug.json");
+  try {
+    const data = JSON.parse(await fs.promises.readFile(manifest, "utf8")) as {
+      key?: string;
+      version?: string;
+    };
+    return { key: data.key ?? name, version: data.version ?? "unknown" };
+  } catch {
+    return { key: name, version: "unknown" };
+  }
+}
+
 async function findPluginPath(name: string): Promise<string | null> {
   const dir = path.join(PLUGINS_DIR, name);
   const manifest = path.join(dir, "manyplug.json");
@@ -271,6 +291,8 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       guardOptions: {},
       errorCount: 0
     });
+    const { key } = await readPluginTelemetryMeta(name);
+    setPluginEnabled(key, false);
     unwatchPlugin(name);
     return;
   }
@@ -288,6 +310,8 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       guardOptions: {},
       errorCount: 0
     });
+    const { key } = await readPluginTelemetryMeta(name);
+    setPluginEnabled(key, false);
     unwatchPlugin(name);
     return;
   }
@@ -321,6 +345,10 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       errorCount,
     });
 
+    const { key, version } = await readPluginTelemetryMeta(name);
+    upsertPlugin(key, version);
+    setPluginEnabled(key, true);
+
     // Phase 9: a plugin is a library of ready-to-use functions invoked as
     // commands, not something that loads all its logic at boot — a line
     // per plugin no longer earns its place in default startup output.
@@ -337,9 +365,10 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
     logger.error(t("system.pluginLoadFailed", { name, message: err.message }));
 
     const newErrorCount = isReload ? (errorCount + 1) : 3;
+    const status = newErrorCount >= 3 ? "error" : "active";
     pluginRegistry.set(name, {
       name,
-      status:  newErrorCount >= 3 ? "error" : "active",
+      status,
       run: null,
       setup: null,
       commands: null,
@@ -348,6 +377,9 @@ export async function loadPlugin(name: string, isReload = false): Promise<void> 
       guardOptions: {},
       errorCount: newErrorCount,
     });
+
+    const { key } = await readPluginTelemetryMeta(name);
+    setPluginEnabled(key, status === "active");
 
     if (isReload) {
       await reinitCommandRegistrySafe(`after failed reload of plugin "${name}"`);
