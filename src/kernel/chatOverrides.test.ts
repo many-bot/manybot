@@ -1,8 +1,9 @@
 import test, { describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { getChatPrefix, getChatLocale } from "#kernel/chatOverrides.js";
+import { getChatPrefix, getChatLocale, setChatLocale, clearChatLocale, resolveChatLang } from "#kernel/chatOverrides.js";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
 import { CMD_PREFIX } from "#config";
+import { getCurrentLang } from "#i18n";
 
 describe("kernel/chatOverrides", () => {
   // Already in normalized form ("@c.us") so writes and reads use the
@@ -66,6 +67,46 @@ describe("kernel/chatOverrides", () => {
     test("falls back to undefined for a blank saved override", () => {
       buildSettingsApi("core", chatId).set("chat_locale", "");
       assert.equal(getChatLocale(chatId), undefined);
+    });
+  });
+
+  describe("setChatLocale / clearChatLocale / resolveChatLang", () => {
+    test("stores the locale and getChatLocale reads it back", () => {
+      assert.equal(setChatLocale(chatId, "es"), "es");
+      assert.equal(getChatLocale(chatId), "es");
+      assert.equal(resolveChatLang(chatId), "es");
+    });
+
+    test("normalizes case and regional codes", () => {
+      assert.equal(setChatLocale(chatId, "PT_br"), "pt");
+      assert.equal(getChatLocale(chatId), "pt");
+    });
+
+    test("rejects unsupported locales without touching the stored value", () => {
+      setChatLocale(chatId, "es");
+      assert.throws(() => setChatLocale(chatId, "xx"), RangeError);
+      assert.equal(getChatLocale(chatId), "es");
+    });
+
+    test("ignores a stored locale that no longer has a translation file", () => {
+      buildSettingsApi("core", chatId).set("chat_locale", "xx");
+      assert.equal(getChatLocale(chatId), undefined);
+    });
+
+    test("clearChatLocale falls back to the default language", () => {
+      setChatLocale(chatId, "es");
+      clearChatLocale(chatId);
+      assert.equal(getChatLocale(chatId), undefined);
+      assert.equal(resolveChatLang(chatId), getCurrentLang());
+    });
+
+    test("resolveChatLang without a chat returns the default language", () => {
+      assert.equal(resolveChatLang(undefined), getCurrentLang());
+    });
+
+    test("does not leak one chat's locale into another", () => {
+      setChatLocale(chatId, "es");
+      assert.equal(getChatLocale("5511900000000@c.us"), undefined);
     });
   });
 });

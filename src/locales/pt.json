@@ -118,7 +118,7 @@
   "chatSession": {
     "locked": "⏳ Ainda tem um comando rodando neste chat. Espere terminar (ou encerre ele, se isso for possível) e tente de novo."
   },
-"alerts": {
+  "alerts": {
     "sendFailedTitle": "manybot: envio falhou",
     "downloadMediaFailedTitle": "manybot: falha ao baixar mídia",
     "downloadMediaFailedMessage": "Chat: {{chat}}\nMensagem: {{messageId}}\nDesistiu após {{attempts}} tentativa(s).\nErro: {{error}}",
@@ -178,6 +178,15 @@
     "retrying": "Tentando novamente ({{attempt}}/{{max}})...",
     "sessionWiped": "Sessão descartada, tentando parear novamente ({{round}}/{{max}})...",
     "connectGaveUp": "Não foi possível conectar após várias tentativas. Verifique sua conexão e tente de novo."
+  },
+  "config": {
+    "current": "⚙️ Configuração deste chat:\n• Prefixo: {{prefix}}\n• Idioma: {{locale}}\n\nUse !config prefixo <novo> ou !config idioma <{{available}}> para alterar.",
+    "defaultValue": "(padrão)",
+    "prefixUsage": "Uso: !config prefixo <novo prefixo> (até 5 caracteres)",
+    "prefixSaved": "✅ Prefixo salvo como \"{{value}}\" para este chat.\nA partir de agora, use \"{{value}}\" em vez do prefixo padrão neste chat.",
+    "localeUsage": "Uso: !config idioma <{{available}}|padrao>",
+    "localeSaved": "✅ Idioma salvo como \"{{lang}}\" para este chat.\nAs mensagens do sistema de comandos (menu, permissões, avisos de uso) e dos plugins passam a usar esse idioma aqui.",
+    "localeCleared": "✅ Este chat voltou a usar o idioma padrão do bot ({{lang}})."
   }
 }
 

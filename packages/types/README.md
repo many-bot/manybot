@@ -73,3 +73,8 @@ export default async function (ctx) { ... }
 
 This package tracks the plugin API surface of `@manybot/manybot`, not the bot's own
 version. Breaking changes to `ctx` bump the major version here.
+
+ManyBot ships a local pre-commit hook (`scripts/local-hooks/pre-commit`, installed with
+`scripts/install-local-hooks.sh`). When a commit stages changes to `en/` or `pt/`, the hook
+bumps the minor version in this package's `package.json`, unless that same commit already
+changes the `version` field by hand.

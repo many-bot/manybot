@@ -65,7 +65,14 @@ export interface ResolvedPermissions {
     blacklist: string;
     allowedChats: string;
   };
+  /** Messages that fell back to the built-in default (not set in YAML/plugin
+   *  config) — translated per chat at check time instead of frozen at load. */
+  defaultedMessages?: Partial<Record<DefaultedMessageKey, true>>;
 }
+
+export type DefaultedMessageKey =
+  | "botNotAdmin" | "senderNotAdmin" | "donoOnly" | "wrongScope"
+  | "cooldown" | "blacklist" | "allowedChats";
 
 /**
  * Resolved sub-command shape. Subcommands share the parent's `pluginName`
@@ -249,6 +256,11 @@ export function resolvePermissions(
     allowedChats:   specMsgs?.allowedChats ?? defaultsMsgs?.allowedChats ?? DEFAULT_PERMISSION_MESSAGES.allowedChats(),
   };
 
+  const defaultedMessages: Partial<Record<DefaultedMessageKey, true>> = {};
+  for (const key of ["botNotAdmin", "senderNotAdmin", "donoOnly", "wrongScope", "cooldown", "blacklist", "allowedChats"] as const) {
+    if (specMsgs?.[key] == null && defaultsMsgs?.[key] == null) defaultedMessages[key] = true;
+  }
+
   return {
     admin,
     botAdmin,
@@ -261,6 +273,7 @@ export function resolvePermissions(
     allowedChats,
     hiddenOutsideScope,
     messages,
+    defaultedMessages,
   };
 }
 

@@ -150,16 +150,24 @@ export interface IConfig {
   get<T = unknown>(key: string, defaultValue?: T): T;
 }
 
-// Sub-facet: i18n. `t` itself is the bare function; `createT` returns a
-// scoped translator; `reload` forces a re-read of locale files (synchronous
-// cache invalidate); `getCurrentLang` returns the active language code.
-// Signatures mirror `I18nApi` in @manybot/types (checked by
-// scripts/check-types-drift.ts). `t` always returns a string.
+// Sub-facet: i18n. In a runtime context `t` (and `ctx.t`) translate in the
+// current chat's language; in a setup context they use the bot default.
+// `createT` returns a plugin-scoped translator that follows the same rule;
+// `reload` forces a re-read of locale files; `getCurrentLang` returns the
+// bot's default language code, `lang` the effective one for this context.
+// `get/set/clearChatLocale` read/write the per-chat language (target chat
+// defaults to the current one). Signatures mirror `I18nApi` in
+// @manybot/types (checked by scripts/check-types-drift.ts).
 export interface II18n {
   t: (key: string, context?: Record<string, unknown>) => string;
-  createT: (pluginMetaUrl: string) => { t: II18n["t"]; lang: string | null };
+  createT: (pluginMetaUrl: string) => { t: II18n["t"]; readonly lang: string | null };
   reload: () => void;
   getCurrentLang: () => string;
+  readonly lang: string;
+  getChatLocale: (chatId?: string) => string | undefined;
+  setChatLocale: (lang: string, chatId?: string) => string;
+  clearChatLocale: (chatId?: string) => void;
+  available: () => string[];
 }
 
 // Sub-facet: download queue. Plugin calls `enqueue(work, error?)` and the

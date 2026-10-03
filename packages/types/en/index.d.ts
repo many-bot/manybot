@@ -1339,16 +1339,29 @@ export interface ConfigApi {
   get<T = unknown>(key: string, defaultValue?: T): T;
 }
 
-/** Translation/localization helpers, available as `ctx.i18n` (and `ctx.t` as a shortcut to `ctx.i18n.t`). */
+/**
+ * Translation/localization helpers, available as `ctx.i18n` (and `ctx.t` as a shortcut to `ctx.i18n.t`).
+ *
+ * Each chat can have its own language. In a command/message context, `t()` and the
+ * translators from `createT()` resolve the chat's language on every call (falling back to the
+ * bot's default language, then to English). In a `setup` context there is no chat, so they use
+ * the bot's default language.
+ */
 export interface I18nApi {
   /**
-   * Translate a key.
+   * Translate a key. Resolves the current chat's language on every call —
+   * don't store a reference to this function outside the handler it came
+   * from (module scope, a later scheduled job, etc.); call `ctx.t` /
+   * `ctx.i18n.t` fresh each time instead.
    * @param args - Translation key followed by any interpolation values, forwarded to the underlying i18n engine.
    * @returns The translated string.
    */
   t(key: string, context?: Record<string, unknown>): string;
   /**
-   * Create a scoped `t()` bound to a plugin's own locale files.
+   * Create a scoped `t()` bound to a plugin's own locale files. Same
+   * caching caveat as {@link I18nApi.t} — the returned `t` re-resolves the
+   * chat language on every call; `lang` is a getter, so destructuring it
+   * (`const { lang } = createT(...)`) freezes it at that instant.
    * @param pluginMetaUrl - Pass `import.meta.url` from the plugin file.
    * @returns A `t()` function scoped to that plugin's locales.
    * @example
@@ -1357,11 +1370,35 @@ export interface I18nApi {
    * console.log(t("greeting"));
    * ```
    */
-  createT(pluginMetaUrl: string): { t: I18nApi["t"]; lang: string | null };
+  createT(pluginMetaUrl: string): { t: I18nApi["t"]; readonly lang: string | null };
   /** Reload locale files from disk. */
   reload(): void;
-  /** @returns The currently active language code. */
+  /** @returns The bot's default language code (`LANGUAGE` in the config), not the chat's. */
   getCurrentLang(): string;
+  /** Effective language of the current chat (its own setting, else the bot default). */
+  readonly lang: string;
+  /**
+   * Language saved for a chat.
+   * @param chatId - Target chat. Defaults to the current chat.
+   * @returns The locale code, or `undefined` if the chat follows the bot default.
+   */
+  getChatLocale(chatId?: string): string | undefined;
+  /**
+   * Saves the language of a chat. Regional codes are accepted (`"pt-BR"` becomes `"pt"`).
+   * Takes effect immediately, including for the rest of the current handler.
+   * @param lang - Locale code; must be one of {@link I18nApi.available}.
+   * @param chatId - Target chat. Defaults to the current chat.
+   * @returns The stored (normalized) locale code.
+   * @throws {RangeError} If no translation file matches `lang`.
+   */
+  setChatLocale(lang: string, chatId?: string): string;
+  /**
+   * Makes a chat follow the bot's default language again.
+   * @param chatId - Target chat. Defaults to the current chat.
+   */
+  clearChatLocale(chatId?: string): void;
+  /** @returns The language codes that have a core translation file. */
+  available(): string[];
 }
 
 /** Miscellaneous filesystem helpers, available as `ctx.utils`. */

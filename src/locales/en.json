@@ -178,6 +178,15 @@
     "retrying": "Retrying ({{attempt}}/{{max}})...",
     "sessionWiped": "Session discarded, pairing again ({{round}}/{{max}})...",
     "connectGaveUp": "Couldn't connect after several attempts. Check your network and try again."
+  },
+  "config": {
+    "current": "⚙️ Settings for this chat:\n• Prefix: {{prefix}}\n• Language: {{locale}}\n\nUse !config prefixo <new> or !config idioma <{{available}}> to change.",
+    "defaultValue": "(default)",
+    "prefixUsage": "Usage: !config prefixo <new prefix> (up to 5 characters)",
+    "prefixSaved": "✅ Prefix set to \"{{value}}\" for this chat.\nFrom now on, use \"{{value}}\" instead of the default prefix here.",
+    "localeUsage": "Usage: !config idioma <{{available}}|padrao>",
+    "localeSaved": "✅ Language set to \"{{lang}}\" for this chat.\nCommand-system messages (menu, permissions, usage notices) and plugins now use this language here.",
+    "localeCleared": "✅ This chat is back to the bot's default language ({{lang}})."
   }
 }
 

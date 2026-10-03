@@ -22,6 +22,9 @@ const DEFAULT_LANG = "en";
 // Cache of loaded translations
 const translations = new Map<string, Record<string, unknown>>();
 
+// Bumped by reloadTranslations(); plugin caches compare against it to drop stale locales
+let translationsVersion = 0;
+
 /**
  * Loads a translation JSON file
  * @param {string} lang - language code (en, pt, es)
@@ -90,6 +93,39 @@ function ensureLoaded(): void {
   fallbackTranslations = loadLocale(DEFAULT_LANG) || {};
 }
 
+let availableLocales: string[] | null = null;
+
+/**
+ * Language codes with a core translation file (`src/locales/*.json`), sorted.
+ */
+export function getAvailableLocales(): string[] {
+  if (availableLocales) return availableLocales;
+  try {
+    availableLocales = fs
+      .readdirSync(LOCALES_DIR)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.slice(0, -".json".length))
+      .sort();
+  } catch {
+    availableLocales = [DEFAULT_LANG];
+  }
+  return availableLocales;
+}
+
+/**
+ * Maps a user/plugin supplied code ("PT", "pt_BR", "es-MX") to a supported
+ * locale ("pt", "pt", "es"), or `undefined` when nothing matches.
+ */
+export function normalizeLocale(lang: string | null | undefined): string | undefined {
+  if (typeof lang !== "string") return undefined;
+  const code = lang.trim().toLowerCase().replace(/_/g, "-");
+  if (!code) return undefined;
+  const available = getAvailableLocales();
+  if (available.includes(code)) return code;
+  const base = code.split("-")[0];
+  return available.includes(base) ? base : undefined;
+}
+
 /**
  * Gets a nested value from an object using dot path
  * @param {object} obj
@@ -141,7 +177,7 @@ export function t(key: string, context: Record<string, unknown> = {}): string {
 export function tFor(lang: string | undefined, key: string, context: Record<string, unknown> = {}): string {
   ensureLoaded();
 
-  const targetLang = lang?.trim().toLowerCase() || currentLang || DEFAULT_LANG;
+  const targetLang = normalizeLocale(lang) ?? currentLang ?? DEFAULT_LANG;
   const targetTranslations = loadLocale(targetLang) || fallbackTranslations;
   return translate(targetTranslations, fallbackTranslations, key, context);
 }
@@ -216,54 +252,51 @@ function findPluginRoot(startDir: string): string {
  *       pt.json
  *
  * @param {string} pluginMetaUrl - import.meta.url from the plugin
+ * @param {() => string|undefined} [getLang] - resolves the language per call (e.g. the chat's); defaults to the bot language
  * @returns {{ t: Function, lang: string }}
  */
-export function createPluginT(pluginMetaUrl: string) {
+export function createPluginT(pluginMetaUrl: string, getLang?: () => string | undefined) {
   const entryDir = path.dirname(fileURLToPath(pluginMetaUrl));
   const pluginDir = findPluginRoot(entryDir);
   const pluginLocaleDir = path.join(pluginDir, "locale");
 
   ensureLoaded();
 
-  // Get bot's configured language
-  const targetLang = currentLang;
+  const cache = new Map<string, Record<string, unknown>>();
+  let cacheVersion = translationsVersion;
 
-  // Load plugin translations
-  let pluginTranslations: Record<string, unknown> = {};
-  let pluginFallback: Record<string, unknown> = {};
-
-  try {
-    // Try to load the configured language
-    const targetPath = path.join(pluginLocaleDir, `${targetLang}.json`);
-    if (fs.existsSync(targetPath)) {
-      pluginTranslations = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+  function loadPluginLocale(lang: string): Record<string, unknown> {
+    if (cacheVersion !== translationsVersion) {
+      cache.clear();
+      cacheVersion = translationsVersion;
     }
-
-    // Always load English as fallback
-    const fallbackPath = path.join(pluginLocaleDir, `${DEFAULT_LANG}.json`);
-    if (fs.existsSync(fallbackPath)) {
-      pluginFallback = JSON.parse(fs.readFileSync(fallbackPath, "utf8"));
+    const cached = cache.get(lang);
+    if (cached) return cached;
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(pluginLocaleDir, `${lang}.json`), "utf8"));
+      cache.set(lang, data);
+      return data;
+    } catch {
+      // Missing or unreadable locale: not cached, so a later fix is picked up
+      return {};
     }
-  } catch (err) {
-    // Silent fail - plugin may not have translations
+  }
+
+  function activeLang(): string {
+    return normalizeLocale(getLang?.()) ?? (currentLang as string);
   }
 
   /**
-   * Plugin-specific translation function
-   * @param {string} key
-   * @param {object} context
-   * @returns {string}
+   * Plugin-specific translation function. The language is resolved on every
+   * call (chat language when bound to a chat, otherwise the bot default).
    */
   function pluginT(key: string, context: Record<string, unknown> = {}): string {
-    // Try plugin's target language first
-    let value = getNestedValue(pluginTranslations, key);
+    let value = getNestedValue(loadPluginLocale(activeLang()), key);
 
-    // Fallback to plugin's English
     if (value === undefined) {
-      value = getNestedValue(pluginFallback, key);
+      value = getNestedValue(loadPluginLocale(DEFAULT_LANG), key);
     }
 
-    // If still not found, return the key
     if (value === undefined) {
       return key;
     }
@@ -275,7 +308,12 @@ export function createPluginT(pluginMetaUrl: string) {
     return interpolate(value, context);
   }
 
-  return { t: pluginT, lang: targetLang };
+  return {
+    t: pluginT,
+    get lang(): string {
+      return activeLang();
+    },
+  };
 }
 
 /**
@@ -283,6 +321,8 @@ export function createPluginT(pluginMetaUrl: string) {
  */
 export function reloadTranslations(): void {
   translations.clear();
+  translationsVersion++;
+  availableLocales = null;
   currentLang = null;
   ensureLoaded();
 
@@ -298,5 +338,5 @@ export function getCurrentLang(): string {
   return currentLang as string;
 }
 
-export default { t, createPluginT, reloadTranslations, getCurrentLang };
+export default { t, tFor, createPluginT, reloadTranslations, getCurrentLang, getAvailableLocales, normalizeLocale };
 

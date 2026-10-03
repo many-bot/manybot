@@ -24,11 +24,13 @@ import {
   type WAGroupMetadata, type WACommunityGroup,
 } from "#drivers/baileys/groupMetaCache.js";
 import { logger }                    from "#logger";
-import { t, createPluginT,
+import { t, tFor, createPluginT,
          reloadTranslations,
-         getCurrentLang }            from "#i18n";
+         getCurrentLang,
+         getAvailableLocales }       from "#i18n";
 import { CONFIG, CONFIG_DIR }        from "#config";
-import { getChatPrefix }             from "#kernel/chatOverrides.js";
+import { getChatPrefix, getChatLocale, resolveChatLang,
+         setChatLocale, clearChatLocale } from "#kernel/chatOverrides.js";
 import { enqueue }                   from "#download";
 import { waitForEditSlot, runAdminAction } from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
@@ -565,16 +567,58 @@ function buildConfigApi(): IConfig {
 
 // ── i18n API ──────────────────────────────────────────────────────────────────
 
-function buildI18nApi() {
+/**
+ * @param chatId - current chat for runtime contexts; `undefined` in setup
+ *   contexts, where everything resolves to the bot's default language.
+ *   The chat language is read on every call, so `setChatLocale` takes
+ *   effect immediately within the same handler.
+ */
+function buildI18nApi(chatId?: string) {
+  const langOf = (): string => resolveChatLang(chatId);
+
+  function requireChat(target?: string): string {
+    const id = target ?? chatId;
+    if (!id) throw new TypeError("[i18n] No chat in this context — pass a chatId.");
+    return id;
+  }
+
   return {
-    t,
     /**
-     * Create a scoped t() for a plugin's own locale files.
+     * Translates in the current chat's language (bot default in setup).
+     * ⚠️ Resolves the language on every call — don't grab a reference to
+     * this function and reuse it outside the handler it came from (e.g.
+     * stored on module scope, passed into a later scheduled job). Call
+     * `ctx.t` / `ctx.i18n.t` fresh each time, or capture `ctx.i18n.lang`
+     * explicitly if you need the resolved code itself.
+     */
+    t: (key: string, context?: Record<string, unknown>) =>
+      chatId ? tFor(langOf(), key, context) : t(key, context),
+    /**
+     * Create a scoped t() for a plugin's own locale files. Follows the
+     * current chat's language when called from a runtime context.
+     * Same caching caveat as `t` above — the returned `t` re-resolves the
+     * chat language on every call; `lang` is a getter, so destructuring it
+     * (`const { lang } = createT(...)`) freezes it at that instant.
      * @param {string} pluginMetaUrl — pass import.meta.url from the plugin
      */
-    createT: createPluginT,
+    createT: (pluginMetaUrl: string) =>
+      createPluginT(pluginMetaUrl, chatId ? langOf : undefined),
     reload:  reloadTranslations,
+    /** Bot default language (`LANGUAGE` in the config). */
     getCurrentLang,
+    /** Effective language for the current chat. */
+    get lang(): string {
+      return langOf();
+    },
+    /** Saved language of a chat (default: current), `undefined` if it follows the bot default. */
+    getChatLocale: (targetChatId?: string) => getChatLocale(requireChat(targetChatId)),
+    /** Saves a chat's language (default: current chat). Throws if unsupported. */
+    setChatLocale: (lang: string, targetChatId?: string) =>
+      setChatLocale(requireChat(targetChatId), lang),
+    /** Makes a chat (default: current) follow the bot default language again. */
+    clearChatLocale: (targetChatId?: string) => clearChatLocale(requireChat(targetChatId)),
+    /** Language codes with a core translation file. */
+    available: () => [...getAvailableLocales()],
   };
 }
 
@@ -2930,18 +2974,21 @@ function buildBaseApi(
   contract:       WaContract,
   store:          BotStore,
   pluginRegistry: Map<string, PluginEntry>,
-  pluginName:     string
+  pluginName:     string,
+  chatId?:        string
 ) {
   const me     = contract.me();
   const botJid = me.id ? jidNormalizedUser(me.id) : null;
   const botLid = me.lid ? normalizeJid(me.lid) : null;
   if (!botJid) logger.warn("[pluginApi] botId is null — socket may not be ready yet.");
 
+  const i18n = buildI18nApi(chatId);
+
   return {
     log,
-    t,
+    t:         i18n.t,
     config:    buildConfigApi(),
-    i18n:      buildI18nApi(),
+    i18n,
     utils:     buildUtilsApi(),
     download:  buildDownloadApi(),
     scheduler: buildSchedulerApi(pluginName),
@@ -3440,7 +3487,7 @@ export function buildApi({
   }
 
   return {
-    ...buildBaseApi(contract, store, pluginRegistry, pluginName),
+    ...buildBaseApi(contract, store, pluginRegistry, pluginName, normJid),
     ...buildSendApi(contract, store, rawJid, guardOptions),
 
     runCommand: buildRunCommandFacet(msg, chat, contract, store, pluginRegistry, pluginName),

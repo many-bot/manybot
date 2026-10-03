@@ -11,6 +11,20 @@
   - Plugins that relied on "kick from the announcements group only" must target a linked group instead.
 - `@manybot/types` 2.3.0: adds `GroupKickOutcome`, `GroupKickReason`, `CommunityKickError`; `AdminApi.kick()` returns `TargetableAction<GroupKickOutcome[]>`.
 
+### New Features
+
+- Per-chat language. `LANGUAGE` in the config is now only the bot's default; each chat can have its own language, stored in `settings.db` (`core` / `chat_locale`, the key the `setChatLocale` core handler already used).
+  - Core API ([chatOverrides.ts](src/kernel/chatOverrides.ts)): `setChatLocale(chatId, lang)`, `clearChatLocale(chatId)`, `getChatLocale(chatId)`, `resolveChatLang(chatId)`. Regional codes are accepted (`pt-BR` → `pt`); unsupported codes throw `RangeError`. Available languages are read from `src/locales/` instead of a hardcoded list.
+  - Plugins: `ctx.i18n.setChatLocale(lang, chatId?)`, `getChatLocale(chatId?)`, `clearChatLocale(chatId?)`, `available()` and `lang`.
+  - Core handler `setChatLocale` (`<code>`, or `padrao` to go back to the bot default) now uses the core API. It is ready, but no command is bound to it yet.
+  - Built-in permission messages (admin only, cooldown, wrong scope, …) are now translated per chat when a command is checked, instead of being frozen in the bot language at load. Messages set in the commands YAML are unchanged.
+- `@manybot/types`: `I18nApi` gains `lang`, `getChatLocale()`, `setChatLocale()`, `clearChatLocale()` and `available()`.
+
+### Changed
+
+- `ctx.t`, `ctx.i18n.t` and `ctx.i18n.createT()` translators now resolve the **current chat's language** on every call in command contexts (previously always the bot's language). In `setup` contexts, and for logs/alerts, the bot default is still used. `createT().lang` is now a getter, so destructuring it captures the value at that moment.
+- `ctx.i18n.getCurrentLang()` still returns the bot's default language; use `ctx.i18n.lang` for the chat's.
+
 ### Fixed
 
 - Baileys: listing a Community's linked groups now seeds the shared group-metadata cache from the same account scan, so Community-wide admin actions no longer cost one extra `groupMetadata()` lookup per group.

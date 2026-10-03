@@ -19,7 +19,9 @@
 
 import { OWNER_NUMBER } from "#config";
 import { normalizeJid } from "#drivers/jid.js";
-import type { CommandEntry } from "./commandRegistry.js";
+import { tFor } from "#i18n";
+import type { CommandEntry, DefaultedMessageKey } from "./commandRegistry.js";
+import { getChatLocale } from "./chatOverrides.js";
 
 export interface SenderIdentity {
   /** LID-canonical id (`@lid`), or `null` when not yet known. */
@@ -39,6 +41,8 @@ export interface PermissionContext {
 export type PermissionCheckResult =
   | { allowed: true }
   | { allowed: false; message?: string };
+
+type PermissionMessages = CommandEntry["permissions"]["messages"];
 
 const cooldownMap = new Map<string, number>();
 
@@ -101,34 +105,38 @@ export async function checkPermission(
   ctx: PermissionContext
 ): Promise<PermissionCheckResult> {
   const perms = entry.permissions;
-  const msgs = perms.messages;
+  const lang = getChatLocale(ctx.chatId);
+  const msg = <K extends keyof PermissionMessages>(key: K): PermissionMessages[K] =>
+    perms.defaultedMessages?.[key as DefaultedMessageKey]
+      ? (tFor(lang, `commandPermissions.${key}`) as PermissionMessages[K])
+      : perms.messages[key];
 
   // 1. dono check (specific owner JID, overrides global OWNER_NUMBER)
   if (perms.dono) {
     if (!matchesSender(ctx.sender, [perms.dono])) {
-      return { allowed: false, message: msgs.donoOnly };
+      return { allowed: false, message: msg("donoOnly") };
     }
   }
 
   // 2. Owner check
   if (perms.owner) {
     if (!OWNER_NUMBER || !matchesSender(ctx.sender, [OWNER_NUMBER])) {
-      return { allowed: false, message: msgs.ownerOnly };
+      return { allowed: false, message: msg("ownerOnly") };
     }
   }
 
   // 3. Scope check (group | dm | any)
   if (perms.scope === "group" && !ctx.isGroup) {
-    return { allowed: false, message: msgs.wrongScope };
+    return { allowed: false, message: msg("wrongScope") };
   }
   if (perms.scope === "dm" && ctx.isGroup) {
-    return { allowed: false, message: msgs.wrongScope };
+    return { allowed: false, message: msg("wrongScope") };
   }
 
   // 4. allowed_chats check (closed list of JIDs the command may run in)
   if (perms.allowedChats && perms.allowedChats.length > 0) {
     if (!matchesAny(ctx.chatId, perms.allowedChats)) {
-      return { allowed: false, message: msgs.allowedChats };
+      return { allowed: false, message: msg("allowedChats") };
     }
   }
 
@@ -136,12 +144,12 @@ export async function checkPermission(
   if (perms.blacklist) {
     if (ctx.isGroup && perms.blacklist.groups.length > 0) {
       if (matchesAny(ctx.chatId, perms.blacklist.groups)) {
-        return { allowed: false, message: msgs.blacklist };
+        return { allowed: false, message: msg("blacklist") };
       }
     }
     if (perms.blacklist.users.length > 0) {
       if (matchesSender(ctx.sender, perms.blacklist.users)) {
-        return { allowed: false, message: msgs.blacklist };
+        return { allowed: false, message: msg("blacklist") };
       }
     }
   }
@@ -153,15 +161,15 @@ export async function checkPermission(
 
     if (ctx.isGroup && hasGroupList) {
       if (!matchesAny(ctx.chatId, perms.whitelist.groups)) {
-        return { allowed: false, message: msgs.wrongScope };
+        return { allowed: false, message: msg("wrongScope") };
       }
     } else if (!ctx.isGroup && hasGroupList && !hasUserList) {
-      return { allowed: false, message: msgs.wrongScope };
+      return { allowed: false, message: msg("wrongScope") };
     }
 
     if (hasUserList) {
       if (!matchesSender(ctx.sender, perms.whitelist.users)) {
-        return { allowed: false, message: msgs.wrongScope };
+        return { allowed: false, message: msg("wrongScope") };
       }
     }
   }
@@ -173,11 +181,11 @@ export async function checkPermission(
     // rather than botNotAdmin (which would misleadingly imply the check
     // was actually evaluated).
     if (!ctx.isGroup) {
-      return { allowed: false, message: msgs.wrongScope };
+      return { allowed: false, message: msg("wrongScope") };
     }
     const isBotAdmin = await ctx.isBotAdmin();
     if (!isBotAdmin) {
-      return { allowed: false, message: msgs.botNotAdmin };
+      return { allowed: false, message: msg("botNotAdmin") };
     }
   }
 
@@ -186,11 +194,11 @@ export async function checkPermission(
     // Same reasoning as botAdmin above: no group, no admin concept, so
     // this is wrongScope, not senderNotAdmin.
     if (!ctx.isGroup) {
-      return { allowed: false, message: msgs.wrongScope };
+      return { allowed: false, message: msg("wrongScope") };
     }
     const isSenderAdmin = await ctx.isSenderAdmin();
     if (!isSenderAdmin) {
-      return { allowed: false, message: msgs.senderNotAdmin };
+      return { allowed: false, message: msg("senderNotAdmin") };
     }
   }
 
@@ -203,10 +211,10 @@ export async function checkPermission(
 
     if (elapsedSeconds < perms.cooldownSeconds) {
       const remaining = Math.ceil(perms.cooldownSeconds - elapsedSeconds);
-      const msg = msgs.cooldown
+      const cooldownMsg = msg("cooldown")
         .replace(/\{\{seconds\}\}/g, String(remaining))
         .replace(/\{\{time\}\}/g, String(remaining));
-      return { allowed: false, message: msg };
+      return { allowed: false, message: cooldownMsg };
     }
 
     cooldownMap.set(key, now);
@@ -214,3 +222,4 @@ export async function checkPermission(
 
   return { allowed: true };
 }
+

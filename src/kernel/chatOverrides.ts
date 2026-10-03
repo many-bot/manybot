@@ -15,7 +15,8 @@
  * coreCommands.ts) without risking an import cycle.
  */
 
-import { getPluginSetting } from "./settingsDb.js";
+import { getPluginSetting, buildSettingsApi } from "./settingsDb.js";
+import { getCurrentLang, getAvailableLocales, normalizeLocale } from "#i18n";
 import { normalizeJid } from "#drivers/jid.js";
 import { CMD_PREFIX } from "#config";
 
@@ -45,6 +46,33 @@ export function getChatPrefix(chatId: string): string {
  *   internally, same as {@link getChatPrefix}.
  */
 export function getChatLocale(chatId: string): string | undefined {
-  const override = getPluginSetting(CORE_PLUGIN, normalizeJid(chatId), "chat_locale");
-  return typeof override === "string" && override.length > 0 ? override : undefined;
+  return normalizeLocale(getPluginSetting(CORE_PLUGIN, normalizeJid(chatId), "chat_locale") as string | undefined);
 }
+
+/**
+ * Effective language for a chat: its saved override, else the bot's
+ * default (`CONFIG.LANGUAGE`). Always returns a supported locale code.
+ */
+export function resolveChatLang(chatId?: string | null): string {
+  return (chatId ? getChatLocale(chatId) : undefined) ?? getCurrentLang();
+}
+
+/**
+ * Saves the language for a chat. Accepts regional codes ("pt-BR" → "pt").
+ * @returns the stored (normalized) locale code
+ * @throws {RangeError} when no translation file matches `lang`
+ */
+export function setChatLocale(chatId: string, lang: string): string {
+  const locale = normalizeLocale(lang);
+  if (!locale) {
+    throw new RangeError(`Unsupported locale "${lang}". Available: ${getAvailableLocales().join(", ")}`);
+  }
+  buildSettingsApi(CORE_PLUGIN, normalizeJid(chatId)).set("chat_locale", locale);
+  return locale;
+}
+
+/** Removes the chat's override so it follows the bot's default language again. */
+export function clearChatLocale(chatId: string): void {
+  buildSettingsApi(CORE_PLUGIN, normalizeJid(chatId)).delete("chat_locale");
+}
+

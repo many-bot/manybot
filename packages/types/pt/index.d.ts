@@ -1357,16 +1357,28 @@ export interface ConfigApi {
   get<T = unknown>(key: string, defaultValue?: T): T;
 }
 
-/** Auxiliares de tradução/localização, disponíveis como `ctx.i18n` (e `ctx.t` como atalho para `ctx.i18n.t`). */
+/**
+ * Auxiliares de tradução/localização, disponíveis como `ctx.i18n` (e `ctx.t` como atalho para `ctx.i18n.t`).
+ *
+ * Cada chat pode ter seu próprio idioma. Em um contexto de comando/mensagem, `t()` e os tradutores
+ * de `createT()` resolvem o idioma do chat a cada chamada (com fallback para o idioma padrão do bot
+ * e depois para inglês). Em um contexto de `setup` não há chat, então usam o idioma padrão do bot.
+ */
 export interface I18nApi {
   /**
-   * Traduz uma chave.
+   * Traduz uma chave. Resolve o idioma do chat atual a cada chamada — não
+   * guarde uma referência a essa função fora do handler em que ela veio
+   * (escopo de módulo, um job agendado depois, etc.); chame `ctx.t` /
+   * `ctx.i18n.t` de novo a cada uso.
    * @param args - Chave de tradução seguida de quaisquer valores de interpolação, repassados ao mecanismo de i18n subjacente.
    * @returns A string traduzida.
    */
   t(key: string, context?: Record<string, unknown>): string;
   /**
    * Cria um `t()` vinculado aos próprios arquivos de idioma de um plugin.
+   * Mesmo cuidado de cache do {@link I18nApi.t} — o `t` retornado resolve
+   * o idioma do chat a cada chamada; `lang` é um getter, então desestruturar
+   * (`const { lang } = createT(...)`) congela o valor naquele instante.
    * @param pluginMetaUrl - Passe `import.meta.url` do arquivo do plugin.
    * @returns Uma função `t()` vinculada aos idiomas daquele plugin.
    * @example
@@ -1375,11 +1387,35 @@ export interface I18nApi {
    * console.log(t("greeting"));
    * ```
    */
-  createT(pluginMetaUrl: string): { t: I18nApi["t"]; lang: string | null };
+  createT(pluginMetaUrl: string): { t: I18nApi["t"]; readonly lang: string | null };
   /** Recarrega os arquivos de idioma do disco. */
   reload(): void;
-  /** @returns O código do idioma atualmente ativo. */
+  /** @returns O código do idioma padrão do bot (`LANGUAGE` na configuração), não o do chat. */
   getCurrentLang(): string;
+  /** Idioma efetivo do chat atual (a configuração do próprio chat, senão o padrão do bot). */
+  readonly lang: string;
+  /**
+   * Idioma salvo para um chat.
+   * @param chatId - Chat alvo. Padrão: o chat atual.
+   * @returns O código do idioma, ou `undefined` se o chat segue o padrão do bot.
+   */
+  getChatLocale(chatId?: string): string | undefined;
+  /**
+   * Salva o idioma de um chat. Códigos regionais são aceitos (`"pt-BR"` vira `"pt"`).
+   * Vale imediatamente, inclusive para o resto do handler atual.
+   * @param lang - Código do idioma; deve estar em {@link I18nApi.available}.
+   * @param chatId - Chat alvo. Padrão: o chat atual.
+   * @returns O código do idioma salvo (normalizado).
+   * @throws {RangeError} Se nenhum arquivo de tradução corresponder a `lang`.
+   */
+  setChatLocale(lang: string, chatId?: string): string;
+  /**
+   * Faz um chat voltar a seguir o idioma padrão do bot.
+   * @param chatId - Chat alvo. Padrão: o chat atual.
+   */
+  clearChatLocale(chatId?: string): void;
+  /** @returns Os códigos de idioma que possuem arquivo de tradução do core. */
+  available(): string[];
 }
 
 /** Auxiliares diversos de sistema de arquivos, disponíveis como `ctx.utils`. */
