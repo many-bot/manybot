@@ -30,5 +30,9 @@ describe("config", () => {
     assert.equal(typeof CONFIG.CRASH_NOTICE_MESSAGE, "string");
     assert.ok(CONFIG.CRASH_NOTICE_MAX_AGE_SECONDS > 0);
   });
+
+  test("session-locked message option is always normalized to a string", () => {
+    assert.equal(typeof CONFIG.SESSION_LOCKED_MESSAGE, "string");
+  });
 });
 

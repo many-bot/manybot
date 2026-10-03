@@ -10,6 +10,9 @@
     "signal": {
       "sigterm": "Process interrupted. Shutting down..."
     },
+    "shutdown": {
+      "waitingSessions": "Waiting for {{count}} open chat session(s) to close before shutting down ({{plugins}})..."
+    },
     "logout": {
       "success": "Session removed successfully: {{session_dir}}",
       "notFound": "Session file not found for CLIENT_ID \"{{CLIENT_ID}}\""
@@ -111,6 +114,9 @@
   },
   "crashNotice": {
     "message": "⚠️ Something went wrong while running {{command}}. Please try again."
+  },
+  "chatSession": {
+    "locked": "⏳ There's a command already running in this chat. Wait for it to finish (or cancel it, if it supports that) and try again."
   },
   "alerts": {
     "sendFailedTitle": "manybot: send failed",

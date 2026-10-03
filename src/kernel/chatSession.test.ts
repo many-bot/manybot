@@ -5,6 +5,8 @@ import {
   releaseSession,
   isSessionLocked,
   getSessionHolder,
+  getActiveSessionCount,
+  getActiveSessions,
   __resetSessionsForTests,
 } from "#kernel/chatSession.js";
 
@@ -58,5 +60,26 @@ describe("kernel/chatSession — Phase 7 exclusive chat session", () => {
     releaseSession("chat1", "gamePlugin");
     assert.equal(acquireSession("chat1", "figurinhaPlugin"), true);
     assert.equal(getSessionHolder("chat1"), "figurinhaPlugin");
+  });
+
+  test("getActiveSessionCount/getActiveSessions reflect open sessions", () => {
+    assert.equal(getActiveSessionCount(), 0);
+    assert.deepEqual(getActiveSessions(), []);
+
+    acquireSession("chatA", "gamePlugin");
+    acquireSession("chatB", "figurinhaPlugin");
+
+    assert.equal(getActiveSessionCount(), 2);
+    assert.deepEqual(
+      getActiveSessions().sort((a, b) => a.chatId.localeCompare(b.chatId)),
+      [
+        { chatId: "chatA", pluginName: "gamePlugin" },
+        { chatId: "chatB", pluginName: "figurinhaPlugin" },
+      ]
+    );
+
+    releaseSession("chatA", "gamePlugin");
+    assert.equal(getActiveSessionCount(), 1);
+    assert.deepEqual(getActiveSessions(), [{ chatId: "chatB", pluginName: "figurinhaPlugin" }]);
   });
 });

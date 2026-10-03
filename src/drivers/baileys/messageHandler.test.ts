@@ -10,6 +10,7 @@ import { buildCommandRegistry, __setRegistryForTests, type CommandRegistry } fro
 import type { CommandSpec, CommandSubcommandSpec, MenuConfig } from "#kernel/commandsConfig.js";
 import { getDriverManager, _resetDriverManagerForTests } from "#kernel/driverManager.js";
 import { buildSettingsApi } from "#kernel/settingsDb.js";
+import { acquireSession, releaseSession, __resetSessionsForTests } from "#kernel/chatSession.js";
 import { CONFIG } from "#config";
 
 // Pin the "no override" global language independently of whatever
@@ -654,6 +655,99 @@ describe("drivers/baileys/messageHandler — v6 runCommand dispatch", () => {
       await new Promise((r) => setTimeout(r, 300));
 
       assert.deepEqual(sentTexts.map(m => m.text), ["done"]);
+    });
+  });
+
+  describe("exclusive chat session enforcement (Phase 7, MANYBOT-6.md)", () => {
+    const CHAT_ID = "5511888888888@s.whatsapp.net";
+    const legacy = (name: string, run: () => Promise<void>): PluginEntry => ({
+      name, status: "active", run, setup: null, commands: null,
+      exports: null, error: null, guardOptions: {}, errorCount: 0,
+    });
+
+    afterEach(() => {
+      __resetSessionsForTests();
+      pluginRegistry.delete("holderPlugin");
+      pluginRegistry.delete("otherPlugin");
+      CONFIG.SESSION_LOCKED_MESSAGE = "";
+    });
+
+    test("a plugin that is not the session holder is skipped entirely while the chat is locked", async () => {
+      let holderCalls = 0;
+      let otherCalls = 0;
+      pluginRegistry.delete("taskPlugin");
+      pluginRegistry.set("holderPlugin", legacy("holderPlugin", async () => { holderCalls++; }));
+      pluginRegistry.set("otherPlugin", legacy("otherPlugin", async () => { otherCalls++; }));
+      __setRegistryForTests(buildRegistry([]));
+
+      acquireSession(CHAT_ID, "holderPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "just chatting" }), contract, store);
+      await new Promise((r) => setTimeout(r, 200));
+
+      assert.equal(holderCalls, 1, "session holder still receives dispatch");
+      assert.equal(otherCalls, 0, "non-holder plugin is skipped while locked");
+    });
+
+    test("a registered command owned by a non-holder plugin does not run while locked", async () => {
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+      acquireSession(CHAT_ID, "someOtherPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "!task" }), contract, store);
+      await new Promise((r) => setTimeout(r, 200));
+
+      assert.equal(runCalls.length, 0, "taskPlugin's command did not run while another plugin holds the session");
+
+      releaseSession(CHAT_ID, "someOtherPlugin");
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "!task" }), contract, store);
+      await waitFor(() => runCalls.length > 0);
+
+      assert.equal(runCalls.length, 1, "command runs normally once the session is released");
+    });
+
+    test("sessions are scoped per chat — a lock in one chat does not affect another", async () => {
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+      acquireSession("another-chat@s.whatsapp.net", "someOtherPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "!task" }), contract, store);
+      await waitFor(() => runCalls.length > 0);
+
+      assert.equal(runCalls.length, 1);
+    });
+
+    test("replies with the default translated notice when a locked command is blocked", async () => {
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+      acquireSession(CHAT_ID, "someOtherPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "!task" }), contract, store);
+      await waitFor(() => sentTexts.length > 0);
+
+      assert.equal(runCalls.length, 0);
+      assert.equal(sentTexts.length, 1);
+      assert.match(sentTexts[0].text, /already running|rodando|en ejecución/i);
+    });
+
+    test("honors a custom SESSION_LOCKED_MESSAGE from config, with a {{plugin}} placeholder", async () => {
+      CONFIG.SESSION_LOCKED_MESSAGE = "busy: {{plugin}} is still working";
+      __setRegistryForTests(buildRegistry([emptySpec({})]));
+      acquireSession(CHAT_ID, "someOtherPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "!task" }), contract, store);
+      await waitFor(() => sentTexts.length > 0);
+
+      assert.equal(sentTexts[0].text, "busy: someOtherPlugin is still working");
+    });
+
+    test("passive (non-command) traffic to a locked-out plugin stays silent", async () => {
+      pluginRegistry.set("holderPlugin", legacy("holderPlugin", async () => {}));
+      pluginRegistry.set("otherPlugin", legacy("otherPlugin", async () => {}));
+      __setRegistryForTests(buildRegistry([]));
+      acquireSession(CHAT_ID, "holderPlugin");
+
+      await handleMessage(makeBotMessage({ chatId: CHAT_ID, body: "just chatting" }), contract, store);
+      await new Promise((r) => setTimeout(r, 200));
+
+      assert.equal(sentTexts.length, 0, "no busy notice for plain messages, only for recognized commands");
     });
   });
 });

@@ -289,6 +289,12 @@ CRASH_NOTICE_MESSAGE = ""
 # this many seconds — older ones are dropped silently.
 CRASH_NOTICE_MAX_AGE_SECONDS = 600
 
+# When a command is blocked because another plugin has an exclusive
+# session open in that chat (a game, a timeout-based flow, a download in
+# progress, ...), tell the user instead of silently ignoring them.
+# Leave blank for the built-in translated message.
+SESSION_LOCKED_MESSAGE = ""
+
 # ── Status page ────────────────────────────────────────────────────────────
 # Local HTTP page showing whether the bot is online or offline.
 STATUS_ENABLED = true
@@ -374,6 +380,12 @@ CRASH_NOTICE_MESSAGE = ""
 # últimos N segundos — os mais antigos são descartados em silêncio.
 CRASH_NOTICE_MAX_AGE_SECONDS = 600
 
+# Quando um comando é bloqueado porque outro plugin tem uma sessão
+# exclusiva aberta naquele chat (um jogo, um fluxo com timeout, um
+# download em andamento, ...), avisa a pessoa em vez de ignorar em
+# silêncio. Deixe em branco pra usar a mensagem traduzida padrão.
+SESSION_LOCKED_MESSAGE = ""
+
 # ── Página de status ────────────────────────────────────────────────────────
 # Página HTTP local mostrando se o bot está online ou offline.
 STATUS_ENABLED = true
@@ -445,6 +457,7 @@ export interface Config {
   CRASH_NOTICE_ENABLED: boolean;
   CRASH_NOTICE_MESSAGE: string;
   CRASH_NOTICE_MAX_AGE_SECONDS: number;
+  SESSION_LOCKED_MESSAGE: string;
 
   ADMIN_JID: string;
   SMTP_HOST: string;
@@ -497,6 +510,7 @@ const DEFAULTS: Config = {
   CRASH_NOTICE_ENABLED: true,
   CRASH_NOTICE_MESSAGE: "",
   CRASH_NOTICE_MAX_AGE_SECONDS: 600,
+  SESSION_LOCKED_MESSAGE: "",
   ADMIN_JID: "",
   SMTP_HOST: "",
   SMTP_PORT: 587,
@@ -562,6 +576,7 @@ function normalize(cfg: Config): Config {
   cfg.CRASH_NOTICE_MESSAGE = typeof cfg.CRASH_NOTICE_MESSAGE === "string" ? cfg.CRASH_NOTICE_MESSAGE : "";
   const rawCrashMaxAge = Number(cfg.CRASH_NOTICE_MAX_AGE_SECONDS);
   cfg.CRASH_NOTICE_MAX_AGE_SECONDS = rawCrashMaxAge > 0 ? rawCrashMaxAge : 600;
+  cfg.SESSION_LOCKED_MESSAGE = typeof cfg.SESSION_LOCKED_MESSAGE === "string" ? cfg.SESSION_LOCKED_MESSAGE : "";
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
 
   const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;

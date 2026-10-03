@@ -70,6 +70,22 @@ export function getSessionHolder(chatId: string): string | null {
   return sessions.get(chatId)?.pluginName ?? null;
 }
 
+/** Number of chats that currently have an open session (held by anyone). */
+export function getActiveSessionCount(): number {
+  return sessions.size;
+}
+
+/**
+ * Snapshot of every currently open session, for shutdown logging/waiting.
+ * Not a live view — callers get a point-in-time copy.
+ */
+export function getActiveSessions(): Array<{ chatId: string; pluginName: string }> {
+  return Array.from(sessions.entries()).map(([chatId, holder]) => ({
+    chatId,
+    pluginName: holder.pluginName,
+  }));
+}
+
 /** Test-only: wipe all session state between tests. */
 export function __resetSessionsForTests(): void {
   sessions.clear();

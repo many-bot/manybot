@@ -35,6 +35,8 @@ import { checkPermission } from "#kernel/commandPermissions.js";
 import { handleMenuCommand, renderNotFound, resolveLocalizedString, checkAndTriggerWelcomeMessage } from "#kernel/commandMenu.js";
 import { runPlugin }          from "#kernel/pluginGuard.js";
 import type { RunOrigin }     from "#kernel/runState.js";
+import { isSessionLocked, getSessionHolder } from "#kernel/chatSession.js";
+import { renderSessionLockedMessage } from "#kernel/chatSessionNotice.js";
 import { acquireChatSlot }    from "#sendguard";
 import { trackIncomingForContactSave } from "#kernel/contactAutoSave.js";
 import { normalizeJid } from "#drivers/jid.js";
@@ -481,7 +483,33 @@ async function runPluginsForMessage(
     ? { chatId: rawJid, key: rawKey, command: `${chatPrefix}${command}`, kind: "legacy" }
     : undefined;
 
+  // Exclusive chat session (Phase 7, MANYBOT-6.md): while a chat has an
+  // open session, only the holding plugin keeps receiving dispatch below
+  // (both legacy `run(ctx)` passive traffic and v6 `runCommand()`) — every
+  // other plugin is skipped entirely for this message, so it can't react
+  // to or interfere with the ongoing flow. "core" is exempt (handled above,
+  // never blocked).
+  const lockedHolder = isSessionLocked(msg.chatId) ? getSessionHolder(msg.chatId) : null;
+
+  // A *recognized* command whose owning plugin isn't the session holder
+  // will never reach that plugin (see the loop below) — tell the user why
+  // instead of silently dropping it. Passive, non-command traffic to a
+  // locked-out plugin stays silent, same as before this feature existed.
+  if (matchedPlugin && lockedHolder !== null && matchedPlugin.pluginName !== lockedHolder) {
+    try {
+      await msgCtx.reply.text(renderSessionLockedMessage(msg.chatId, lockedHolder));
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      logger.warn(`[messageHandler] session-locked reply failed: ${err.message}`);
+    }
+    return;
+  }
+
   for (const plugin of pluginRegistry.values()) {
+    if (lockedHolder !== null && plugin.name !== lockedHolder) {
+      continue;
+    }
+
     const ctx = buildApi({
       msg,
       chat,

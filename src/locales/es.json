@@ -10,6 +10,9 @@
     "signal": {
       "sigterm": "Proceso interrumpida. Apagando..."
     },
+    "shutdown": {
+      "waitingSessions": "Esperando que se cierren {{count}} sesión(es) de chat abiertas antes de apagar ({{plugins}})..."
+    },
     "logout": {
       "success": "Archivo de sesión eliminado correctamente: {{session_dir}}",
       "notFound": "Archivo de sesión no encontrado para CLIENT_ID \"{{CLIENT_ID}}\""
@@ -111,6 +114,9 @@
   },
   "crashNotice": {
     "message": "⚠️ Algo salió mal al ejecutar {{command}}. Inténtalo de nuevo."
+  },
+  "chatSession": {
+    "locked": "⏳ Todavía hay un comando en ejecución en este chat. Espera a que termine (o cancélalo, si lo permite) y vuelve a intentarlo."
   },
 "alerts": {
     "sendFailedTitle": "manybot: envío fallido",

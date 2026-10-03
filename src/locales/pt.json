@@ -10,6 +10,9 @@
     "signal": {
       "sigterm": "Processo interrompido. Desligando..."
     },
+    "shutdown": {
+      "waitingSessions": "Aguardando {{count}} sessão(ões) de chat abertas fecharem antes de desligar ({{plugins}})..."
+    },
     "logout": {
       "success": "Arquivo de sessão apagado com sucesso: {{session_dir}}",
       "notFound": "Arquivo de sessão não encontrado para o CLIENT_ID \"{{CLIENT_ID}}\""
@@ -111,6 +114,9 @@
   },
   "crashNotice": {
     "message": "⚠️ Algo deu errado ao executar {{command}}. Tente novamente."
+  },
+  "chatSession": {
+    "locked": "⏳ Ainda tem um comando rodando neste chat. Espere terminar (ou encerre ele, se isso for possível) e tente de novo."
   },
 "alerts": {
     "sendFailedTitle": "manybot: envio falhou",

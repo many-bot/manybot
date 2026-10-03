@@ -32,6 +32,7 @@ import { logger, setLogLevel }        from "#logger";
 import { t }                          from "#i18n";
 import { getCurrentPluginName }       from "#kernel/pluginContext.js";
 import { recordPluginFailure }        from "#kernel/pluginGuard.js";
+import { getActiveSessions, getActiveSessionCount } from "#kernel/chatSession.js";
 import { CLIENT_ID, CONFIG_DIR }      from "#config";
 import { rmSync }                     from "node:fs";
 import { access }                     from "node:fs/promises";
@@ -44,6 +45,30 @@ let shuttingDown = false;
 const driverManager = getDriverManager();
 driverManager.register(baileysContract, { isPrimary: true });
 const activeDriver = driverManager.active();
+
+// Exclusive chat session (Phase 7, MANYBOT-6.md): a plugin mid-flow (a
+// game, figurinha's timeout, a music download, ...) owns a lock per chat.
+// Restarting the process out from under it (e.g. `systemctl restart`)
+// would cut that flow off mid-way, so shutdown waits for every open
+// session to close on its own instead of forcing an exit. Deliberately
+// no timeout — see chatSession.ts's own note on why this isn't persisted.
+async function waitForSessionsToClose(): Promise<void> {
+  if (getActiveSessionCount() === 0) return;
+
+  let lastLogged = 0;
+  while (getActiveSessionCount() > 0) {
+    const now = Date.now();
+    if (now - lastLogged >= 10_000) {
+      lastLogged = now;
+      const active = getActiveSessions();
+      logger.warn(t("bot.shutdown.waitingSessions", {
+        count: active.length,
+        plugins: active.map((s) => s.pluginName).join(", "),
+      }));
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
 
 async function shutdown(reason: string, isError = false) {
   if (shuttingDown) return;
@@ -74,6 +99,8 @@ async function shutdown(reason: string, isError = false) {
   } else {
     logger.warn(t("bot.signal.sigterm", { signal: reason }));
   }
+
+  await waitForSessionsToClose();
 
   try {
     await cleanupPlugins();
