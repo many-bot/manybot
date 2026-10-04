@@ -23,6 +23,7 @@
  * all live elsewhere (sendFallbackGuard, sendGuard, pluginGuard).
  */
 
+import { resolveBaileysVersion } from "./version.js";
 import type {
   BotMessage, BotQuotedRef,
 } from "#drivers/types.js";
@@ -423,6 +424,7 @@ export function createBaileysAdapter(initial: BaileysAdapterDeps): BaileysAdapte
 
   const contract: WaContract = {
     name: "baileys" as const,
+    version: resolveBaileysVersion(),
 
     // ── lifecycle ─────────────────────────────────────────────────────────
     async connect()    { /* managed by drivers/baileys/index.ts (state machine, login, reconnect) */ },

@@ -1652,6 +1652,29 @@ export interface EventsApi {
 
 // ── Base compartilhada (tanto setup quanto runtime context recebem isto) ────
 
+/**
+ * Telemetria pseudônima e agregada, disponível como `ctx.stats`.
+ * Somente leitura — plugins não conseguem escrever telemetria. Nenhum conteúdo de mensagem é exposto.
+ */
+export interface StatsApi {
+  /** Identidade desta instalação e dados da última inicialização, ou `null` antes da primeira inicialização registrada. */
+  instance(): {
+    instanceId: string;
+    startedAt: number;
+    manybotVersion: string;
+    backend: string;
+    backendVersion: string;
+  } | null;
+  /** Total de mensagens processadas pelo framework desde que esta instalação começou a registrar. */
+  messagesProcessed(): number;
+  /** Timestamps (unix epoch, UTC) de primeira/última vez que o usuário `lid` foi visto, ou `null` se nunca visto. `id` é um hash com sal por instalação, nunca o lid bruto. */
+  user(lid: string): { id: string; firstSeen: number; lastSeen: number } | null;
+  /** Timestamps (unix epoch, UTC) de entrada/saída do grupo `jid`, ou `null` se desconhecido. `id` é um hash com sal por instalação, nunca o jid bruto. O registro é mantido após a saída. */
+  group(jid: string): { id: string; joinedAt: number; leftAt: number | null } | null;
+  /** Todos os plugins que o kernel rastreou (estado de ativação) — não só este. */
+  plugins(): Array<{ key: string; version: string; enabled: boolean }>;
+}
+
 /** APIs disponíveis tanto em {@link SetupContext} quanto em {@link PluginContext}. */
 export interface BaseApi {
   log: LogApi;
@@ -1669,6 +1692,8 @@ export interface BaseApi {
   commands: CommandsApi;
   /** JID normalizado do bot, ou `null` se o socket ainda não estiver pronto. */
   botId: string | null;
+  /** Telemetria pseudônima e agregada. Somente leitura. @see StatsApi */
+  stats: StatsApi;
 }
 
 // ── Contexto de setup — plugin.setup(ctx), chamado uma vez no carregamento ──

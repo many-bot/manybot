@@ -1631,6 +1631,29 @@ export interface EventsApi {
 
 // ── Shared base (both setup and runtime contexts get these) ─────────────────
 
+/**
+ * Pseudonymous, aggregate-only telemetry, available as `ctx.stats`.
+ * Read-only — plugins cannot write telemetry. No message content is ever exposed.
+ */
+export interface StatsApi {
+  /** This installation's identity and last-startup info, or `null` before the first recorded startup. */
+  instance(): {
+    instanceId: string;
+    startedAt: number;
+    manybotVersion: string;
+    backend: string;
+    backendVersion: string;
+  } | null;
+  /** Total messages processed by the framework since this installation began tracking. */
+  messagesProcessed(): number;
+  /** First/last-seen timestamps (unix epoch, UTC) for a user `lid`, or `null` if never seen. `id` is a per-installation salted hash, never the raw lid. */
+  user(lid: string): { id: string; firstSeen: number; lastSeen: number } | null;
+  /** Join/leave timestamps (unix epoch, UTC) for a group `jid`, or `null` if unknown. `id` is a per-installation salted hash, never the raw jid. The record is kept after a leave. */
+  group(jid: string): { id: string; joinedAt: number; leftAt: number | null } | null;
+  /** All plugins the kernel has tracked (enabled state) — not just this one. */
+  plugins(): Array<{ key: string; version: string; enabled: boolean }>;
+}
+
 /** APIs available in both {@link SetupContext} and {@link PluginContext}. */
 export interface BaseApi {
   log: LogApi;
@@ -1648,6 +1671,8 @@ export interface BaseApi {
   commands: CommandsApi;
   /** Normalized bot JID, or `null` if the socket isn't ready yet. */
   botId: string | null;
+  /** Pseudonymous, aggregate-only telemetry. Read-only. @see StatsApi */
+  stats: StatsApi;
 }
 
 // ── Setup context — plugin.setup(ctx), called once on load ──────────────────
