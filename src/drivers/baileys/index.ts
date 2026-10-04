@@ -32,6 +32,7 @@ import { runContactRefreshSweep } from "#kernel/contactAutoSave.js";
 import { registerAlertSockProvider, sendAlert } from "#kernel/alerts.js";
 import { startUpdateCheckSchedule, stopUpdateCheckSchedule } from "#kernel/updateCheck.js";
 import { recordGroupJoin, recordGroupLeave } from "#kernel/telemetryDb.js";
+import { syncGroupTelemetry } from "#kernel/groupTelemetrySync.js";
 import { setStatus } from "#kernel/statusServer.js";
 import { logger } from "#logger";
 import { PLUGINS, CLIENT_ID } from "#config";
@@ -272,7 +273,13 @@ async function startBot() {
       startUpdateCheckSchedule();
 
       // buffer anti-replay / sync ghost messages
-      setTimeout(() => { state = "READY"; }, 2000);
+      setTimeout(() => {
+        state = "READY";
+        void syncGroupTelemetry(async () => {
+          const all = await sock.groupFetchAllParticipating();
+          return Object.values(all).map((g) => normalizeJid(g.id));
+        });
+      }, 2000);
     }
 
     if (connection === "close") {

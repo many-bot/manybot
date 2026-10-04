@@ -1669,8 +1669,8 @@ export interface StatsApi {
   messagesProcessed(): number;
   /** Timestamps (unix epoch, UTC) de primeira/última vez que o usuário `lid` foi visto, ou `null` se nunca visto. `id` é um hash com sal por instalação, nunca o lid bruto. */
   user(lid: string): { id: string; firstSeen: number; lastSeen: number } | null;
-  /** Timestamps (unix epoch, UTC) de entrada/saída do grupo `jid`, ou `null` se desconhecido. `id` é um hash com sal por instalação, nunca o jid bruto. O registro é mantido após a saída. */
-  group(jid: string): { id: string; joinedAt: number; leftAt: number | null } | null;
+  /** Timestamps (unix epoch, UTC) de entrada/saída do grupo `jid`, ou `null` se desconhecido. `id` é um hash com sal por instalação, nunca o jid bruto. `joinedAt` é `null` quando o bot já estava no grupo antes do rastreamento começar (entrada nunca observada). O registro é mantido após a saída. */
+  group(jid: string): { id: string; joinedAt: number | null; leftAt: number | null } | null;
   /** Todos os plugins que o kernel rastreou (estado de ativação) — não só este. */
   plugins(): Array<{ key: string; version: string; enabled: boolean }>;
 }

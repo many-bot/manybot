@@ -1648,8 +1648,8 @@ export interface StatsApi {
   messagesProcessed(): number;
   /** First/last-seen timestamps (unix epoch, UTC) for a user `lid`, or `null` if never seen. `id` is a per-installation salted hash, never the raw lid. */
   user(lid: string): { id: string; firstSeen: number; lastSeen: number } | null;
-  /** Join/leave timestamps (unix epoch, UTC) for a group `jid`, or `null` if unknown. `id` is a per-installation salted hash, never the raw jid. The record is kept after a leave. */
-  group(jid: string): { id: string; joinedAt: number; leftAt: number | null } | null;
+  /** Join/leave timestamps (unix epoch, UTC) for a group `jid`, or `null` if unknown. `id` is a per-installation salted hash, never the raw jid. `joinedAt` is `null` when the bot was already in the group before tracking began (join time never observed). The record is kept after a leave. */
+  group(jid: string): { id: string; joinedAt: number | null; leftAt: number | null } | null;
   /** All plugins the kernel has tracked (enabled state) — not just this one. */
   plugins(): Array<{ key: string; version: string; enabled: boolean }>;
 }

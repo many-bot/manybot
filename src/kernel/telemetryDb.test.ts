@@ -2,13 +2,16 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   getGroupInfo,
+  getGroupSyncedAt,
   getInstanceInfo,
   getPluginInfo,
   getUserInfo,
+  markGroupSynced,
   recordGroupJoin,
   recordGroupLeave,
   recordInstanceStartup,
   setPluginEnabled,
+  syncGroups,
   touchUser,
   upsertPlugin,
 } from "#kernel/telemetryDb.js";
@@ -89,9 +92,88 @@ describe("telemetryDb", () => {
       assert.equal(getGroupInfo("g-rejoin")?.leftAt, null);
     });
 
-    test("leave without a prior join still records a row", () => {
+    test("leave without a prior join still records a row with unknown joinedAt", () => {
       recordGroupLeave("g-orphan-leave");
       assert.notEqual(getGroupInfo("g-orphan-leave")?.leftAt, null);
+      assert.equal(getGroupInfo("g-orphan-leave")?.joinedAt, null);
+    });
+  });
+
+  describe("group sync", () => {
+    const nowS = (): number => Math.floor(Date.now() / 1000);
+    const future = (): number => nowS() + 3600;
+    const past = (): number => nowS() - 3600;
+
+    test("adds unknown groups as active with unknown joinedAt", () => {
+      const r = syncGroups(["s-add-1", "s-add-2"], nowS());
+      assert.equal(r.added, 2);
+      assert.equal(r.skipped, false);
+      assert.deepEqual(
+        [getGroupInfo("s-add-1")?.joinedAt, getGroupInfo("s-add-1")?.leftAt],
+        [null, null],
+      );
+    });
+
+    test("is idempotent on a repeated scan", () => {
+      syncGroups(["s-idem"], nowS());
+      const before = getGroupInfo("s-idem");
+      const r = syncGroups(["s-idem"], nowS());
+      assert.equal(r.added, 0);
+      assert.equal(r.reactivated, 0);
+      assert.deepEqual(getGroupInfo("s-idem"), before);
+    });
+
+    test("closes active groups missing from the scan", () => {
+      syncGroups(["s-keep", "s-gone"], nowS());
+      const r = syncGroups(["s-keep"], future());
+      assert.ok(r.closed >= 1);
+      assert.equal(getGroupInfo("s-keep")?.leftAt, null);
+      assert.notEqual(getGroupInfo("s-gone")?.leftAt, null);
+    });
+
+    test("reactivates a closed group present in the scan", () => {
+      recordGroupJoin("s-react");
+      recordGroupLeave("s-react");
+      const r = syncGroups(["s-react"], future());
+      assert.equal(r.reactivated, 1);
+      assert.equal(getGroupInfo("s-react")?.leftAt, null);
+      assert.equal(getGroupInfo("s-react")?.joinedAt, null);
+    });
+
+    test("ignores an empty scan while groups are active", () => {
+      recordGroupJoin("s-empty");
+      const r = syncGroups([], future());
+      assert.equal(r.skipped, true);
+      assert.equal(r.closed, 0);
+      assert.equal(getGroupInfo("s-empty")?.leftAt, null);
+    });
+
+    test("race-join: a group joined after the snapshot is not closed", () => {
+      const snapshotAt = past();
+      recordGroupJoin("s-race-join");
+      syncGroups(["s-some-other"], snapshotAt);
+      assert.equal(getGroupInfo("s-race-join")?.leftAt, null);
+    });
+
+    test("race-leave: a group left after the snapshot is not reactivated", () => {
+      recordGroupJoin("s-race-leave");
+      const snapshotAt = past();
+      recordGroupLeave("s-race-leave");
+      const r = syncGroups(["s-race-leave"], snapshotAt);
+      assert.equal(r.reactivated, 0);
+      assert.notEqual(getGroupInfo("s-race-leave")?.leftAt, null);
+    });
+
+    test("reports the active count after the changes", () => {
+      const r = syncGroups(["s-count-a", "s-count-b"], future());
+      assert.equal(r.active, 2);
+    });
+
+    test("markGroupSynced persists and overwrites the last sync time", () => {
+      markGroupSynced(100);
+      assert.equal(getGroupSyncedAt(), 100);
+      markGroupSynced(200);
+      assert.equal(getGroupSyncedAt(), 200);
     });
   });
 

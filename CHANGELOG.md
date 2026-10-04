@@ -22,6 +22,9 @@
 
 ### Changed
 
+- Telemetry: the `group` table is now reconciled with the account's real group list on connect (at most once per hour, persisted across restarts), so joins and leaves that happened while the bot was offline are no longer missed. Groups found this way have an unknown join time, so `ctx.stats.group(jid).joinedAt` is now `number | null` (`@manybot/types` updated).
+  - An empty scan while groups are tracked as active is ignored instead of closing them all, and join/leave events recorded during the scan take precedence over it.
+  - Existing `telemetry.db` files are migrated automatically (`group.joined_at` becomes nullable).
 - `ctx.t`, `ctx.i18n.t` and `ctx.i18n.createT()` translators now resolve the **current chat's language** on every call in command contexts (previously always the bot's language). In `setup` contexts, and for logs/alerts, the bot default is still used. `createT().lang` is now a getter, so destructuring it captures the value at that moment.
 - `ctx.i18n.getCurrentLang()` still returns the bot's default language; use `ctx.i18n.lang` for the chat's.
 
