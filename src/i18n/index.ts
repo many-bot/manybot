@@ -202,7 +202,11 @@ function translate(
     return key;
   }
 
-  // If not string, convert
+  // Structured locale data (arrays/objects) is returned as-is; only
+  // primitives get coerced to string.
+  if (value !== null && typeof value === "object") {
+    return value as unknown as string;
+  }
   if (typeof value !== "string") {
     return String(value);
   }
@@ -301,6 +305,9 @@ export function createPluginT(pluginMetaUrl: string, getLang?: () => string | un
       return key;
     }
 
+    if (value !== null && typeof value === "object") {
+      return value as unknown as string;
+    }
     if (typeof value !== "string") {
       return String(value);
     }
