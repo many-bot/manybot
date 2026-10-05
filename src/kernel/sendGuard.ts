@@ -49,21 +49,21 @@ interface SecurityProfile {
 const PROFILES: Record<"low" | "medium" | "high", SecurityProfile> = {
   low: {
     globalMsgPerSec:    8,
-    chatCooldownMs:     100,
-    jitterMs:           { min: 30, max: 120 },
+    chatCooldownMs:     0,
+    jitterMs:           { min: 10, max: 50 },
     concurrency:        Infinity,
-    typingMaxMs:        2000,
-    adminActionGapMs:   { min: 400, max: 800 },
-    adminRetryBaseMs:   2000,
+    typingMaxMs:        500,
+    adminActionGapMs:   { min: 200, max: 400 },
+    adminRetryBaseMs:   1500,
   },
   medium: {
     globalMsgPerSec:    5,
-    chatCooldownMs:     150,
-    jitterMs:           { min: 50, max: 200 },
-    concurrency:        2,
+    chatCooldownMs:     100,
+    jitterMs:           { min: 25, max: 120 },
+    concurrency:        3,
     typingMaxMs:        4000,
-    adminActionGapMs:   { min: 1000, max: 1800 },
-    adminRetryBaseMs:   3000,
+    adminActionGapMs:   { min: 600, max: 1200 },
+    adminRetryBaseMs:   2500,
   },
   high: {
     globalMsgPerSec:    2,
@@ -156,7 +156,7 @@ export function mediaDuration(caption?: string): number {
 // Caps how many DIFFERENT chats can be actively answered at once, globally
 // (not per-chat — messageHandler.ts already serializes a single chat's own
 // messages). high=1 effectively locks the bot to one chat at a time,
-// medium=2, low=unlimited. FIFO queue for anything past the cap.
+// medium=3, low=unlimited. FIFO queue for anything past the cap.
 
 let activeSlots = 0;
 const slotWaiters: Array<() => void> = [];
