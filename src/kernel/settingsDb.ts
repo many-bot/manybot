@@ -46,6 +46,10 @@ type Stmts = {
   getCommunityChats: ReturnType<DatabaseSync["prepare"]>;
   link: ReturnType<DatabaseSync["prepare"]>;
   unlink: ReturnType<DatabaseSync["prepare"]>;
+  muteLid: ReturnType<DatabaseSync["prepare"]>;
+  unmuteLid: ReturnType<DatabaseSync["prepare"]>;
+  getMute: ReturnType<DatabaseSync["prepare"]>;
+  deleteExpiredMute: ReturnType<DatabaseSync["prepare"]>;
 };
 
 // Opened lazily — only the first real read/write (via `ctx.settings`, or
@@ -113,6 +117,13 @@ function getStmts(): Stmts {
 
     CREATE INDEX IF NOT EXISTS idx_community
       ON community_links (community_id);
+
+    CREATE TABLE IF NOT EXISTS chat_mutes (
+      chat_id      TEXT NOT NULL,
+      lid          TEXT NOT NULL,
+      muted_until  INTEGER NOT NULL,
+      PRIMARY KEY  (chat_id, lid)
+    );
   `);
 
   stmts = {
@@ -156,6 +167,25 @@ function getStmts(): Stmts {
 
     unlink: db.prepare(
       "DELETE FROM community_links WHERE chat_id = ?"
+    ),
+
+    muteLid: db.prepare(`
+      INSERT INTO chat_mutes (chat_id, lid, muted_until)
+      VALUES (?, ?, ?)
+      ON CONFLICT (chat_id, lid)
+      DO UPDATE SET muted_until = excluded.muted_until
+    `),
+
+    unmuteLid: db.prepare(
+      "DELETE FROM chat_mutes WHERE chat_id = ? AND lid = ?"
+    ),
+
+    getMute: db.prepare(
+      "SELECT muted_until FROM chat_mutes WHERE chat_id = ? AND lid = ?"
+    ),
+
+    deleteExpiredMute: db.prepare(
+      "DELETE FROM chat_mutes WHERE chat_id = ? AND lid = ? AND muted_until <= ?"
     ),
   };
 
@@ -206,6 +236,44 @@ function dbDeleteAll(pluginName: string, chatId: string): void {
  */
 export function getPluginSetting(pluginName: string, chatId: string, key: string): unknown {
   return dbGet(pluginName, chatId, key);
+}
+
+// ── Per-chat LID mutes ───────────────────────────────────────────────────────
+//
+// A muted LID is fully ignored by the message pipeline within one chat
+// (see `kernel/chatMutes.ts` for the domain-level API — duration cap,
+// jid normalization — consumed by `messageHandler.ts` and `ctx.chat`).
+// Kept as its own table (not piggybacked on `plugin_settings`) since
+// lookups happen on every incoming message and want a direct indexed
+// read rather than a JSON blob parse.
+
+/**
+ * Mutes `lid` in `chatId` until `mutedUntil` (epoch ms). Overwrites any
+ * existing mute for the same (chatId, lid) pair.
+ */
+export function muteLid(chatId: string, lid: string, mutedUntil: number): void {
+  getStmts().muteLid.run(chatId, lid, mutedUntil);
+}
+
+/** Removes the mute for `lid` in `chatId`, if any. Safe to call when not muted. */
+export function unmuteLid(chatId: string, lid: string): void {
+  getStmts().unmuteLid.run(chatId, lid);
+}
+
+/**
+ * Whether `lid` is currently muted in `chatId`. An expired mute is lazily
+ * deleted on read (so the table never accumulates stale rows) and counts
+ * as not-muted.
+ */
+export function isLidMuted(chatId: string, lid: string): boolean {
+  const row = getStmts().getMute.get(chatId, lid) as { muted_until: number } | undefined;
+  if (!row) return false;
+  const now = Date.now();
+  if (row.muted_until <= now) {
+    getStmts().deleteExpiredMute.run(chatId, lid, now);
+    return false;
+  }
+  return true;
 }
 
 // ── Scoped accessor factory ───────────────────────────────────────────────────

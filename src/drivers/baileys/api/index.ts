@@ -31,6 +31,7 @@ import { t, tFor, createPluginT,
 import { CONFIG, CONFIG_DIR }        from "#config";
 import { getChatPrefix, getChatLocale, resolveChatLang,
          setChatLocale, clearChatLocale } from "#kernel/chatOverrides.js";
+import { muteLid, unmuteLid }        from "#kernel/chatMutes.js";
 import { enqueue }                   from "#download";
 import { waitForEditSlot, runAdminAction } from "#kernel/sendGuard.js";
 import { schedule, cancelPlugin }    from "#kernel/scheduler.js";
@@ -3464,6 +3465,14 @@ function buildChatFacet(
       if (!found) return null;
       const botMsg = toBotMessage(found.msg as WAProtoMsg);
       return buildMessageContext(botMsg, contract, store, { cooldown: false, jitter: false });
+    },
+
+    mute(lid: string, opts: { duration: number }): void {
+      muteLid(targetNormJid, lid, opts.duration);
+    },
+
+    unmute(lid: string): void {
+      unmuteLid(targetNormJid, lid);
     },
   };
 }

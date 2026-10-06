@@ -24,6 +24,7 @@ import type { WaContract } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import { CHATS, EXCLUDE_CHATS, AUTO_READ_MESSAGES } from "#config";
 import { getChatPrefix, getChatLocale } from "#kernel/chatOverrides.js";
+import { isLidMuted } from "#kernel/chatMutes.js";
 import { buildApi,
          buildChatFromMsg,
          buildMessageContext } from "./api/index.js";
@@ -239,6 +240,14 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
   }
 
   if (EXCLUDE_CHATS.includes(jid)) {
+    return;
+  }
+
+  // Muted LID (`ctx.chat.mute()`, persisted in settings.db): this sender
+  // is fully ignored in this chat — no read receipt, no plugin, nothing
+  // marked as processed. Checked as early as possible, before any other
+  // side effect of an incoming message.
+  if (msg.fromLid && isLidMuted(jid, msg.fromLid)) {
     return;
   }
 

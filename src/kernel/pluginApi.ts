@@ -466,6 +466,18 @@ export interface IChat {
    * @returns The message, or `null` if the ID is unknown/evicted.
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
+  /**
+   * Mutes `lid` in this chat: its messages are fully ignored by the
+   * dispatch pipeline (no plugin runs, nothing is logged as processed)
+   * until the mute expires or {@link IChat.unmute} is called. Persisted
+   * in `settings.db`, so it survives restarts.
+   * @param lid - the `@lid` JID to mute.
+   * @param opts.duration - mute length in milliseconds.
+   * @throws {RangeError} if `duration` isn't positive or exceeds 1 month.
+   */
+  mute(lid: string, opts: { duration: number }): void;
+  /** Reverse of {@link IChat.mute} — safe to call when `lid` isn't muted. */
+  unmute(lid: string): void;
 }
 
 // Sub-facet: utils for the message being handled. Imported as the

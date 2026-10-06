@@ -1026,6 +1026,22 @@ export interface ChatContext {
    * @returns A mensagem, ou `null` se o ID for desconhecido/expirado.
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
+  /**
+   * Muta `lid` neste chat: suas mensagens são totalmente ignoradas pelo
+   * pipeline de dispatch (nenhum plugin roda, nada é marcado como
+   * processado) até o mute expirar ou {@link ChatContext.unmute} ser
+   * chamado. Persistido no `settings.db`, sobrevive a reinícios.
+   * @param lid - O JID `@lid` a ser mutado.
+   * @param opts.duration - Duração do mute em milissegundos.
+   * @throws {RangeError} Se `duration` não for positivo ou exceder 1 mês.
+   * @example
+   * ```js
+   * ctx.chat.mute(targetLid, { duration: 60_000 }); // 1 minuto
+   * ```
+   */
+  mute(lid: string, opts: { duration: number }): void;
+  /** Reverso de {@link ChatContext.mute} — seguro de chamar mesmo se `lid` não estiver mutado. */
+  unmute(lid: string): void;
 }
 
 /** Resultado de {@link ChatContext.close} / {@link ChatContext.open}. */

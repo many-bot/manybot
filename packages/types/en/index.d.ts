@@ -1010,6 +1010,22 @@ export interface ChatContext {
    * @returns The message, or `null` if the ID is unknown/evicted.
    */
   getMsg(msgId: string): Promise<WAMessageContext | null>;
+  /**
+   * Mutes `lid` in this chat: its messages are fully ignored by the
+   * dispatch pipeline (no plugin runs, nothing is logged as processed)
+   * until the mute expires or {@link ChatContext.unmute} is called.
+   * Persisted in `settings.db`, so it survives restarts.
+   * @param lid - The `@lid` JID to mute.
+   * @param opts.duration - Mute length in milliseconds.
+   * @throws {RangeError} If `duration` isn't positive or exceeds 1 month.
+   * @example
+   * ```js
+   * ctx.chat.mute(targetLid, { duration: 60_000 }); // 1 minute
+   * ```
+   */
+  mute(lid: string, opts: { duration: number }): void;
+  /** Reverse of {@link ChatContext.mute} — safe to call when `lid` isn't muted. */
+  unmute(lid: string): void;
 }
 
 /** Result of {@link ChatContext.close} / {@link ChatContext.open}. */
