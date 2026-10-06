@@ -243,18 +243,6 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
     return;
   }
 
-  // Muted LID (`ctx.chat.mute()`, persisted in settings.db): this sender
-  // is fully ignored in this chat — no read receipt, no plugin, nothing
-  // marked as processed. Checked as early as possible, before any other
-  // side effect of an incoming message.
-  if (msg.fromLid && isLidMuted(jid, msg.fromLid)) {
-    return;
-  }
-
-  if (alreadyProcessed(msg.id)) {
-    return;
-  }
-
   // `msg.quotedKey`/`fromLid`/`fromPn` carry the LID/PN parts so the
   // contract can reconstruct a proper key on each driver. Used below both
   // to (optionally) mark the message as read and later when dispatching
@@ -265,6 +253,24 @@ export async function handleMessage(msg: BotMessage, contract: WaContract, store
     fromMe:    false,
     participant: msg.fromPn ?? msg.fromLid ?? undefined,
   } : undefined;
+
+  // Muted LID (`ctx.chat.mute()`, persisted in settings.db): this sender
+  // is fully ignored in this chat — no read receipt, no plugin, nothing
+  // marked as processed — and the message itself is deleted for everyone
+  // (best-effort: requires the bot to be a group admin; failures are
+  // swallowed so a missing delete permission never surfaces as an error).
+  // Checked as early as possible, before any other side effect of an
+  // incoming message.
+  if (msg.fromLid && isLidMuted(jid, msg.fromLid)) {
+    if (rawKey) {
+      contract.deleteMessage(rawJid, rawKey, true).catch(() => {});
+    }
+    return;
+  }
+
+  if (alreadyProcessed(msg.id)) {
+    return;
+  }
 
   // Mark as read/delivered to reduce the chance WhatsApp resends it.
   // Opt-in via AUTO_READ_MESSAGES: this sets the blue check on every
