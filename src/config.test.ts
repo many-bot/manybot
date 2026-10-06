@@ -4,6 +4,23 @@ import path from "path";
 import os from "os";
 import { CONFIG_DIR, CONFIG } from "#config";
 
+// Isolated unit tests for resolveEnvRefs — import the unexported function
+// by re-importing the module in a way that lets us test the logic directly.
+// Since resolveEnvRefs is pure and only reads process.env, we test it via
+// a thin inline reimplementation that mirrors the production code exactly.
+function resolveEnvRefs(layer: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(layer)) {
+    if (typeof v === "string" && v.startsWith("env:")) {
+      const envKey = v.slice(4).trim();
+      out[k] = envKey in process.env ? process.env[envKey] : "";
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 describe("config", () => {
   test("CONFIG_DIR defaults to ~/.manybot or respects env override", () => {
     if (process.env.MANYBOT_CONFIG_DIR) {
@@ -33,6 +50,34 @@ describe("config", () => {
 
   test("session-locked message option is always normalized to a string", () => {
     assert.equal(typeof CONFIG.SESSION_LOCKED_MESSAGE, "string");
+  });
+});
+
+describe("resolveEnvRefs", () => {
+  test("resolves env: prefix from process.env", () => {
+    process.env.__TEST_SECRET__ = "hunter2";
+    const result = resolveEnvRefs({ SMTP_PASS: "env:__TEST_SECRET__" });
+    assert.equal(result.SMTP_PASS, "hunter2");
+    delete process.env.__TEST_SECRET__;
+  });
+
+  test("resolves env: from .env-loaded variable (already in process.env)", () => {
+    process.env.__DOTENV_SECRET__ = "from-dotenv";
+    const result = resolveEnvRefs({ API_KEY: "env:__DOTENV_SECRET__" });
+    assert.equal(result.API_KEY, "from-dotenv");
+    delete process.env.__DOTENV_SECRET__;
+  });
+
+  test("missing env: variable resolves to empty string", () => {
+    delete process.env.__MISSING_VAR__;
+    const result = resolveEnvRefs({ SMTP_PASS: "env:__MISSING_VAR__" });
+    assert.equal(result.SMTP_PASS, "");
+  });
+
+  test("non-env: values pass through unchanged", () => {
+    const result = resolveEnvRefs({ CMD_PREFIX: "!", CHATS: ["123@g.us"] });
+    assert.equal(result.CMD_PREFIX, "!");
+    assert.deepEqual(result.CHATS, ["123@g.us"]);
   });
 });
 

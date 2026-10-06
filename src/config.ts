@@ -190,6 +190,61 @@ async function readFileSafe(file: string): Promise<string | null> {
 }
 
 // ---------------------------------------------------------------------------
+// .env loader + env: reference resolver
+// ---------------------------------------------------------------------------
+
+const DOT_ENV_FILE = path.join(CONFIG_DIR, ".env");
+
+/**
+ * Loads CONFIG_DIR/.env into process.env (if the file exists).
+ * Lines starting with # are ignored. Already-set env vars are NOT
+ * overwritten — process.env always wins over .env.
+ */
+async function loadDotEnv(): Promise<void> {
+  const raw = await readFileSafe(DOT_ENV_FILE);
+  if (raw === null) return;
+
+  for (const raw_line of raw.split(/\r?\n/)) {
+    const line = raw_line.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const idx = line.indexOf("=");
+    if (idx === -1) continue;
+
+    const key   = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim().replace(/^["']|["']$/g, "");
+
+    if (key && !(key in process.env)) {
+      process.env[key] = value;
+    }
+  }
+}
+
+/**
+ * Resolves "env:KEY" references in string config values.
+ * Walks the merged layer shallowly (top-level string values only —
+ * nested objects like `drivers` are handled by normalize()).
+ * Missing variables produce a warning and resolve to "".
+ */
+function resolveEnvRefs(layer: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(layer)) {
+    if (typeof v === "string" && v.startsWith("env:")) {
+      const envKey = v.slice(4).trim();
+      if (envKey in process.env) {
+        out[k] = process.env[envKey];
+      } else {
+        logger.warn(`Config: env:${envKey} referenced by ${k} is not set — using ""`);
+        out[k] = "";
+      }
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap: ensure at least one config file exists
 // ---------------------------------------------------------------------------
 
@@ -397,6 +452,7 @@ const DEFAULT_TOML =detectSystemLang() === "pt" ? DEFAULT_TOML_PT : DEFAULT_TOML
 
 await fs.mkdir(CONFIG_DIR, { recursive: true });
 
+await loadDotEnv();
 await migrateLegacyIfNeeded();
 
 if (!await fileExists(TOML_CONFIG_FILE)) {
@@ -428,10 +484,10 @@ async function loadToml(file: string, label: string): Promise<Record<string, unk
   }
 }
 
-tomlLayer = {
+tomlLayer = resolveEnvRefs({
   ...await loadToml(TOML_CONFIG_FILE, "manybot.toml"),
   ...await loadToml(TOML_PLUGIN_FILE, "manyplug.toml"),
-};
+});
 
 // ---------------------------------------------------------------------------
 // Merge + normalize
@@ -623,10 +679,11 @@ export const CONFIG: Config = normalize({
 });
 
 export async function reloadConfig(): Promise<void> {
-  const newTomlLayer = {
+  await loadDotEnv();
+  const newTomlLayer = resolveEnvRefs({
     ...await loadToml(TOML_CONFIG_FILE, "manybot.toml"),
     ...await loadToml(TOML_PLUGIN_FILE, "manyplug.toml"),
-  };
+  });
   const newConfig = normalize({
     ...DEFAULTS,
     ...legacyLayer,
