@@ -415,6 +415,8 @@ export interface IChat {
   getGroups(): Promise<Array<{ id: string; name: string }>>;
   isAdmin(contactId: string): Promise<boolean>;
   isSenderAdmin(): Promise<boolean>;
+  isSuperAdmin(contactId: string): Promise<boolean>;
+  isSenderSuperAdmin(): Promise<boolean>;
   isBotAdmin(): Promise<boolean>;
   clearMessages(): Promise<void>;
   /**

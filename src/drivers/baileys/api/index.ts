@@ -3368,6 +3368,44 @@ function buildChatFacet(
     },
 
     /**
+     * Check if a contact is a super-admin (group owner / creator) of
+     * this group. Always fetches fresh — see {@link isAdmin} for why.
+     * @param {string} contactId
+     * @returns {Promise<boolean>}
+     */
+    async isSuperAdmin(contactId: string): Promise<boolean> {
+      if (!targetIsGroup) return false;
+      try {
+        const meta = await getGroupMetadataFresh(contract, targetRawJid);
+        return meta.participants.some(
+          p => matchesParticipant([contactId], p.id) && p.admin === "superadmin"
+        );
+      } catch {
+        return false;
+      }
+    },
+
+    /**
+     * Check if the message that triggered this plugin was sent by a
+     * super-admin (group owner / creator) of this group.
+     * Always fetches fresh — see {@link isAdmin} for why.
+     * @returns {Promise<boolean>}
+     */
+    async isSenderSuperAdmin(): Promise<boolean> {
+      if (!targetIsGroup) return false;
+      try {
+        const meta = await getGroupMetadataFresh(contract, targetRawJid);
+        const rawSenderParticipant =
+          msg.participantAlt ?? msg.fromLid ?? msg.fromPn ?? msg.chatId ?? "";
+        return meta.participants.some(
+          p => matchesParticipant([sender, rawSenderParticipant], p.id) && p.admin === "superadmin"
+        );
+      } catch {
+        return false;
+      }
+    },
+
+    /**
      * Check if the bot is an admin of this group.
      * Always fetches fresh (bypasses the group-metadata TTL cache) — see
      * {@link isAdmin} for why: this gates the `botAdmin:` permission
