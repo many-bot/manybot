@@ -311,6 +311,15 @@ export class CommunityKickError extends Error {
   }
 }
 
+/** Per-group outcome of a Community-wide `ctx.chat.close()` / `.open()`. */
+export interface GroupSettingOutcome {
+  groupId: string;
+  name: string;
+  isAnnounce: boolean;
+  status: "ok" | "not_authorized" | "failed";
+  message?: string;
+}
+
 /** Result of `ctx.chat.close()` / `ctx.chat.open()`. */
 export type ChatSettingResult =
   | { status: "ok" }
@@ -321,7 +330,10 @@ export type ChatSettingResult =
   /** Admin check passed but the request itself failed (network, rate
    *  limit, WhatsApp-side rejection, …). `message` carries the real
    *  error so it doesn't get misread as a permission problem. */
-  | { status: "failed"; message: string };
+  | { status: "failed"; message: string }
+  /** Community-wide call: at least one linked group didn't get `"ok"`.
+   *  `results` covers every linked group that was touched. */
+  | { status: "partial"; results: GroupSettingOutcome[] };
 
 // ── Profile ─────────────────────────────────────────────────────────────────
 

@@ -12,7 +12,7 @@
 import type { PluginEntry }          from "#kernel/pluginLoader.js";
 import type { PluginContext, SetupContext, IContact, IContacts, IConfig, IChat } from "#kernel/pluginApi.js";
 import type { BotMessage, BotQuotedRef, BotGroupInvite, BotGroupMention } from "#drivers/types.js";
-import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, GroupKickReason, ChatSettingResult } from "#kernel/waContract.js";
+import type { WaContract, DownloadedMedia, GroupAcceptInviteResult, GroupKickOutcome, GroupKickReason, ChatSettingResult, GroupSettingOutcome } from "#kernel/waContract.js";
 import { GroupInviteError, CommunityKickError } from "#kernel/waContract.js";
 import type { BotStore } from "#client/store.js";
 import type { WASocket, WAStore, WAProtoMsg, WAChat } from "#types";
@@ -387,6 +387,31 @@ function kickCascadeDelay(): Promise<void> {
   const ms = kickCascadeDelayOverrideMs
     ?? KICK_CASCADE_DELAY_MIN_MS + Math.random() * KICK_CASCADE_DELAY_JITTER_MS;
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+// Extra pause after WhatsApp has already rejected a request for rate limits.
+const RATE_LIMIT_COOLDOWN_MS = 4000;
+const RATE_LIMIT_PATTERN = /rate-overlimit|429/;
+
+function rateLimitCooldown(): Promise<void> {
+  const ms = kickCascadeDelayOverrideMs ?? RATE_LIMIT_COOLDOWN_MS;
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+/** Paces a cascade by requests sent (not by successes): every request after the first waits, and a rate-limited one adds a cooldown before the next. */
+function createCascadePacer() {
+  let sent = 0;
+  let throttled = false;
+  return {
+    async beforeRequest(): Promise<void> {
+      if (sent++ > 0) await kickCascadeDelay();
+      if (throttled) await rateLimitCooldown();
+      throttled = false;
+    },
+    noteResult(rateLimited: boolean): void {
+      throttled = rateLimited;
+    },
+  };
 }
 
 /** Test-only: overrides the pause between per-group removals (`null` restores the default). */
@@ -2508,7 +2533,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
       );
     } catch (err) {
       const message = (err as Error).message;
-      const rateLimited = /rate-overlimit|429/.test(message);
+      const rateLimited = RATE_LIMIT_PATTERN.test(message);
       return { ...base, status: "failed", reason: rateLimited ? "rate_limited" : "unknown", message };
     } finally {
       dropGroupMeta(base.groupId);
@@ -2566,7 +2591,7 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
     targets.sort((a, b) => Number(a.isAnnounce) - Number(b.isAnnounce));
 
     const results: GroupKickOutcome[] = [];
-    let removedAny = false;
+    const pacer = createCascadePacer();
     for (const { groupId, name, isAnnounce, meta } of targets) {
       const base = { groupId, name, isAnnounce };
 
@@ -2592,9 +2617,9 @@ function buildAdminApi(contract: WaContract, store: BotStore, chatJid: string | 
         continue;
       }
 
-      if (removedAny) await kickCascadeDelay();
+      await pacer.beforeRequest();
       const outcome = await removeFromGroup(base, users);
-      if (outcome.status === "removed") removedAny = true;
+      pacer.noteResult(outcome.reason === "rate_limited");
       results.push(outcome);
     }
     results.push(...unreachable);
@@ -3249,6 +3274,54 @@ function buildChatFacet(
     }
   }
 
+  /**
+   * Community-only: cascades `close()`/`open()` to every group linked to
+   * this Community (announcements last), same pattern as `kickCommunity()`
+   * — `getCommunityGroups()` for the linked-group listing (cached, one
+   * account-wide scan), `getGroupMetadataFresh()` per group so the admin
+   * check can't serve a stale "still admin" result, and `kickCascadeDelay()`
+   * between calls so a large Community doesn't fire dozens of
+   * `groupSettingUpdate()` requests back to back. Nothing throws mid-way —
+   * every group gets an outcome; `"partial"` is returned (never thrown) if
+   * any group didn't reach `"ok"`, matching `close()`/`open()`'s existing
+   * always-resolves contract.
+   */
+  async function setCommunityAnnounceMode(announce: boolean): Promise<ChatSettingResult> {
+    if (!contract.groupSettingUpdate) {
+      return { status: "unsupported", message: "Group settings are not supported by this driver." };
+    }
+    const linked = await getCommunityGroups(contract, targetNormJid);
+    const results: GroupSettingOutcome[] = [];
+    const pacer = createCascadePacer();
+
+    for (const g of linked) {
+      let meta: WAGroupMetadata;
+      try {
+        meta = await getGroupMetadataFresh(contract, g.id);
+      } catch (err) {
+        results.push({ groupId: g.id, name: g.name, isAnnounce: false, status: "failed", message: String(err) });
+        continue;
+      }
+      const isAnnounce = !!meta.isCommunityAnnounce;
+      if (!isBotAdminInGroupMeta(meta)) {
+        results.push({ groupId: g.id, name: g.name, isAnnounce, status: "not_authorized" });
+        continue;
+      }
+      await pacer.beforeRequest();
+      try {
+        await contract.groupSettingUpdate(g.id, announce ? "announcement" : "not_announcement");
+        pacer.noteResult(false);
+        results.push({ groupId: g.id, name: g.name, isAnnounce, status: "ok" });
+      } catch (err) {
+        pacer.noteResult(RATE_LIMIT_PATTERN.test(String(err)));
+        logger.warn(`[chat.${announce ? "close" : "open"}] failed for "${g.id}": ${String(err)}`);
+        results.push({ groupId: g.id, name: g.name, isAnnounce, status: "failed", message: String(err) });
+      }
+    }
+
+    return results.every((r) => r.status === "ok") ? { status: "ok" } : { status: "partial", results };
+  }
+
   return {
     id:          targetNormJid,
     name:        targetName,
@@ -3428,11 +3501,11 @@ function buildChatFacet(
     },
 
     async close(): Promise<ChatSettingResult> {
-      return setGroupAnnounceMode(true);
+      return targetIsCommunity ? setCommunityAnnounceMode(true) : setGroupAnnounceMode(true);
     },
 
     async open(): Promise<ChatSettingResult> {
-      return setGroupAnnounceMode(false);
+      return targetIsCommunity ? setCommunityAnnounceMode(false) : setGroupAnnounceMode(false);
     },
 
     /**
