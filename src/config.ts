@@ -316,6 +316,15 @@ SMTP_INSECURE = false
 UPDATE_CHECK_ENABLED       = true
 UPDATE_CHECK_INTERVAL_HOURS = 24
 
+# A group that removes the bot leaves its plugin settings (ctx.settings)
+# behind forever, since nothing ever touches that chat again. This
+# deletes a chat's settings once SETTINGS_PRUNE_MAX_AGE_DAYS pass with no
+# ctx.settings read or write for it, checked every
+# SETTINGS_PRUNE_INTERVAL_HOURS.
+SETTINGS_PRUNE_ENABLED        = true
+SETTINGS_PRUNE_MAX_AGE_DAYS   = 90
+SETTINGS_PRUNE_INTERVAL_HOURS = 24
+
 # How to connect the first time: "qr" (scan with WhatsApp on your phone)
 # or "phone" (receive a pairing code on the number set in PHONE_NUMBER).
 # Leave blank to choose interactively on first run — the choice is then
@@ -406,6 +415,15 @@ SMTP_INSECURE = false
 # UPDATE_CHECK_INTERVAL_HOURS.
 UPDATE_CHECK_ENABLED       = true
 UPDATE_CHECK_INTERVAL_HOURS = 24
+
+# Um grupo que remove o bot deixa as configurações do plugin (ctx.settings)
+# pra trás pra sempre, já que nada mais toca naquele chat de novo. Isso
+# apaga as configurações de um chat depois de SETTINGS_PRUNE_MAX_AGE_DAYS
+# sem nenhuma leitura ou escrita em ctx.settings pra ele, checando a cada
+# SETTINGS_PRUNE_INTERVAL_HOURS.
+SETTINGS_PRUNE_ENABLED        = true
+SETTINGS_PRUNE_MAX_AGE_DAYS   = 90
+SETTINGS_PRUNE_INTERVAL_HOURS = 24
 
 # Como conectar pela primeira vez: "qr" (escaneie com o WhatsApp no celular)
 # ou "phone" (recebe um código de pareamento no número definido em
@@ -528,6 +546,10 @@ export interface Config {
   UPDATE_CHECK_ENABLED:        boolean;
   UPDATE_CHECK_INTERVAL_HOURS: number;
 
+  SETTINGS_PRUNE_ENABLED:        boolean;
+  SETTINGS_PRUNE_MAX_AGE_DAYS:   number;
+  SETTINGS_PRUNE_INTERVAL_HOURS: number;
+
   STATUS_ENABLED: boolean;
   STATUS_PORT:    number;
 
@@ -578,6 +600,9 @@ const DEFAULTS: Config = {
   SMTP_INSECURE: false,
   UPDATE_CHECK_ENABLED:        true,
   UPDATE_CHECK_INTERVAL_HOURS: 24,
+  SETTINGS_PRUNE_ENABLED:        true,
+  SETTINGS_PRUNE_MAX_AGE_DAYS:   90,
+  SETTINGS_PRUNE_INTERVAL_HOURS: 24,
   STATUS_ENABLED: true,
   STATUS_PORT:    8080,
 
@@ -634,6 +659,11 @@ function normalize(cfg: Config): Config {
   cfg.CRASH_NOTICE_MAX_AGE_SECONDS = rawCrashMaxAge > 0 ? rawCrashMaxAge : 600;
   cfg.SESSION_LOCKED_MESSAGE = typeof cfg.SESSION_LOCKED_MESSAGE === "string" ? cfg.SESSION_LOCKED_MESSAGE : "";
   cfg.UPDATE_CHECK_INTERVAL_HOURS = Number(cfg.UPDATE_CHECK_INTERVAL_HOURS) || 24;
+
+  const rawSettingsPruneEnabled = cfg.SETTINGS_PRUNE_ENABLED as unknown;
+  cfg.SETTINGS_PRUNE_ENABLED = rawSettingsPruneEnabled !== false && rawSettingsPruneEnabled !== "false";
+  cfg.SETTINGS_PRUNE_MAX_AGE_DAYS = Number(cfg.SETTINGS_PRUNE_MAX_AGE_DAYS) || 90;
+  cfg.SETTINGS_PRUNE_INTERVAL_HOURS = Number(cfg.SETTINGS_PRUNE_INTERVAL_HOURS) || 24;
 
   const rawStatusEnabled = cfg.STATUS_ENABLED as unknown;
   cfg.STATUS_ENABLED = rawStatusEnabled !== false && rawStatusEnabled !== "false";
@@ -731,6 +761,9 @@ export const AUTO_READ_MESSAGES          = CONFIG.AUTO_READ_MESSAGES;
 export const HISTORY_MAX_PER_CHAT        = CONFIG.HISTORY_MAX_PER_CHAT;
 export const UPDATE_CHECK_ENABLED        = CONFIG.UPDATE_CHECK_ENABLED;
 export const UPDATE_CHECK_INTERVAL_HOURS = CONFIG.UPDATE_CHECK_INTERVAL_HOURS;
+export const SETTINGS_PRUNE_ENABLED        = CONFIG.SETTINGS_PRUNE_ENABLED;
+export const SETTINGS_PRUNE_MAX_AGE_DAYS   = CONFIG.SETTINGS_PRUNE_MAX_AGE_DAYS;
+export const SETTINGS_PRUNE_INTERVAL_HOURS = CONFIG.SETTINGS_PRUNE_INTERVAL_HOURS;
 export const STATUS_ENABLED              = CONFIG.STATUS_ENABLED;
 export const STATUS_PORT                 = CONFIG.STATUS_PORT;
 

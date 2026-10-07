@@ -52,6 +52,10 @@ type Stmts = {
   unmuteLid: ReturnType<DatabaseSync["prepare"]>;
   getMute: ReturnType<DatabaseSync["prepare"]>;
   deleteExpiredMute: ReturnType<DatabaseSync["prepare"]>;
+  touchActivity: ReturnType<DatabaseSync["prepare"]>;
+  staleChats: ReturnType<DatabaseSync["prepare"]>;
+  deleteAllForChat: ReturnType<DatabaseSync["prepare"]>;
+  deleteActivityForChat: ReturnType<DatabaseSync["prepare"]>;
 };
 
 // Opened lazily — only the first real read/write (via `ctx.settings`, or
@@ -126,6 +130,11 @@ function getStmts(): Stmts {
       muted_until  INTEGER NOT NULL,
       PRIMARY KEY  (chat_id, lid)
     );
+
+    CREATE TABLE IF NOT EXISTS chat_activity (
+      chat_id      TEXT PRIMARY KEY,
+      last_used_at INTEGER NOT NULL
+    );
   `);
 
   stmts = {
@@ -193,6 +202,34 @@ function getStmts(): Stmts {
     deleteExpiredMute: db.prepare(
       "DELETE FROM chat_mutes WHERE chat_id = ? AND lid = ? AND muted_until <= ?"
     ),
+
+    touchActivity: db.prepare(`
+      INSERT INTO chat_activity (chat_id, last_used_at)
+      VALUES (?, unixepoch())
+      ON CONFLICT (chat_id)
+      DO UPDATE SET last_used_at = excluded.last_used_at
+    `),
+
+    // "Last touched" per chat, falling back to plugin_settings.updated_at
+    // for chats that predate chat_activity — so pre-existing config is
+    // covered by the prune below without needing a backfill migration.
+    staleChats: db.prepare(`
+      SELECT chat_id FROM (
+        SELECT chat_id, last_used_at AS last_used FROM chat_activity
+        UNION ALL
+        SELECT chat_id, updated_at AS last_used FROM plugin_settings WHERE chat_id != '_global'
+      )
+      GROUP BY chat_id
+      HAVING MAX(last_used) < ?
+    `),
+
+    deleteAllForChat: db.prepare(
+      "DELETE FROM plugin_settings WHERE chat_id = ?"
+    ),
+
+    deleteActivityForChat: db.prepare(
+      "DELETE FROM chat_activity WHERE chat_id = ?"
+    ),
   };
 
   if (DB_PATH !== ":memory:") {
@@ -205,13 +242,24 @@ function getStmts(): Stmts {
 
 // ── Core helpers ──────────────────────────────────────────────────────────────
 
+// Marks `chatId` as touched "now" — called from every read/write below so
+// `pruneStaleChatSettings()` (see further down) can tell a chat that's
+// still in use from one the bot was simply removed from. "_global" is a
+// synthetic bucket, not a real chat, so it's excluded.
+function touchChatActivity(chatId: string): void {
+  if (chatId === "_global") return;
+  getStmts().touchActivity.run(chatId);
+}
+
 function dbGet(pluginName: string, chatId: string, key: string): unknown {
+  touchChatActivity(chatId);
   const row = getStmts().get.get(pluginName, chatId, key) as { value: string } | undefined;
   if (!row) return undefined;
   try { return JSON.parse(row.value); } catch { return row.value; }
 }
 
 function dbGetAll(pluginName: string, chatId: string): Record<string, unknown> {
+  touchChatActivity(chatId);
   const rows = getStmts().getAll.all(pluginName, chatId) as { key: string; value: string }[];
   return Object.fromEntries(
     rows.map(({ key, value }: { key: string; value: string }) => {
@@ -221,14 +269,17 @@ function dbGetAll(pluginName: string, chatId: string): Record<string, unknown> {
 }
 
 function dbSet(pluginName: string, chatId: string, key: string, value: unknown): void {
+  touchChatActivity(chatId);
   getStmts().set.run(pluginName, chatId, key, JSON.stringify(value));
 }
 
 function dbDelete(pluginName: string, chatId: string, key: string): void {
+  touchChatActivity(chatId);
   getStmts().delete.run(pluginName, chatId, key);
 }
 
 function dbDeleteAll(pluginName: string, chatId: string): void {
+  touchChatActivity(chatId);
   getStmts().deleteAll.run(pluginName, chatId);
 }
 
@@ -280,6 +331,33 @@ export function isLidMuted(chatId: string, lid: string): boolean {
     return false;
   }
   return true;
+}
+
+// ── Stale-chat pruning ───────────────────────────────────────────────────────
+//
+// A group that removes the bot leaves its plugin_settings rows behind
+// forever — nothing ever calls ctx.settings for that chat_id again, so
+// there's no natural trigger to clean them up. This deletes a chat's
+// entire settings footprint (every plugin's keys, its community link,
+// its activity record) once it's gone untouched for `maxAgeDays`. See
+// `kernel/settingsPrune.ts` for the schedule that calls this.
+
+/**
+ * Deletes all plugin settings, the community link, and the activity
+ * record for any chat not touched (read or written, by any plugin, via
+ * ctx.settings) in more than `maxAgeDays`. Returns the purged chat IDs.
+ */
+export function pruneStaleChatSettings(maxAgeDays: number): string[] {
+  const cutoff = Math.floor(Date.now() / 1000) - maxAgeDays * 86400;
+  const stale  = getStmts().staleChats.all(cutoff) as { chat_id: string }[];
+
+  for (const { chat_id } of stale) {
+    getStmts().deleteAllForChat.run(chat_id);
+    getStmts().unlink.run(chat_id);
+    getStmts().deleteActivityForChat.run(chat_id);
+  }
+
+  return stale.map((r) => r.chat_id);
 }
 
 // ── Scoped accessor factory ───────────────────────────────────────────────────

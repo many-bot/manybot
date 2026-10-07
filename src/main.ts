@@ -24,6 +24,7 @@ import { baileysContract }            from "#drivers/baileys/index.js";
 import { cleanupPlugins }             from "#kernel/pluginLoader.js";
 import { stopAll as stopScheduler }   from "#kernel/scheduler.js";
 import { stopSettingsDb } from "#settingsdb";
+import { startSettingsPruneSchedule, stopSettingsPruneSchedule } from "#kernel/settingsPrune.js";
 import { recordInstanceStartup, stopTelemetryDb } from "#kernel/telemetryDb.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -116,6 +117,7 @@ async function shutdown(reason: string, isError = false) {
   }
 
   stopScheduler();
+  stopSettingsPruneSchedule();
   stopSettingsDb();
   stopTelemetryDb();
 
@@ -198,6 +200,8 @@ if (process.argv.includes("--getid")) {
 } else {
   // Start bot
   logger.info(t("bot.initialized"));
+
+  startSettingsPruneSchedule();
 
   if (STATUS_ENABLED) {
     startStatusServer(STATUS_PORT);
