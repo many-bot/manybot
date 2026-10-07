@@ -369,6 +369,7 @@ export interface ISettings extends ScopedAccessor {
   unlink(): void;
   getCommunityId(): string | null;
   getCommunityChats(): string[];
+  allChats(): string[];
 }
 
 // Sub-facet: events. `on()` registers a listener and returns an unsubscribe

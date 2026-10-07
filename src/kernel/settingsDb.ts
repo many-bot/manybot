@@ -32,6 +32,7 @@ export interface SettingsApi extends ScopedAccessor {
   unlink(): void;
   getCommunityId(): string | null;
   getCommunityChats(): string[];
+  allChats(): string[];
 }
 
 const DB_PATH = process.env.NODE_ENV === "test" ? ":memory:" : path.join(CONFIG_DIR, "settings.db");
@@ -44,6 +45,7 @@ type Stmts = {
   deleteAll: ReturnType<DatabaseSync["prepare"]>;
   getCommunityId: ReturnType<DatabaseSync["prepare"]>;
   getCommunityChats: ReturnType<DatabaseSync["prepare"]>;
+  allChats: ReturnType<DatabaseSync["prepare"]>;
   link: ReturnType<DatabaseSync["prepare"]>;
   unlink: ReturnType<DatabaseSync["prepare"]>;
   muteLid: ReturnType<DatabaseSync["prepare"]>;
@@ -156,6 +158,10 @@ function getStmts(): Stmts {
 
     getCommunityChats: db.prepare(
       "SELECT chat_id FROM community_links WHERE community_id = ?"
+    ),
+
+    allChats: db.prepare(
+      "SELECT DISTINCT chat_id FROM plugin_settings WHERE plugin_name = ? AND chat_id != '_global'"
     ),
 
     link: db.prepare(`
@@ -398,6 +404,16 @@ export function buildSettingsApi(pluginName: string, chatId: string): SettingsAp
       const row = getStmts().getCommunityId.get(chatId) as { community_id: string } | undefined;
       if (!row) return [];
       return getStmts().getCommunityChats.all(row.community_id).map((r) => (r as { chat_id: string }).chat_id);
+    },
+
+    /**
+     * Returns every chat ID that has at least one stored setting for this
+     * plugin. Excludes the synthetic "_global" chat ID. Lets a plugin
+     * discover which chats it's active in without keeping its own index.
+     * @returns {string[]}
+     */
+    allChats() {
+      return getStmts().allChats.all(pluginName).map((r) => (r as { chat_id: string }).chat_id);
     },
   };
 }

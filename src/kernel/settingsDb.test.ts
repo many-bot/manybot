@@ -43,3 +43,15 @@ describe("kernel/settingsDb — get/set roundtrip", () => {
     assert.equal(settings.get("missing", "fallback"), "fallback");
   });
 });
+
+describe("kernel/settingsDb — allChats()", () => {
+  test("lists only chats with a stored setting for this plugin, excluding _global", () => {
+    buildSettingsApi("allChatsPlugin", "chatA").set("enabled", true);
+    buildSettingsApi("allChatsPlugin", "chatB").set("enabled", false);
+    buildSettingsApi("allChatsPlugin", "chatB").global.set("shared", 1);
+    buildSettingsApi("otherPlugin", "chatC").set("enabled", true);
+
+    const chats = buildSettingsApi("allChatsPlugin", "chatA").allChats();
+    assert.deepEqual([...chats].sort(), ["chatA", "chatB"]);
+  });
+});
