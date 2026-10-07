@@ -412,7 +412,14 @@ export interface IChat {
    * Community-only: every group linked to this Community. Returns `[]`
    * for any chat where `isCommunity` is `false`.
    */
-  getGroups(): Promise<Array<{ id: string; name: string }>>;
+  getGroups(): Promise<Array<{
+    id: string;
+    name: string;
+    /** Same shape as {@link IChat.mention} — built inline since this
+     *  group's community membership is already established by its
+     *  presence here, with no extra `getChat()` lookup needed. */
+    mention: { text: string; groupMentions: BotGroupMention[] };
+  }>>;
   isAdmin(contactId: string): Promise<boolean>;
   isSenderAdmin(): Promise<boolean>;
   isSuperAdmin(contactId: string): Promise<boolean>;

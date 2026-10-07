@@ -3356,13 +3356,18 @@ function buildChatFacet(
       };
     },
 
-    async getGroups(): Promise<WACommunityGroup[]> {
+    async getGroups(): Promise<Array<WACommunityGroup & { mention: { text: string; groupMentions: BotGroupMention[] } }>> {
       if (!targetIsCommunity) return [];
+      let groups: WACommunityGroup[];
       try {
-        return await getCommunityGroups(contract, targetNormJid);
+        groups = await getCommunityGroups(contract, targetNormJid);
       } catch {
         return [];
       }
+      return groups.map((g) => ({
+        ...g,
+        mention: { text: `@${g.id}`, groupMentions: [{ groupJid: g.id, groupSubject: g.name }] },
+      }));
     },
 
     /**
