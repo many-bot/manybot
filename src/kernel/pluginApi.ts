@@ -604,7 +604,10 @@ export interface PluginContext {
  *     in setup (e.g. `ctx.admin.promote(id).to(groupJid)`), same shape
  *     used from an event handler registered via `ctx.events.on(...)`
  *     (e.g. auto-promote/kick/welcome on group-participants-update);
- *   - `settings` exposes only `global` (no current chat to scope to).
+ *   - `settings` exposes `global` plus `forChat(targetChatId)` (cross-chat
+ *     read/write by explicit id); there's just no implicit current-chat
+ *     accessor, `link`/`unlink`, or `getCommunityId`/`getCommunityChats`
+ *     (those are bound to a current chat, which setup doesn't have).
  */
 export interface SetupContext {
   log: ILog;
@@ -630,7 +633,7 @@ export interface SetupContext {
   admin: IAdmin;
   me: IMe;
   events: IEvents;
-  settings: { global: ScopedAccessor };
+  settings: { global: ScopedAccessor; forChat(targetChatId: string): ScopedAccessor };
   stats: IStats;
 }
 

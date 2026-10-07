@@ -388,6 +388,14 @@ describe("kernel/pluginApi — buildSetupApi with Mock WaContract", () => {
     assert.equal(typeof unsub, "function");
   });
 
+  test("setup settings.forChat() reads/writes an explicit chat, no current chat needed", async () => {
+    const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
+
+    ctx.settings.forChat("group1@g.us").set("active", true);
+    assert.equal(ctx.settings.forChat("group1@g.us").get("active"), true);
+    assert.equal(ctx.settings.forChat("group2@g.us").get("active", false), false);
+  });
+
   test("setup send.to() sends messages via WaContract", async () => {
     const ctx = buildSetupApi(mockContract, store, pluginRegistry, "test_plugin");
 

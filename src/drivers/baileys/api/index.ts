@@ -3092,7 +3092,10 @@ export function buildSetupApi(
     admin:    buildAdminApi(contract, store, null),
     events:   buildEventsApi(contract, pluginName),
     me:       buildMeApi(contract),
-    settings: { global: buildSettingsApi(pluginName, "_global").global },
+    settings: {
+      global:  buildSettingsApi(pluginName, "_global").global,
+      forChat: buildSettingsApi(pluginName, "_global").forChat,
+    },
   };
 }
 
