@@ -13,7 +13,11 @@ function resolveEnvRefs(layer: Record<string, unknown>): Record<string, unknown>
   for (const [k, v] of Object.entries(layer)) {
     if (typeof v === "string" && v.startsWith("env:")) {
       const envKey = v.slice(4).trim();
-      out[k] = envKey in process.env ? process.env[envKey] : "";
+      let resolved: unknown = envKey in process.env ? process.env[envKey] : "";
+      if (typeof resolved === "string" && resolved.includes(",")) {
+        resolved = resolved.split(",").map(s => s.trim()).filter(Boolean);
+      }
+      out[k] = resolved;
     } else {
       out[k] = v;
     }
@@ -78,6 +82,27 @@ describe("resolveEnvRefs", () => {
     const result = resolveEnvRefs({ CMD_PREFIX: "!", CHATS: ["123@g.us"] });
     assert.equal(result.CMD_PREFIX, "!");
     assert.deepEqual(result.CHATS, ["123@g.us"]);
+  });
+
+  test("comma-separated env: value resolves to a trimmed string array", () => {
+    process.env.__TEST_LIST__ = "chave1,chave2,chave3";
+    const result = resolveEnvRefs({ TEST_LIST: "env:__TEST_LIST__" });
+    assert.deepEqual(result.TEST_LIST, ["chave1", "chave2", "chave3"]);
+    delete process.env.__TEST_LIST__;
+  });
+
+  test("comma-separated env: value trims whitespace and drops empty entries", () => {
+    process.env.__TEST_LIST__ = " chave1 , , chave2 ";
+    const result = resolveEnvRefs({ TEST_LIST: "env:__TEST_LIST__" });
+    assert.deepEqual(result.TEST_LIST, ["chave1", "chave2"]);
+    delete process.env.__TEST_LIST__;
+  });
+
+  test("single-value env: (no comma) stays a plain string", () => {
+    process.env.__TEST_SINGLE__ = "onlyone";
+    const result = resolveEnvRefs({ SMTP_PASS: "env:__TEST_SINGLE__" });
+    assert.equal(result.SMTP_PASS, "onlyone");
+    delete process.env.__TEST_SINGLE__;
   });
 });
 

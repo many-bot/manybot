@@ -231,12 +231,22 @@ function resolveEnvRefs(layer: Record<string, unknown>): Record<string, unknown>
   for (const [k, v] of Object.entries(layer)) {
     if (typeof v === "string" && v.startsWith("env:")) {
       const envKey = v.slice(4).trim();
+      let resolved: unknown;
+
       if (envKey in process.env) {
-        out[k] = process.env[envKey];
+        resolved = process.env[envKey];
       } else {
         logger.warn(`Config: env:${envKey} referenced by ${k} is not set — using ""`);
-        out[k] = "";
+        resolved = "";
       }
+
+      // Comma-separated env values become arrays — lets any TOML key
+      // reference a list via env: without per-key normalization logic.
+      if (typeof resolved === "string" && resolved.includes(",")) {
+        resolved = resolved.split(",").map(s => s.trim()).filter(Boolean);
+      }
+
+      out[k] = resolved;
     } else {
       out[k] = v;
     }
