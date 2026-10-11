@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.13.0 - Unreleased
 
 ### Changed (breaking)
 
@@ -13,6 +13,33 @@
 
 ### New Features
 
+- `ctx.settings` auto-prune: a chat's entire plugin-settings footprint is now deleted once nothing
+  has touched it (via `ctx.settings`, read or write, by any plugin) for `SETTINGS_PRUNE_MAX_AGE_DAYS`
+  (default 90), checked every `SETTINGS_PRUNE_INTERVAL_HOURS` (default 24). Covers the common case
+  of a group removing the bot, whose settings would otherwise sit in `settings.db` forever. Runs
+  once on startup and then on a schedule; disable with `SETTINGS_PRUNE_ENABLED = false`.
+  Source: [settingsPrune.ts](src/kernel/settingsPrune.ts).
+- `ctx.settings.allChats()`: lists every chat ID that has at least one stored setting for the
+  calling plugin (excludes the synthetic `_global` chat ID). Lets a plugin discover which chats
+  it's active in without keeping its own index.
+- `SetupContext.settings` gains `forChat(targetChatId)`, alongside the existing `global` — reads
+  and writes an explicit chat's settings with no current chat needed (`setup()` still has no
+  `link`/`unlink`/`getCommunityId`/`getCommunityChats`, which are bound to a current chat).
+- `ctx.chat.isSuperAdmin(contactId)` / `ctx.chat.isSenderSuperAdmin()`: check whether a contact (or
+  the message sender) is the group's super-admin (owner/creator). Same always-fresh-metadata
+  semantics as `isAdmin()`/`isSenderAdmin()`.
+- `ctx.chat.mute(lid, { duration })` / `ctx.chat.unmute(lid)`: mutes a LID in the current chat for
+  up to 1 month (`RangeError` on an invalid/out-of-range duration). A muted sender's messages are
+  ignored before any other side effect (no read receipt, no plugin, nothing marked as processed).
+  Persisted in `settings.db` (survives restart), with lazy expiry cleanup.
+  Source: [chatMutes.ts](src/kernel/chatMutes.ts).
+- Config: `manybot.toml`/`manyplug.toml` values can now reference `"env:KEY"`, resolved against
+  `process.env` (warns and falls back to `""` if missing). `CONFIG_DIR/.env` is loaded into
+  `process.env` on startup and on `reloadConfig()`, without overriding variables already set.
+- `ctx.stats` (`PluginContext` + `SetupContext`, read-only): pseudonymous, aggregate-only
+  telemetry — `instance()`, `messagesProcessed()`, `user(lid)`, `group(jid)`, `plugins()`. Backed
+  by a new SQLite store (`telemetry.db`, WAL). No message content is ever persisted or exposed.
+  Source: [telemetryDb.ts](src/kernel/telemetryDb.ts).
 - Per-chat language. `LANGUAGE` in the config is now only the bot's default; each chat can have its own language, stored in `settings.db` (`core` / `chat_locale`, the key the `setChatLocale` core handler already used).
   - Core API ([chatOverrides.ts](src/kernel/chatOverrides.ts)): `setChatLocale(chatId, lang)`, `clearChatLocale(chatId)`, `getChatLocale(chatId)`, `resolveChatLang(chatId)`. Regional codes are accepted (`pt-BR` → `pt`); unsupported codes throw `RangeError`. Available languages are read from `src/locales/` instead of a hardcoded list.
   - Plugins: `ctx.i18n.setChatLocale(lang, chatId?)`, `getChatLocale(chatId?)`, `clearChatLocale(chatId?)`, `available()` and `lang`.
@@ -22,6 +49,19 @@
 
 ### Changed
 
+- `ctx.chat.getGroups()` entries now include `mention` (`{ text, groupMentions }`), built inline
+  since the group's Community membership is already established by its presence in the list —
+  no extra `getChat()` lookup needed.
+- `ctx.chat.close()`/`open()` now cascade to **every group linked to the Community** (announcements
+  last) when called from a Community chat, instead of affecting only that single chat — mirrors
+  `ctx.admin.kick()`'s existing Community cascade. Still never throws; `"partial"` is returned if
+  any group didn't reach `"ok"`. Paced the same way as the kick cascade, including an extra cooldown
+  after a rate-limited request.
+- `ctx.chat.mute()` now also deletes the muted sender's message for everyone (best-effort — requires
+  the bot to be a group admin; failures are swallowed).
+- `sendGuard`: loosened `low`/`medium` `SECURITY_LEVEL` profile timings and raised `medium`
+  concurrency (e.g. low `chatCooldownMs` 100→0ms, `typingMax` 2000→500ms; medium concurrency 2→3).
+  No config keys changed, only the internal defaults.
 - Telemetry: the `group` table is now reconciled with the account's real group list on connect (at most once per hour, persisted across restarts), so joins and leaves that happened while the bot was offline are no longer missed. Groups found this way have an unknown join time, so `ctx.stats.group(jid).joinedAt` is now `number | null` (`@manybot/types` updated).
   - An empty scan while groups are tracked as active is ignored instead of closing them all, and join/leave events recorded during the scan take precedence over it.
   - Existing `telemetry.db` files are migrated automatically (`group.joined_at` becomes nullable).
@@ -30,93 +70,17 @@
 
 ### Fixed
 
+- Baileys: messages with a missing or zero timestamp are now treated as stale instead of fresh,
+  so an event with unknown age can't bypass the backlog filter after a reconnect.
+- Baileys: reactions, group stub events (member add/remove, subject change, etc.) and other
+  non-content protocol entries that arrive in the `messages.upsert` stream with a real sender but
+  no decodable content (`type: "other"`, empty body) are no longer dispatched to every plugin's
+  `run(ctx)` — fixes "any message" handlers firing for events that aren't actual messages.
+- i18n: `translate()`/`createPluginT()` now return array/object locale values as-is instead of
+  coercing them to `String(value)` (which produced `"[object Object]"`). Only primitives are
+  still stringified.
 - Baileys: listing a Community's linked groups now seeds the shared group-metadata cache from the same account scan, so Community-wide admin actions no longer cost one extra `groupMetadata()` lookup per group.
 
-## v5.12.1 - 2026-09-28
+---
 
-### Fixed
-
-- Baileys: `MessageHandle.reply()` could send with an empty chat JID when the message's `chatId` wasn't known yet, so `assertSendable` and `waitForSendSlot` ran against the wrong chat. `makeSender` now accepts a JID resolver and resolves it before each send.
-
-## v5.12.0 - 2026-09-27
-
-### New Features
-
-- `ctx.chat.getChat(jid)`: look up any other chat (group or DM) by JID, returning a new `ChatContext` with the same shape (itself `getChat()`-able). Useful for groups discovered via `ctx.chats.all()` or stored earlier by a plugin.
-- `ctx.chat.getMsg(msgId)`: look up any message by ID alone, the owning chat's JID is resolved automatically via a new `msgId -> jid` store index, so `.reply()`/`.react()` work on an old/stored message ID.
-- `ctx.unreact()`: new method to remove a reaction from a message.
-- Added validation for reaction emoji fields.
-- Added `--logout` command line argument to remove the current session (`~/.manybot/sessions/<CLIENT_ID>`).
-- Native normalization added to commands. Source: [normalizeText.ts](src/utils/normalizeText.ts).
-- Added `AUTO_READ_MESSAGES` config option -- it makes ManyBot mark all the messages it receives "as read".
-- Added config option HISTORY_MAX_PER_CHAT -- allows configure how much messages ctx.chat.history can save per chat (before was fixed on 200).
-- Crash notices: when a plugin fails, or the whole bot goes down, while answering a command, the chat now gets a message asking the user to try again instead of silence. Source: [crashNotice.ts](src/kernel/crashNotice.ts).
-  - Each run has a `running`/`idle` state ([runState.ts](src/kernel/runState.ts)). Runs answering a command are journaled in `settings.db` until they finish, so anything still there after a restart was interrupted.
-  - It is a notice, not an automatic retry, because plugins have side effects. To avoid false positives, only commands routed through the command registry, or legacy `run(ctx)` plugins that worked for over a second on a prefixed message the registry doesn't know, are reported. Background/event-handler errors are not.
-  - Each message is reported at most once, even across restarts.
-- `ctx.chat.getGroups()`: lists every group linked to a Community (Baileys-only). Chat contexts also gain `isCommunity`, `isAnnounces` and `community` (parent JID, or own JID when the chat itself is the Community) fields.
-- `ctx.chat.acceptInvite(urlOrCode)`: joins a group via invite link or code, resolving `{status: "joined", groupId}` / `{status: "requested"}` (pending admin approval), or throwing `GroupInviteError` with a `.reason` (`not_found`/`invalid_code`/`already_member`/`unknown`).
-- Sending directly to a Community's own JID is now rejected early with a translated error (`communitySendBlocked`) instead of resolving silently without delivering the message.
-- `downloadMedia()` now resolves `isAnimated` via a byte-level check (WhatsApp reports all stickers as `image/webp`), and accepts `{ asFrames }` to return decoded animated-webp frames with per-frame `delayMs`.
-- Oversized message bodies are now capped at 4096 characters (`MAX_BODY_LENGTH`), with truncation metadata (`big`, `bodyLength`) exposed on `BotMessage` and `WAMessageContext`, including quoted messages.
-- New `msg.type: "invite"` and `ctx.chat.acceptInvite()` now also accept a `WAMessageContext` (in addition to a string) to accept a group invite message directly. Adds `BotGroupInvite` (`groupJid`, `inviteCode`, `inviteExpiration`, `groupName?`, `caption?`) and the optional `WaContract.groupAcceptInviteV4()` (Baileys-only; omitted on drivers without support, e.g. whatsmeow), mapping Boom errors to `GroupInviteError` (`already_member`/`not_found`/`invalid_code`/`unknown`).
-- `ctx.chat.mention`: new getter for community group mentions (`BotGroupMention`), threaded through `sendText`/`sendFallbackGuard` (Baileys-only).
-
-### Fixed
-
-- Pairing code instructions now show the correct full path.
-- `i18n`: removed non-existent `connect()` option.
-- Plugins: a crash can no longer take the whole bot down, even when it escapes the plugin's own `await` chain (fire-and-forget promise rejections). A new async-context tracker (`pluginContext.ts`) attributes these back to the responsible plugin instead of triggering a full process shutdown.
-  - Fixed a bug where a successful reload silently reset the 3-strike error counter to 0, so a plugin that kept failing-then-reloading successfully never actually reached 3 strikes and got disabled.
-  - Owner alerts (WhatsApp/email) now fire for crash paths that previously only reached the local log -- e.g. a legacy plugin or a background/event-handler crash with no command involved.
-  - Alerts now distinguish a genuinely fatal bot crash from a survivable plugin crash (`fatal` flag), with an occurred-at timestamp and running/fatal status footer on WhatsApp and email sinks.
-- `pluginLoader`: safely reinitialize command registry.
-- Event handlers: async rejections in plugin event handlers are now captured.
-- `i18n`: resolved plugin root directory instead of assuming entry directory.
-- `i18n`: `II18n["t"]` in `pluginApi.ts` is now a single `(key, context?) => string` signature. It still declared the old `string | Record` overload left over from the removed `returnObjects` option, which had drifted from the runtime and from `@manybot/types`.
-- Banner: corrected ASCII art alignment for version string.
-- `i18n`: corrected pairing code path.
-- `ctx.admin.promote()` / `ctx.admin.demote()` now work on Communities: when the target JID is a Community (not a regular group or one of its linked groups), the driver uses the dedicated community operation instead of `groupParticipantsUpdate`. Adds the optional `WaContract.communityParticipantsUpdate()`.
-- Bulk message deletion (e.g. admin `cleanmsg`) no longer applies only partially:
-  - Baileys' default `cachedGroupMetadata` hook always returned `undefined`, so every group send queried WhatsApp for metadata and hit `rate-overlimit` (429). The socket now sets its own hook, backed by a shared cache (`groupMetaCache.ts`) that is also used by the API lookups, invalidated on `group-participants.update` / `groups.update` and cleared on every new socket.
-  - `ctx.msg.react()`, `ctx.msg.unreact()` and `ctx.msg.delete()` (also on `MessageHandle`) now wait for a send slot like every other outbound action. `sendMessage({delete})` resolves once written to the socket, so tight loops had part of the burst silently dropped server-side.
-  - `ctx.chat.history.from()` now matches by sender LID **or** phone number. Entries received before Baileys learned the contact's LID (`sender = null`) were being skipped.
-- Menu command no longer activates when `commands.yaml` declares no commands (or only a `menu:` block).
-- `scheduler.db` / `settings.db` are now opened lazily on first real use instead of unconditionally at import time, and get periodic WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)` every 10min) plus a checkpoint on shutdown -- fixes unbounded `*-wal` growth on bots that never use scheduling/settings.
-- Group metadata lookups now go through cache to avoid WhatsApp rate-limit errors. Promoting members to admin in Communities now works correctly by reusing the linked announce group's member list, since the Community itself only returns admins as participants.
-- `WAMessageSender` file methods: renamed the `filePath` param to `source` in types.
-- Baileys: `badSession` now retries up to 3x (clear session + reconnect) before halting, instead of halting on the first occurrence; an alert is still sent on the eventual halt.
-
-### New Configuration Options
-
-- `CRASH_NOTICE_ENABLED` (default `true`): turns crash notices on/off.
-- `CRASH_NOTICE_MESSAGE` (default empty = built-in message in the chat's language): custom notice text, accepts `{{command}}` and `{{plugin}}`.
-- `CRASH_NOTICE_MAX_AGE_SECONDS` (default `600`): after a restart, interrupted commands older than this are dropped silently.
-
-### Removed
-
-- Automatic "as read" mark in every message. You can enable it again with `AUTO_READ_MESSAGES = true` in `~/.manybot/manybot.toml`.
-- Removing reactions using `ctx.msg.react("")` won't work anymore. Use `ctx.msg.unreact()` instead.
-
-### Docs
-
-- Reviewed README, `CONTRIBUTING.md` and issue/PR templates for clarity and contributor onboarding.
-- README: fixed OS badge label and linked `CONTRIBUTING.md` from the Contributing section.
-- `CONTRIBUTING.md`: removed inconsistencies and outdated information.
-- Removed outdated `PROJECT_GUIDE.md`.
-
-### Refactors
-
-- Fixed config/`commands.yaml` reload debounce timers (`configReloadTimeout` / `yamlReloadTimeout`) not being cleared on `cleanupPlugins()`, which could leave a dangling timer after shutdown.
-- `i18n`: removed `returnObjects` option from `t()`.
-- Dropped the dual-driver fallback path; ManyBot now runs Baileys-only. Removed `verifyDelivery`/`sendVia` fallback in `sendFallbackGuard` and degradation tracking (`isDegraded`/`markDegraded`/`switchTo`) in `driverManager`, simplified `Config.drivers` (dropped `fallbackCooldownMs`/`verifyWindowMs`), consolidated `send_failed_no_fallback`/`send_failed_both_drivers` into a single `send_failed` event, and added `AlertEvent.sinks` to route alerts to specific channels.
-
-### Build / CI
-
-- Added `prepare` npm script (`scripts/install-local-hooks.sh`) that points the clone's git hooks at `scripts/local-hooks/` on `npm install`.
-- New local `pre-commit` hook: auto-bumps `packages/types/package.json` minor version when staged changes touch the published `@manybot/types` definitions (`packages/types/{en,pt}`).
-- Renamed `hooks/` to `scripts/git-hooks/` (server-side release infra, no contributor impact).
-- Updated `sharp`, `nodemailer` and `emoji-regex` dependencies.
-- Updated TypeScript and ESLint.
-- Added the types drift check script to `package.json`.
-
+Previous releases are tracked via Git tags.
