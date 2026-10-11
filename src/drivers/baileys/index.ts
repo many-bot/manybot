@@ -366,6 +366,16 @@ halted = true;
       const tsSec = Math.floor(msg.timestamp / 1000);
       if (type === "append" && !msg.fromMe) continue;
       if (isMessageStale(tsSec)) continue;
+      // Reactions, group stub events (member added/removed, subject
+      // change, etc.) and other non-content protocol entries arrive in
+      // this same messages.upsert stream with a real sender but no
+      // decodable content — decodeContent() falls through to type
+      // "other" with an empty body for all of them. Without this check
+      // they still reach every plugin's run(ctx) below (the dispatch
+      // loop in messageHandler.ts isn't gated on a command match), so a
+      // plugin that reacts to "any message" fires for someone who never
+      // actually sent one.
+      if (msg.type === "other" && !msg.body) continue;
 
       const jid = normalizeJid(msg.chatId);
       enqueueForChat(jid, () => handleMessage(msg, contract, store));
