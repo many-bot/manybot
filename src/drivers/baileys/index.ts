@@ -93,7 +93,10 @@ function enqueueForChat(jid: string, task: () => Promise<void>): void {
 const MAX_MESSAGE_AGE_SECONDS = 60;
 
 function isMessageStale(timestamp: number): boolean {
-  if (!timestamp) return false;
+  // No reliable timestamp (missing/0) is treated as stale rather than
+  // fresh — an event with unknown age must not bypass the backlog
+  // filter after a reconnect.
+  if (!timestamp) return true;
   const nowInSeconds = Math.floor(Date.now() / 1000);
   const age = nowInSeconds - timestamp;
   if (age > MAX_MESSAGE_AGE_SECONDS) return true;
